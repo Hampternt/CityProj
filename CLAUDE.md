@@ -1,0 +1,50 @@
+# CLAUDE.md — CityProj
+
+Economy city simulation in Rust (edition 2024). Simulates a noded market economy
+from the household level up, with strictly conserved money.
+
+## Read this first
+
+The architecture reference is
+[`docs/superpowers/specs/2026-06-20-economy-sim-design.md`](docs/superpowers/specs/2026-06-20-economy-sim-design.md).
+Read it before non-trivial work. If code and that doc disagree, stop and reconcile
+— do not silently diverge.
+
+## Hard invariants (never violate)
+
+These come from §8 of the design doc. Breaking one is a bug even if tests pass.
+
+1. **Integer money only.** Money is `Money(u64)` in the smallest unit. Never a float.
+2. **Single chokepoint.** Money moves *only* via `transfer` / `mint` / `burn` in
+   `money.rs`. Nothing else mutates the `Accounts` store.
+3. **Conservation audit every tick.** `total_money() == initial + minted − burned`
+   is asserted each tick and panics on imbalance. Never remove or weaken it to make
+   something pass.
+4. **Mint is the only money creation; burn the only destruction.** Both log to
+   `total_minted` / `total_burned`. Gold is held in reserve, not consumed.
+5. **No overdraft (v1).** `transfer` returns `Err` rather than allowing a negative
+   balance.
+6. **Pricing stays in `market.rs`.** Agents and money never embed pricing/wage logic.
+
+## Model at a glance
+
+- **Gold** = finite reserve commodity (input-only in v1). **Mint** = the only faucet
+  (gold reserve → money). **Money** = the sole circulating medium.
+- **Sinks** prevent inflation: degradation (`burn`) and imports (money → `External`
+  account, still tracked, out-of-node). `External` is the seam for future
+  node-to-node trade.
+- **Agents:** Household, Firm, Mint, External, plus a stubbed node modifier layer
+  (government/policy — undesigned, fill in as needed).
+- **Two markets**, both adjustment-based and swappable: goods prices and competing
+  wages.
+- **Discrete ticks**, fixed order: labor clears → produce → wages → goods clear →
+  consume → invest → sinks → mint → audit.
+- **Nodes:** v1 is one node, but built `create_node()`-ready for many.
+
+## Conventions
+
+- Keep each module to one clear job (see §7 layout). When a file grows past its
+  purpose, split it.
+- Follow the existing patterns before introducing new ones.
+- Verify before claiming done: `cargo check`, `cargo clippy`, `cargo test` — quote
+  real output, not "it compiles."
