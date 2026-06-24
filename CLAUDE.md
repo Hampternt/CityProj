@@ -10,6 +10,33 @@ The architecture reference is
 Read it before non-trivial work. If code and that doc disagree, stop and reconcile
 — do not silently diverge.
 
+## Commands
+
+```sh
+cargo run            # run the sim (interactive: Enter advances a tick, q quits)
+cargo check          # fast type-check
+cargo clippy         # lint
+cargo test           # run all tests (none yet)
+cargo test NAME      # run a single test by (sub)name
+cargo test -- --nocapture   # show stdout from tests
+```
+
+## Current code state vs. target layout
+
+The §7 layout below (`money.rs`, `agent.rs`, `market.rs`, …) is the **target**, not
+what exists yet. The repo today is a pre-economy scaffold:
+
+- `src/main.rs` → `engine::game_loop::run()`.
+- `src/engine/game_loop.rs` — interactive tick loop: clear screen, render, wait for
+  Enter, then each factory produces goods into a `HashMap<String, u64>` storage.
+- `src/engine/game_state.rs` — `GameState` (a `Vec<Factory>`), `Factory`, and the
+  `Goods` map type, seeded with placeholder factories.
+
+There is **no money, agent, market, or node code yet** — none of the §8 invariants
+are enforced because nothing moves money. When you build out the economy, create the
+modules from §7 and migrate the `engine/` scaffold into them rather than bolting money
+onto the current factory loop. If you change structure, update this section.
+
 ## Hard invariants (never violate)
 
 These come from §8 of the design doc. Breaking one is a bug even if tests pass.
