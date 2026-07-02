@@ -23,19 +23,26 @@ cargo test -- --nocapture   # show stdout from tests
 
 ## Current code state vs. target layout
 
-The §7 layout below (`money.rs`, `agent.rs`, `market.rs`, …) is the **target**, not
-what exists yet. The repo today is a pre-economy scaffold:
+The economy skeleton from
+[`docs/superpowers/specs/2026-07-02-money-gameloop-skeleton-design.md`](docs/superpowers/specs/2026-07-02-money-gameloop-skeleton-design.md)
+is in place — that spec's ⟨REF⟩ sections are the standing contract for hooking
+new mechanics into the loop and money:
 
-- `src/main.rs` → `engine::game_loop::run()`.
-- `src/engine/game_loop.rs` — interactive tick loop: clear screen, render, wait for
-  Enter, then each factory produces goods into a `HashMap<String, u64>` storage.
-- `src/engine/game_state.rs` — `GameState` (a `Vec<Factory>`), `Factory`, and the
-  `Goods` map type, seeded with placeholder factories.
+- `src/money.rs` — `Money`, `MoneyError`, `Accounts` (the §8 trusted core:
+  `transfer`/`mint`/`burn` movers, `audit` panics on imbalance).
+- `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
+- `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
+  External account ids; occupancy is derived, never stored.
+- `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
+  last; `goods_market` holds the worked decide→apply template; `Intent` is
+  the (empty) enum mechanics extend.
+- `src/engine/game_loop.rs` — interactive shell only: Enter advances a tick,
+  an agent name inspects it, q quits.
 
-There is **no money, agent, market, or node code yet** — none of the §8 invariants
-are enforced because nothing moves money. When you build out the economy, create the
-modules from §7 and migrate the `engine/` scaffold into them rather than bolting money
-onto the current factory loop. If you change structure, update this section.
+No economic behavior runs yet: phases 1–8 are TODO stubs, `Accounts` starts
+empty, and nothing mints — money enters only through earned paths once the
+mint job exists. Firms are deferred (TODO markers in `sim.rs`). If you change
+structure, update this section.
 
 ## Hard invariants (never violate)
 

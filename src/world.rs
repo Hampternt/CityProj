@@ -71,6 +71,18 @@ impl World {
             .collect()
     }
 
+    pub fn agent(&self, id: AgentId) -> Option<&Agent> {
+        self.agents.iter().find(|agent| agent.id == id)
+    }
+
+    pub fn agent_by_name(&self, name: &str) -> Option<&Agent> {
+        self.agents.iter().find(|agent| agent.name == name)
+    }
+
+    pub fn house(&self, id: HouseId) -> Option<&House> {
+        self.houses.iter().find(|house| house.id == id)
+    }
+
     pub fn agent_mut(&mut self, id: AgentId) -> Option<&mut Agent> {
         self.agents.iter_mut().find(|agent| agent.id == id)
     }
