@@ -54,6 +54,9 @@ every future mechanic.
   directions; two stored lists silently desync.
 - Balances live **only** in `Accounts`, keyed by `AgentId` — never as a field
   on `Agent` (borrow-checker ergonomics + one-line audit).
+- **Reserved ids:** `World::new` reserves two well-known `AgentId`s — **Mint**
+  and **External** — as plain accounts (no structs, no behavior yet). They exist
+  from day one so phase contracts can name them and ids never get reassigned.
 
 ### ⟨REF⟩ Tick phase contract table
 
@@ -75,8 +78,10 @@ amending this table.
 
 ### ⟨REF⟩ Money entry/exit map
 
-- **In:** `mint` only — future faucets are the mint job and (net) exports to
-  External. Both log to `total_minted`.
+- **In:** `mint` only, logged to `total_minted`. The mint job is the planned
+  faucet. Export receipts (selling to External) are a second planned entry
+  point — whether they mint new money or draw down External's accumulated
+  balance is **decided when external trade is designed**, not here.
 - **Out:** `burn` (degradation) and `transfer` to the `External` account
   (imports — out of circulation but still counted by the audit).
 - Anything else that "creates" or "destroys" money is a bug by definition (§8.4).
@@ -111,6 +116,7 @@ Signature: `pub fn transfer(&mut self, from: AgentId, to: AgentId, amount: Money
 Given:  `from` has balance ≥ `amount`
 Then:   `from` debited and `to` credited by exactly `amount`; `total_money()` unchanged
 Error:  insufficient funds -> `Err(MoneyError::InsufficientFunds)`, **no partial application** — no state change on error   // §8.5 no overdraft
+Edge:   `amount == 0` -> `Ok`, no-op, creates no account entry · `from == to` -> `Ok` if funds suffice, net no-op
 Refs:   @src/money.rs, §8.2 single chokepoint, §8.5
 
 ### Unit: Accounts::mint  (money.rs)
@@ -127,6 +133,7 @@ Signature: `pub fn burn(&mut self, from: AgentId, amount: Money) -> Result<(), M
 Given:  `from` has balance ≥ `amount`
 Then:   `from` debited by `amount`; `total_burned += amount`
 Error:  insufficient funds -> `Err(MoneyError::InsufficientFunds)`, no partial application   // §8.5
+Edge:   `amount == 0` -> `Ok`, no-op (same rule as transfer)
 Refs:   @src/money.rs, §8.4 burn sole destruction
 
 ### Unit: Accounts::audit  (money.rs)
@@ -135,6 +142,8 @@ Signature: `pub fn audit(&self)`
 Given:  called at the end of every tick (and permitted anywhere)
 Then:   asserts `total_money() == total_minted − total_burned` (initial supply is zero — no genesis); **panics** on imbalance
 Error:  panic, by design — never softened to a `Result`   // §8.3
+Note:   the subtraction is `checked_sub` — `total_burned > total_minted` is itself an imbalance and panics (burn requires balance, so it is unreachable through the public API)
+Test hook: a `#[cfg(test)]`-only balance mutator is the **sanctioned** §8.2 exception, existing solely so tests can force an imbalance and prove the panic fires — never compiled into the sim
 Refs:   @src/money.rs, §8.3 conservation audit
 
 ### Unit: Accounts read queries  (money.rs)
@@ -162,10 +171,36 @@ Refs:   @src/world.rs, link rule (stored vs derived) above
 ### Mechanical / obvious (plan owns these — no contract needed)
 
 `AgentId`/`HouseId` newtypes and counters, `World::new` and struct constructors,
-the eight empty phase bodies and their TODO markers, the `Intent` empty enum +
-decide/apply scaffold shape, render helpers and the slimmed `game_loop.rs`
-shell (clear/render/Enter/q — behavior unchanged from today), removal of the
-factory scaffold. All trivial; follow existing patterns.
+the phase bodies 1–8 (empty except TODO markers; one hosts the decide/apply
+scaffold as the worked template), the `Intent` empty enum, render helpers and
+the slimmed `game_loop.rs` shell (clear/render/Enter/q — behavior unchanged
+from today), removal of the factory scaffold. All trivial; follow existing
+patterns.
+
+## Acceptance tests (written from the contracts above)
+
+The plan turns each into a `#[test]`; names are indicative, Given/Then is binding.
+
+**money.rs**
+- `transfer_moves_exact_amount` — mint 100 to A; transfer 30 A→B ⇒ A=70, B=30, `total_money()` unchanged.
+- `transfer_insufficient_funds_is_atomic` — A=10; transfer 20 A→B ⇒ `Err(InsufficientFunds)` **and** A=10, B=0 (no partial application).
+- `transfer_zero_is_noop` — transfer 0 between unknown ids ⇒ `Ok`, no accounts created, totals unchanged.
+- `transfer_to_self` — A=50; transfer 20 A→A ⇒ `Ok`, A=50.
+- `mint_credits_and_logs` — mint 100 to A ⇒ A=100, `total_minted`=100, audit passes.
+- `burn_debits_and_logs` — A=100; burn 40 ⇒ A=60, `total_burned`=40, audit passes.
+- `burn_insufficient_funds_is_atomic` — A=10; burn 20 ⇒ `Err`, A=10, `total_burned`=0.
+- `audit_passes_after_op_sequence` — interleaved mint/transfer/burn (incl. failed ops) ⇒ audit passes after every step.
+- `audit_panics_on_imbalance` — `#[should_panic]`: corrupt a balance via the `#[cfg(test)]` hook ⇒ audit panics.
+- `total_money_includes_external` — mint to A; transfer A→External ⇒ `total_money()` unchanged, audit passes.
+
+**world.rs / housing**
+- `occupants_derived_from_agent_homes` — two agents with `home = h1`, one with `h2` ⇒ `occupants_of(h1)` returns exactly the two; changing an agent's `home` is immediately reflected (nothing stored).
+- `occupants_of_unknown_house_is_empty`.
+- `reserved_ids_exist` — `World::new` ⇒ Mint and External ids are present and distinct.
+
+**sim.rs**
+- `tick_runs_audit_last` — corrupt state via the test hook, call `tick` ⇒ panics (proves no path skips the audit).
+- `n_ticks_run_clean` — integration: fresh world, 100 ticks ⇒ no panic, `total_money()` still 0 (nothing mints yet).
 
 --- APPROVAL GATE — do not write the plan or any code above this line without sign-off ---
 
