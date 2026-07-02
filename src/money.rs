@@ -138,6 +138,13 @@ impl Accounts {
         self.total_burned = self.total_burned.plus(amount);
         Ok(())
     }
+
+    /// The SANCTIONED §8.2 exception: exists solely so tests can force an
+    /// imbalance and prove the audit panics. Never compiled into the sim.
+    #[cfg(test)]
+    pub fn set_balance_for_test(&mut self, id: AgentId, amount: Money) {
+        self.balances.insert(id, amount);
+    }
 }
 
 #[cfg(test)]
@@ -220,5 +227,45 @@ mod tests {
         );
         assert_eq!(accounts.balance_of(a()), Money::new(10));
         assert_eq!(accounts.total_burned(), Money::ZERO);
+    }
+
+    #[test]
+    fn audit_passes_after_op_sequence() {
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(100));
+        accounts.audit();
+        accounts.transfer(a(), b(), Money::new(30)).unwrap();
+        accounts.audit();
+        // failed ops must leave the books balanced too
+        assert!(accounts.transfer(b(), a(), Money::new(999)).is_err());
+        accounts.audit();
+        accounts.burn(a(), Money::new(20)).unwrap();
+        accounts.audit();
+        assert!(accounts.burn(b(), Money::new(999)).is_err());
+        accounts.audit();
+        accounts.mint(b(), Money::new(5));
+        accounts.audit();
+    }
+
+    #[test]
+    #[should_panic]
+    fn audit_panics_on_imbalance() {
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(100));
+        accounts.set_balance_for_test(a(), Money::new(150));
+        accounts.audit();
+    }
+
+    #[test]
+    fn total_money_includes_external() {
+        // External is just an id from Accounts' perspective; 1 is its
+        // reserved value (World reserves it properly in Task 2).
+        let external = AgentId(1);
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(100));
+        accounts.transfer(a(), external, Money::new(60)).unwrap();
+        // out of circulation but still counted by the audit
+        assert_eq!(accounts.total_money(), Money::new(100));
+        accounts.audit();
     }
 }
