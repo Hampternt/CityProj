@@ -123,6 +123,21 @@ impl Accounts {
         self.balances.insert(to, to_balance.plus(amount));
         Ok(())
     }
+
+    /// §8.4: the ONLY way money is destroyed. Same atomicity rules as
+    /// transfer (§8.5): errs with no state change, zero is a no-op.
+    pub fn burn(&mut self, from: AgentId, amount: Money) -> Result<(), MoneyError> {
+        if amount == Money::ZERO {
+            return Ok(());
+        }
+        let balance = self.balance_of(from);
+        if balance < amount {
+            return Err(MoneyError::InsufficientFunds); // §8.5 — nothing applied
+        }
+        self.balances.insert(from, balance.minus(amount));
+        self.total_burned = self.total_burned.plus(amount);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -183,5 +198,27 @@ mod tests {
         accounts.mint(a(), Money::new(50));
         accounts.transfer(a(), a(), Money::new(20)).unwrap();
         assert_eq!(accounts.balance_of(a()), Money::new(50));
+    }
+
+    #[test]
+    fn burn_debits_and_logs() {
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(100));
+        accounts.burn(a(), Money::new(40)).unwrap();
+        assert_eq!(accounts.balance_of(a()), Money::new(60));
+        assert_eq!(accounts.total_burned(), Money::new(40));
+        accounts.audit();
+    }
+
+    #[test]
+    fn burn_insufficient_funds_is_atomic() {
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(10));
+        assert_eq!(
+            accounts.burn(a(), Money::new(20)),
+            Err(MoneyError::InsufficientFunds)
+        );
+        assert_eq!(accounts.balance_of(a()), Money::new(10));
+        assert_eq!(accounts.total_burned(), Money::ZERO);
     }
 }
