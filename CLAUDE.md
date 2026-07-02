@@ -68,6 +68,31 @@ These come from §8 of the design doc. Breaking one is a bug even if tests pass.
   consume → invest → sinks → mint → audit.
 - **Nodes:** v1 is one node, but built `create_node()`-ready for many.
 
+## Spec & plan policy
+
+Two artifacts, one review gate between them — do not merge them, but scale the
+ceremony to the change:
+
+- **Trivial change** → skip both, just do it.
+- **Feature-sized** → one spec doc from
+  [`docs/superpowers/specs/_template.md`](docs/superpowers/specs/_template.md):
+  a short Design section, a **Contracts** section, then an approval gate. The
+  plan (separate file, from `writing-plans`) is written *from* the contracts.
+- **Major / multi-subsystem** → separate spec and plan files as usual.
+
+**Contracts are the hard reference.** Write a spec-level I/O contract
+(signature + Given/Then + Error + invariant ref) for a unit only when it is
+load-bearing: it crosses a module boundary, enforces a §8 invariant, is the
+feature's entry point, or could behave more than one way. Leave single-caller
+helpers and obvious mechanical code to the plan — and name them as "obvious" so
+the plan-writer does not invent interpretations.
+
+**When writing a plan:** treat the spec's Contracts as the source of truth for
+names, signatures, and error behavior — copy them verbatim, never rename. The
+plan discovers the sub-functions these need and owns *their* signatures. If a
+discovered helper turns out to be load-bearing (shared / touches an invariant),
+lift it back into the spec and re-approve rather than burying it in one task.
+
 ## Conventions
 
 - Keep each module to one clear job (see §7 layout). When a file grows past its
