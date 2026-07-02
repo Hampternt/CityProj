@@ -5,6 +5,7 @@
 
 use std::io::{self, Write};
 
+use crate::agent::AgentId;
 use crate::housing::HouseId;
 use crate::sim;
 use crate::world::World;
@@ -99,7 +100,7 @@ fn render(world: &World, tick_count: u64) {
 }
 
 /// Resolves a list of agent ids to their names (unknown ids are skipped).
-fn names_of(world: &World, ids: &[crate::agent::AgentId]) -> Vec<String> {
+fn names_of(world: &World, ids: &[AgentId]) -> Vec<String> {
     ids.iter()
         .filter_map(|id| world.agent(*id))
         .map(|agent| agent.name.clone())

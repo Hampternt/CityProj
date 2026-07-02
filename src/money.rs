@@ -230,6 +230,14 @@ mod tests {
     }
 
     #[test]
+    fn burn_zero_is_noop() {
+        let mut accounts = Accounts::new();
+        accounts.burn(a(), Money::ZERO).unwrap();
+        assert_eq!(accounts.total_burned(), Money::ZERO);
+        assert!(accounts.balances.is_empty());
+    }
+
+    #[test]
     fn audit_passes_after_op_sequence() {
         let mut accounts = Accounts::new();
         accounts.mint(a(), Money::new(100));
