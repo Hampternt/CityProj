@@ -100,6 +100,29 @@ impl Accounts {
             "conservation audit failed: circulating money != minted - burned (§8.3)"
         );
     }
+
+    /// §8.2/§8.5: moves money between accounts, or errs with NO state change.
+    pub fn transfer(
+        &mut self,
+        from: AgentId,
+        to: AgentId,
+        amount: Money,
+    ) -> Result<(), MoneyError> {
+        if amount == Money::ZERO {
+            return Ok(()); // no-op by contract: creates no account entry
+        }
+        let from_balance = self.balance_of(from);
+        if from_balance < amount {
+            return Err(MoneyError::InsufficientFunds); // §8.5 — nothing applied
+        }
+        if from == to {
+            return Ok(()); // funds verified; debit + credit would cancel out
+        }
+        self.balances.insert(from, from_balance.minus(amount));
+        let to_balance = self.balance_of(to);
+        self.balances.insert(to, to_balance.plus(amount));
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -122,5 +145,43 @@ mod tests {
         assert_eq!(accounts.total_minted(), Money::new(100));
         assert_eq!(accounts.total_money(), Money::new(100));
         accounts.audit();
+    }
+
+    #[test]
+    fn transfer_moves_exact_amount() {
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(100));
+        accounts.transfer(a(), b(), Money::new(30)).unwrap();
+        assert_eq!(accounts.balance_of(a()), Money::new(70));
+        assert_eq!(accounts.balance_of(b()), Money::new(30));
+        assert_eq!(accounts.total_money(), Money::new(100));
+    }
+
+    #[test]
+    fn transfer_insufficient_funds_is_atomic() {
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(10));
+        let result = accounts.transfer(a(), b(), Money::new(20));
+        assert_eq!(result, Err(MoneyError::InsufficientFunds));
+        // no partial application — nothing changed
+        assert_eq!(accounts.balance_of(a()), Money::new(10));
+        assert_eq!(accounts.balance_of(b()), Money::ZERO);
+    }
+
+    #[test]
+    fn transfer_zero_is_noop() {
+        let mut accounts = Accounts::new();
+        accounts.transfer(a(), b(), Money::ZERO).unwrap();
+        assert_eq!(accounts.total_money(), Money::ZERO);
+        // creates no account entry (tests may touch private fields — same module)
+        assert!(accounts.balances.is_empty());
+    }
+
+    #[test]
+    fn transfer_to_self() {
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Money::new(50));
+        accounts.transfer(a(), a(), Money::new(20)).unwrap();
+        assert_eq!(accounts.balance_of(a()), Money::new(50));
     }
 }
