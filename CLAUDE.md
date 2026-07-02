@@ -16,7 +16,7 @@ Read it before non-trivial work. If code and that doc disagree, stop and reconci
 cargo run            # run the sim (interactive: Enter advances a tick, q quits)
 cargo check          # fast type-check
 cargo clippy         # lint
-cargo test           # run all tests (none yet)
+cargo test           # run all tests
 cargo test NAME      # run a single test by (sub)name
 cargo test -- --nocapture   # show stdout from tests
 ```
