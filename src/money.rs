@@ -1,6 +1,18 @@
-//! The trusted money core (§8). All money movement goes through `Accounts`:
-//! `transfer`, `mint`, and `burn` are the only mutators (§8.2), and `audit`
-//! panics the sim on any conservation violation (§8.3).
+//! The trusted money core (§8). All money movement goes through [`Accounts`]:
+//! [`Accounts::transfer`], [`Accounts::mint`], and [`Accounts::burn`] are the
+//! only mutators (§8.2), and [`Accounts::audit`] panics the sim on any
+//! conservation violation (§8.3).
+//!
+//! Nothing else in the crate may mutate balances — pricing, wages, and all
+//! other economics live in their own modules and *call into* this one.
+//!
+//! ```ignore
+//! let mut accounts = Accounts::new();
+//! accounts.mint(alice, Money::new(100));               // the only faucet
+//! accounts.transfer(alice, bob, Money::new(30))?;      // errs, never overdrafts
+//! accounts.burn(bob, Money::new(5))?;                  // the only sink
+//! accounts.audit();                                    // 95 == 100 − 5, or panic
+//! ```
 
 // The full §8.2 API ships before any mechanic calls it; tests exercise it
 // until the first mechanic does. Remove once the movers have real callers.
@@ -18,16 +30,23 @@ use crate::agent::AgentId;
 pub struct Money(u64);
 
 impl Money {
+    /// No money: the implicit balance of every account that has never been
+    /// credited, and the amount that makes [`Accounts::transfer`] /
+    /// [`Accounts::burn`] a no-op.
     pub const ZERO: Money = Money(0);
 
+    /// Wraps an amount already expressed in the smallest unit. There is no
+    /// conversion from floats or denominated units — by design (§8.1).
     pub const fn new(amount: u64) -> Self {
         Money(amount)
     }
 
+    /// Checked addition; panics on `u64` overflow rather than wrapping.
     fn plus(self, other: Money) -> Money {
         Money(self.0.checked_add(other.0).expect("money overflow"))
     }
 
+    /// Checked subtraction; panics on underflow — callers verify funds first.
     fn minus(self, other: Money) -> Money {
         Money(self.0.checked_sub(other.0).expect("money underflow"))
     }
@@ -39,8 +58,12 @@ impl fmt::Display for Money {
     }
 }
 
+/// Why a money movement was refused. Refusal is always atomic: the books are
+/// untouched when one of these is returned (§8.5).
 #[derive(Debug, PartialEq, Eq)]
 pub enum MoneyError {
+    /// The debited account holds less than the requested amount. There is no
+    /// overdraft in v1 (§8.5).
     InsufficientFunds,
 }
 
@@ -54,6 +77,8 @@ pub struct Accounts {
 }
 
 impl Accounts {
+    /// An empty book: no balances, nothing minted, nothing burned. There is
+    /// no genesis supply — money only ever enters via [`Accounts::mint`].
     pub fn new() -> Self {
         Self::default()
     }
@@ -69,25 +94,35 @@ impl Accounts {
         self.balances.values().fold(Money::ZERO, |sum, &b| sum.plus(b))
     }
 
+    /// Lifetime total ever created via [`Accounts::mint`] (§8.4 log). Never
+    /// decreases.
     pub fn total_minted(&self) -> Money {
         self.total_minted
     }
 
+    /// Lifetime total ever destroyed via [`Accounts::burn`] (§8.4 log).
+    /// Never decreases.
     pub fn total_burned(&self) -> Money {
         self.total_burned
     }
 
-    /// §8.4: the ONLY way money is created. Gold-reserve cap deferred — spec
-    /// amendment needed when the mint job arrives.
+    /// §8.4: the ONLY way money is created. Credits `to` and logs to
+    /// [`total_minted`](Accounts::total_minted); cannot fail. Gold-reserve
+    /// cap deferred — spec amendment needed when the mint job arrives.
     pub fn mint(&mut self, to: AgentId, amount: Money) {
         let balance = self.balance_of(to);
         self.balances.insert(to, balance.plus(amount));
         self.total_minted = self.total_minted.plus(amount);
     }
 
-    /// §8.3: asserts conservation, PANICS on imbalance — by design, never
-    /// softened to a `Result`. Initial supply is zero (no genesis), so
+    /// §8.3: asserts conservation. Initial supply is zero (no genesis), so
     /// circulating money must equal minted − burned exactly.
+    ///
+    /// # Panics
+    ///
+    /// Panics on any imbalance — by design, never softened to a `Result`. A
+    /// failed audit means the §8.2 chokepoint was bypassed somewhere; the sim
+    /// must not keep running on corrupt books.
     pub fn audit(&self) {
         let expected = self
             .total_minted
@@ -102,6 +137,12 @@ impl Accounts {
     }
 
     /// §8.2/§8.5: moves money between accounts, or errs with NO state change.
+    /// Zero-amount and self-transfers of verified funds are no-ops.
+    ///
+    /// # Errors
+    ///
+    /// [`MoneyError::InsufficientFunds`] if `from` holds less than `amount`
+    /// — no overdraft (§8.5), nothing applied.
     pub fn transfer(
         &mut self,
         from: AgentId,
@@ -124,8 +165,14 @@ impl Accounts {
         Ok(())
     }
 
-    /// §8.4: the ONLY way money is destroyed. Same atomicity rules as
-    /// transfer (§8.5): errs with no state change, zero is a no-op.
+    /// §8.4: the ONLY way money is destroyed. Debits `from` and logs to
+    /// [`total_burned`](Accounts::total_burned). Same atomicity rules as
+    /// [`transfer`](Accounts::transfer) (§8.5): zero is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// [`MoneyError::InsufficientFunds`] if `from` holds less than `amount`
+    /// — nothing applied.
     pub fn burn(&mut self, from: AgentId, amount: Money) -> Result<(), MoneyError> {
         if amount == Money::ZERO {
             return Ok(());

@@ -3,16 +3,22 @@
 
 use crate::agent::AgentId;
 
+/// Identifies one house. Separate from [`AgentId`] on purpose: places are
+/// not economic actors and never hold money.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HouseId(pub u32);
 
 /// A place. `owners` is the stored direction of the ownership link;
-/// occupants are always derived by scanning agents — two stored lists
-/// silently desync.
+/// occupants are always derived by scanning agents
+/// ([`World::occupants_of`](crate::world::World::occupants_of)) — two
+/// stored lists silently desync.
 #[derive(Debug)]
 pub struct House {
+    /// Unique within the world; assigned sequentially by `World::add_house`.
     pub id: HouseId,
+    /// Human-readable label, e.g. `"1 Mill Lane"`.
     pub address: String,
+    /// Who owns the place. Ownership is stored here; occupancy never is.
     pub owners: Vec<AgentId>,
     // traits TODO: designed together with agent needs (quality, capacity, …)
 }

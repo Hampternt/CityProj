@@ -6,11 +6,20 @@ use crate::agent::Agent;
 use crate::world::World;
 
 /// What an agent wants to do, decided in a pure pass and executed in an
-/// apply pass. Mechanics add variants; the skeleton has none.
+/// apply pass (see `goods_market` for the worked template). Mechanics add
+/// variants; the skeleton has none, so every `match intent {}` is
+/// exhaustive and adding a variant is a compile-time forcing function.
 pub enum Intent {}
 
-/// Runs one tick: phases 1–8 in exactly the spec table's order, then the
-/// conservation audit — unconditionally last, no early return skips it.
+/// Runs one tick: phases 1–8 in exactly the spec table's order — labor
+/// clears, produce, wages, goods clear, consume, invest, sinks, mint — then
+/// the conservation audit, unconditionally last; no early return skips it.
+///
+/// # Panics
+///
+/// Panics if the closing [`audit`](crate::money::Accounts::audit) finds the
+/// books imbalanced (§8.3) — meaning some phase moved money outside the
+/// §8.2 chokepoint.
 pub fn tick(world: &mut World) {
     labor_market(world);
     produce(world);

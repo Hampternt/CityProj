@@ -12,11 +12,16 @@ use crate::world::World;
 
 /// One parsed line of user input at the tick prompt.
 enum Command {
+    /// Empty line: advance the simulation one tick.
     Advance,
+    /// `q` (any case), EOF, or a read error: leave the loop.
     Quit,
+    /// Anything else is taken as an agent name to inspect.
     Inspect(String),
 }
 
+/// Runs the shell until quit: draw a frame, read a command, act on it.
+/// Starts from the hand-seeded [`template_world`].
 pub fn run() {
     let mut world = template_world();
     let mut tick_count: u64 = 0;
