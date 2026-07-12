@@ -44,6 +44,11 @@ empty, and nothing mints — money enters only through earned paths once the
 mint job exists. Firms are deferred (TODO markers in `sim.rs`). If you change
 structure, update this section.
 
+Next up (spec approved, not yet implemented):
+[`docs/superpowers/specs/2026-07-03-world-agent-commands-design.md`](docs/superpowers/specs/2026-07-03-world-agent-commands-design.md)
+— a `World` command layer (`pay`, home/workplace assign/vacate) whose
+Contracts section is the source of truth for its plan.
+
 ## Hard invariants (never violate)
 
 These come from §8 of the design doc. Breaking one is a bug even if tests pass.
