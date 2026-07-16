@@ -5,7 +5,7 @@
 
 use crate::agent::{Agent, AgentId};
 use crate::housing::{House, HouseId};
-use crate::money::Accounts;
+use crate::money::{Accounts, Money, MoneyError};
 
 /// The complete simulation state for one node: who exists, where they live,
 /// and every balance. [`sim::tick`](crate::sim::tick) advances exactly one
@@ -116,10 +116,60 @@ impl Default for World {
     }
 }
 
+/// Why a `World` command refused. The variant names the FIRST failed check;
+/// `Err` always means nothing changed (layer property, 07-03 spec). `Money`
+/// wraps the core's error unchanged (§8.5 no overdraft).
+#[allow(dead_code)] // no phase calls the command layer yet — same rationale as money.rs's crate allow
+#[derive(Debug, PartialEq, Eq)]
+pub enum WorldError {
+    /// The id is neither a spawned agent nor a reserved account — paying it
+    /// would silently park money on a phantom account.
+    UnknownAgent(AgentId),
+    /// No house with this id exists.
+    UnknownHouse(HouseId),
+    /// The money core refused; wrapped unchanged.
+    Money(MoneyError),
+}
+
+impl From<MoneyError> for WorldError {
+    fn from(err: MoneyError) -> Self {
+        WorldError::Money(err)
+    }
+}
+
+/// The command layer (07-03): validated wrappers that tick phases, worldgen,
+/// and the interactive shell all reuse. Every command validates BEFORE
+/// touching any state, so `Err` always means nothing changed.
+#[allow(dead_code)] // no phase calls these yet — same rationale as money.rs's crate allow
+impl World {
+    /// Known to the books: a spawned agent or a reserved account id. `pay`'s
+    /// guard against parking money on phantom (typo'd) ids — `Accounts`
+    /// itself creates accounts implicitly and cannot tell.
+    fn is_known_account(&self, id: AgentId) -> bool {
+        id == self.mint_id || id == self.external_id || self.agent(id).is_some()
+    }
+
+    /// Validated money movement: checks both ids (`from` first), then
+    /// forwards to the §8.2 chokepoint unchanged — including the zero and
+    /// self-pay no-ops and the §8.5 refusal. Reserved ids are legal in BOTH
+    /// positions (sinks pay External; paying Mint merely parks counted
+    /// money).
+    pub fn pay(&mut self, from: AgentId, to: AgentId, amount: Money) -> Result<(), WorldError> {
+        if !self.is_known_account(from) {
+            return Err(WorldError::UnknownAgent(from));
+        }
+        if !self.is_known_account(to) {
+            return Err(WorldError::UnknownAgent(to));
+        }
+        self.accounts.transfer(from, to, amount)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::money::Money;
+    use crate::money::{Money, MoneyError};
 
     #[test]
     fn reserved_ids_exist() {
@@ -153,5 +203,68 @@ mod tests {
     fn occupants_of_unknown_house_is_empty() {
         let world = World::new();
         assert!(world.occupants_of(HouseId(99)).is_empty());
+    }
+
+    #[test]
+    fn pay_moves_money_between_spawned_agents() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        let b = world.spawn_agent("b", None, None);
+        world.accounts.mint(a, Money::new(100)); // sanctioned test funding
+        world.pay(a, b, Money::new(30)).unwrap();
+        assert_eq!(world.accounts.balance_of(a), Money::new(70));
+        assert_eq!(world.accounts.balance_of(b), Money::new(30));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn pay_rejects_unknown_ids_before_anything_else() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        let ghost = AgentId(99);
+        // both unknown: `from` is reported (checked first)
+        assert_eq!(
+            world.pay(ghost, ghost, Money::new(5)),
+            Err(WorldError::UnknownAgent(ghost))
+        );
+        // validation precedes the zero no-op (spec edge: rejecting phantom
+        // ids is the point of this method)
+        assert_eq!(
+            world.pay(ghost, a, Money::ZERO),
+            Err(WorldError::UnknownAgent(ghost))
+        );
+        // `to` is validated too — the phantom-account defence
+        assert_eq!(
+            world.pay(a, ghost, Money::new(5)),
+            Err(WorldError::UnknownAgent(ghost))
+        );
+        // nothing moved on any Err
+        assert_eq!(world.accounts.total_money(), Money::ZERO);
+    }
+
+    #[test]
+    fn pay_surfaces_insufficient_funds_unchanged() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        let b = world.spawn_agent("b", None, None);
+        world.accounts.mint(a, Money::new(10));
+        assert_eq!(
+            world.pay(a, b, Money::new(20)),
+            Err(WorldError::Money(MoneyError::InsufficientFunds))
+        );
+        // §8.5 atomic — books untouched
+        assert_eq!(world.accounts.balance_of(a), Money::new(10));
+        assert_eq!(world.accounts.balance_of(b), Money::ZERO);
+    }
+
+    #[test]
+    fn pay_allows_reserved_ids_both_ends() {
+        let mut world = World::new();
+        world.accounts.mint(world.mint_id, Money::new(50));
+        world
+            .pay(world.mint_id, world.external_id, Money::new(20))
+            .unwrap();
+        assert_eq!(world.accounts.balance_of(world.external_id), Money::new(20));
+        world.accounts.audit();
     }
 }
