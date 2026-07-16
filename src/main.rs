@@ -14,6 +14,7 @@
 //! - [`agent`] — [`agent::Agent`], the person-level economic actor.
 //! - [`housing`] — [`housing::House`], first-class places agents live and
 //!   (later) work in.
+//! - [`role`] — [`role::Role`], the closed set of job roles.
 //! - [`world`] — [`world::World`] bundles agents, houses, and accounts, and
 //!   reserves the Mint and External account ids.
 //! - [`sim`] — [`sim::tick`], the fixed 9-phase tick; mechanics land inside
@@ -35,6 +36,7 @@ mod agent;
 mod engine;
 mod housing;
 mod money;
+mod role;
 mod sim;
 mod world;
 
