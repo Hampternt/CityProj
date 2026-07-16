@@ -44,10 +44,24 @@ empty, and nothing mints — money enters only through earned paths once the
 mint job exists. Firms are deferred (TODO markers in `sim.rs`). If you change
 structure, update this section.
 
-Next up (spec approved, not yet implemented):
-[`docs/superpowers/specs/2026-07-03-world-agent-commands-design.md`](docs/superpowers/specs/2026-07-03-world-agent-commands-design.md)
-— a `World` command layer (`pay`, home/workplace assign/vacate) whose
-Contracts section is the source of truth for its plan.
+Next up (specs approved, not yet implemented), in order:
+
+1. [`docs/superpowers/specs/2026-07-03-world-agent-commands-design.md`](docs/superpowers/specs/2026-07-03-world-agent-commands-design.md)
+   — a `World` command layer (`pay`, home/workplace assign/vacate) whose
+   Contracts section is the source of truth for its plan. Ships single-metal;
+   the multi-metal migration pass revises `pay` later (see that spec's
+   Migration impact).
+2. [`docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md`](docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md)
+   — `Business`/`Role`/`RoleSlot` structs and agent specialization fields,
+   struct-only, no behavior. Amends 07-03's `pay` to recognize business ids
+   (its Amendment 14). Supersedes the historical business-wages-alpha spec
+   (never checked in).
+
+Pending approval (no plan until signed off):
+[`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)
+— `Accounts` keyed by `(AgentId, Metal)`; gold/silver/copper independently
+conserved. Revises shipped `money.rs` and both specs above at its listed
+migration points.
 
 ## Hard invariants (never violate)
 
