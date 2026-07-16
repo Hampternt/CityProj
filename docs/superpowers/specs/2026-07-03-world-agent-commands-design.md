@@ -1,6 +1,6 @@
 # World agent commands — Design Spec
 
-**Status:** approved in conversation 2026-07-03 (design); spec under review ·
+**Status:** implemented 2026-07-16 (commits 636ff61..958a80e; `pay` amended by 07-13 Am. 14 in 25f2640) ·
 **Parent:** [2026-07-02-money-gameloop-skeleton-design.md](2026-07-02-money-gameloop-skeleton-design.md)
 
 ## Design (decisions — approve before reading on)

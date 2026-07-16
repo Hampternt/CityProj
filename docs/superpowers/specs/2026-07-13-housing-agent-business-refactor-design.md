@@ -1,6 +1,6 @@
 # Housing, Business & Agent Refactor — Design Spec
 
-**Status:** approved in conversation 2026-07-16 (design); spec under review ·
+**Status:** implemented 2026-07-16 (commits 9b5e774..25f2640) ·
 **Parent:** [2026-07-02-money-gameloop-skeleton-design.md](2026-07-02-money-gameloop-skeleton-design.md) (parent: [2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md))
 **Supersedes:** 2026-07-12-business-wages-alpha-design.md — scope replaced, not deferred (Amendment 11). That spec is NOT in the repo (historical, superseded before check-in); everything from it that survives is restated in full here, so nothing below depends on reading it.
 **Depends on:** [2026-07-03-world-agent-commands-design.md](2026-07-03-world-agent-commands-design.md) (`World::pay`, `assign_workplace`, `WorldError`) — implement first. This spec amends its `pay` contract (Amendment 14).

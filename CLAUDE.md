@@ -37,9 +37,9 @@ new mechanics into the loop and money:
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
-  to the §8.2 chokepoint; `create_business` allocates account-only business ids from the agent
-  counter; `businesses()` is the shared phase query; `pay` recognizes
-  business ids (refactor Am. 14).
+  to the §8.2 chokepoint; `create_business` allocates account-only business
+  ids from the agent counter; `businesses()` is the shared phase query;
+  `pay` recognizes business ids (refactor Am. 14).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last; `goods_market` holds the worked decide→apply template; `Intent` is
   the (empty) enum mechanics extend.

@@ -134,8 +134,9 @@ impl Default for World {
 #[allow(dead_code)] // no phase calls the command layer yet — same rationale as money.rs's crate allow
 #[derive(Debug, PartialEq, Eq)]
 pub enum WorldError {
-    /// The id is neither a spawned agent nor a reserved account — paying it
-    /// would silently park money on a phantom account.
+    /// The id is neither a spawned agent, a reserved account, nor an
+    /// existing business id (Am. 14) — paying it would silently park money
+    /// on a phantom account.
     UnknownAgent(AgentId),
     /// No house with this id exists.
     UnknownHouse(HouseId),
