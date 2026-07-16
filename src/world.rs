@@ -253,6 +253,18 @@ impl World {
             Some(Business { id, roles });
         Ok(id)
     }
+
+    /// Every house that hosts a business, paired with it, in `houses` order
+    /// — the ONE shared query future phases (`labor_market`, `produce`,
+    /// `pay_wages`, `invest`) use to find businesses, each on its own turn
+    /// under its own money-permission contract (Amendment 13: no
+    /// per-entity-type resolve phase). Read-only; a `businesses_mut` is
+    /// future work, added only when a phase mutates `Business` fields.
+    pub fn businesses(&self) -> impl Iterator<Item = (&House, &Business)> {
+        self.houses
+            .iter()
+            .filter_map(|house| house.business.as_ref().map(|business| (house, business)))
+    }
 }
 
 #[cfg(test)]
@@ -525,5 +537,21 @@ mod tests {
             world.house(house).unwrap().business.as_ref().unwrap().id,
             first
         );
+    }
+
+    #[test]
+    fn businesses_yields_only_hosting_houses_in_houses_order() {
+        let mut world = World::new();
+        let h1 = world.add_house("1 Mill Lane", vec![]);
+        world.add_house("2 Kiln Row", vec![]); // hosts nothing — must be skipped
+        let h3 = world.add_house("3 Forge Way", vec![]);
+        // created out of order to prove iteration follows `houses`, not creation
+        let b3 = world.create_business(h3, HashMap::new()).unwrap();
+        let b1 = world.create_business(h1, HashMap::new()).unwrap();
+        let found: Vec<_> = world
+            .businesses()
+            .map(|(house, business)| (house.id, business.id))
+            .collect();
+        assert_eq!(found, vec![(h1, b1), (h3, b3)]);
     }
 }

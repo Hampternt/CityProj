@@ -25,7 +25,6 @@ pub struct House {
     /// house either hosts one or doesn't; capability is data, not a type
     /// split). At most one per house (v1). Attach via
     /// `World::create_business`.
-    #[allow(dead_code)]
     pub business: Option<Business>,
     // traits TODO: designed together with agent needs (quality, capacity, …)
 }
