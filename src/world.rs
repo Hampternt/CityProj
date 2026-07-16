@@ -4,8 +4,11 @@
 //! reassigned.
 
 use crate::agent::{Agent, AgentId};
+use crate::business::{Business, RoleSlot};
 use crate::housing::{House, HouseId};
 use crate::money::{Accounts, Money, MoneyError};
+use crate::role::Role;
+use std::collections::HashMap;
 
 /// The complete simulation state for one node: who exists, where they live,
 /// and every balance. [`sim::tick`](crate::sim::tick) advances exactly one
@@ -112,6 +115,11 @@ impl World {
     pub fn agent_mut(&mut self, id: AgentId) -> Option<&mut Agent> {
         self.agents.iter_mut().find(|agent| agent.id == id)
     }
+
+    /// Mutable lookup by id — mirrors [`agent_mut`](World::agent_mut).
+    pub fn house_mut(&mut self, id: HouseId) -> Option<&mut House> {
+        self.houses.iter_mut().find(|house| house.id == id)
+    }
 }
 
 impl Default for World {
@@ -131,6 +139,8 @@ pub enum WorldError {
     UnknownAgent(AgentId),
     /// No house with this id exists.
     UnknownHouse(HouseId),
+    /// The house already hosts a business — at most one per house (v1).
+    BusinessAlreadyExists(HouseId),
     /// The money core refused; wrapped unchanged.
     Money(MoneyError),
 }
@@ -219,12 +229,37 @@ impl World {
             None => Err(WorldError::UnknownAgent(agent)),
         }
     }
+
+    /// Attaches a new business to `house`, allocating its account id from
+    /// the same counter as `spawn_agent` — never a reserved id, never
+    /// reused, and NO `Agent` struct is created (business ids are
+    /// account-only, like Mint/External). Validates before touching state:
+    /// `Err` means nothing changed.
+    pub fn create_business(
+        &mut self,
+        house: HouseId,
+        roles: HashMap<Role, RoleSlot>,
+    ) -> Result<AgentId, WorldError> {
+        match self.house(house) {
+            None => return Err(WorldError::UnknownHouse(house)),
+            Some(existing) if existing.business.is_some() => {
+                return Err(WorldError::BusinessAlreadyExists(house));
+            }
+            Some(_) => {}
+        }
+        let id = AgentId(self.next_agent_id);
+        self.next_agent_id += 1;
+        self.house_mut(house).expect("existence checked above").business =
+            Some(Business { id, roles });
+        Ok(id)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::money::{Money, MoneyError};
+    use std::collections::HashMap;
 
     #[test]
     fn reserved_ids_exist() {
@@ -447,5 +482,48 @@ mod tests {
         assert_eq!(agent.specialization, None);
         assert_eq!(agent.employed_role, None);
         assert_eq!(agent.education, 0);
+    }
+
+    #[test]
+    fn create_business_allocates_id_from_agent_counter() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let person = world.spawn_agent("a", None, None);
+        let business = world.create_business(house, HashMap::new()).unwrap();
+        // shared counter: distinct from reserved ids and every spawned agent
+        assert_ne!(business, world.mint_id);
+        assert_ne!(business, world.external_id);
+        assert_ne!(business, person);
+        // account-only id: no Agent struct behind it (like Mint/External)
+        assert!(world.agent(business).is_none());
+        // the counter moved on — later spawns can't collide either
+        let later = world.spawn_agent("b", None, None);
+        assert_ne!(later, business);
+    }
+
+    #[test]
+    fn create_business_rejects_unknown_house() {
+        let mut world = World::new();
+        let ghost = HouseId(99);
+        assert_eq!(
+            world.create_business(ghost, HashMap::new()),
+            Err(WorldError::UnknownHouse(ghost))
+        );
+    }
+
+    #[test]
+    fn create_business_rejects_duplicate() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let first = world.create_business(house, HashMap::new()).unwrap();
+        assert_eq!(
+            world.create_business(house, HashMap::new()),
+            Err(WorldError::BusinessAlreadyExists(house))
+        );
+        // Err changed nothing: the original business is untouched
+        assert_eq!(
+            world.house(house).unwrap().business.as_ref().unwrap().id,
+            first
+        );
     }
 }
