@@ -31,10 +31,15 @@ new mechanics into the loop and money:
 - `src/money.rs` — `Money`, `MoneyError`, `Accounts` (the §8 trusted core:
   `transfer`/`mint`/`burn` movers, `audit` panics on imbalance).
 - `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
+- `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
+  `Business`/`RoleSlot` (per-role wages, account-only money) — struct-only,
+  no behavior reads them yet.
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
-  to the §8.2 chokepoint.
+  to the §8.2 chokepoint; `create_business` allocates account-only business ids from the agent
+  counter; `businesses()` is the shared phase query; `pay` recognizes
+  business ids (refactor Am. 14).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last; `goods_market` holds the worked decide→apply template; `Intent` is
   the (empty) enum mechanics extend.
@@ -46,17 +51,11 @@ empty, and nothing mints — money enters only through earned paths once the
 mint job exists. Firms are deferred (TODO markers in `sim.rs`). If you change
 structure, update this section.
 
-Next up (spec approved, not yet implemented):
-[`docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md`](docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md)
-— `Business`/`Role`/`RoleSlot` structs and agent specialization fields,
-struct-only, no behavior. Amends the implemented 07-03 `pay` to recognize
-business ids (its Amendment 14).
-
-Pending approval (no plan until signed off):
+Next up: nothing approved. Pending approval (no plan until signed off):
 [`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)
-— `Accounts` keyed by `(AgentId, Metal)`; gold/silver/copper independently
-conserved. Revises shipped `money.rs` and both specs above at its listed
-migration points.
+— `Accounts` keyed by `(AgentId, Metal)`; revises shipped `money.rs`,
+`World::pay`, and `RoleSlot.wage` at its listed migration points. After
+that: a wage-payment/hiring behavior spec built on `World::businesses()`.
 
 ## Hard invariants (never violate)
 

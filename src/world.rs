@@ -156,11 +156,15 @@ impl From<MoneyError> for WorldError {
 /// touching any state, so `Err` always means nothing changed.
 #[allow(dead_code)] // no phase calls these yet — same rationale as money.rs's crate allow
 impl World {
-    /// Known to the books: a spawned agent or a reserved account id. `pay`'s
-    /// guard against parking money on phantom (typo'd) ids — `Accounts`
-    /// itself creates accounts implicitly and cannot tell.
+    /// Known to the books: a spawned agent, a reserved account id, or an
+    /// existing business id (Amendment 14). `pay`'s guard against parking
+    /// money on phantom (typo'd) ids — `Accounts` itself creates accounts
+    /// implicitly and cannot tell.
     fn is_known_account(&self, id: AgentId) -> bool {
-        id == self.mint_id || id == self.external_id || self.agent(id).is_some()
+        id == self.mint_id
+            || id == self.external_id
+            || self.agent(id).is_some()
+            || self.businesses().any(|(_, business)| business.id == id)
     }
 
     /// Validated money movement: checks both ids (`from` first), then
@@ -553,5 +557,27 @@ mod tests {
             .map(|(house, business)| (house.id, business.id))
             .collect();
         assert_eq!(found, vec![(h1, b1), (h3, b3)]);
+    }
+
+    #[test]
+    fn pay_accepts_business_ids() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let worker = world.spawn_agent("a", None, None);
+        let business = world.create_business(house, HashMap::new()).unwrap();
+        world.accounts.mint(business, Money::new(100)); // sanctioned test funding
+        // business → agent: the future pay_wages direction
+        world.pay(business, worker, Money::new(40)).unwrap();
+        // agent → business: the future goods-purchase direction
+        world.pay(worker, business, Money::new(10)).unwrap();
+        assert_eq!(world.accounts.balance_of(business), Money::new(70));
+        assert_eq!(world.accounts.balance_of(worker), Money::new(30));
+        // unknown non-business ids are still refused
+        let ghost = AgentId(99);
+        assert_eq!(
+            world.pay(ghost, worker, Money::new(1)),
+            Err(WorldError::UnknownAgent(ghost))
+        );
+        world.accounts.audit();
     }
 }
