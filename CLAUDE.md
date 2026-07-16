@@ -32,7 +32,9 @@ new mechanics into the loop and money:
   `transfer`/`mint`/`burn` movers, `audit` panics on imbalance).
 - `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
-  External account ids; occupancy is derived, never stored.
+  External account ids; occupancy is derived, never stored; the 07-03 command
+  layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
+  to the §8.2 chokepoint.
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last; `goods_market` holds the worked decide→apply template; `Intent` is
   the (empty) enum mechanics extend.
@@ -44,18 +46,11 @@ empty, and nothing mints — money enters only through earned paths once the
 mint job exists. Firms are deferred (TODO markers in `sim.rs`). If you change
 structure, update this section.
 
-Next up (specs approved, not yet implemented), in order:
-
-1. [`docs/superpowers/specs/2026-07-03-world-agent-commands-design.md`](docs/superpowers/specs/2026-07-03-world-agent-commands-design.md)
-   — a `World` command layer (`pay`, home/workplace assign/vacate) whose
-   Contracts section is the source of truth for its plan. Ships single-metal;
-   the multi-metal migration pass revises `pay` later (see that spec's
-   Migration impact).
-2. [`docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md`](docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md)
-   — `Business`/`Role`/`RoleSlot` structs and agent specialization fields,
-   struct-only, no behavior. Amends 07-03's `pay` to recognize business ids
-   (its Amendment 14). Supersedes the historical business-wages-alpha spec
-   (never checked in).
+Next up (spec approved, not yet implemented):
+[`docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md`](docs/superpowers/specs/2026-07-13-housing-agent-business-refactor-design.md)
+— `Business`/`Role`/`RoleSlot` structs and agent specialization fields,
+struct-only, no behavior. Amends the implemented 07-03 `pay` to recognize
+business ids (its Amendment 14).
 
 Pending approval (no plan until signed off):
 [`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)

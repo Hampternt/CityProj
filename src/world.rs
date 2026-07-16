@@ -189,6 +189,32 @@ impl World {
             None => Err(WorldError::UnknownAgent(agent)),
         }
     }
+
+    /// Sets `agent`'s workplace. Identical contract to
+    /// [`assign_home`](World::assign_home) on the `workplace` field. No
+    /// firm-side checks in v1 — any existing house qualifies; firm
+    /// validation arrives via spec amendment when firms land.
+    pub fn assign_workplace(&mut self, agent: AgentId, house: HouseId) -> Result<(), WorldError> {
+        if self.agent(agent).is_none() {
+            return Err(WorldError::UnknownAgent(agent)); // agent checked first
+        }
+        if self.house(house).is_none() {
+            return Err(WorldError::UnknownHouse(house));
+        }
+        self.agent_mut(agent).expect("existence checked above").workplace = Some(house);
+        Ok(())
+    }
+
+    /// Clears `agent`'s workplace; already-unemployed is an Ok no-op.
+    pub fn vacate_workplace(&mut self, agent: AgentId) -> Result<(), WorldError> {
+        match self.agent_mut(agent) {
+            Some(person) => {
+                person.workplace = None;
+                Ok(())
+            }
+            None => Err(WorldError::UnknownAgent(agent)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -348,5 +374,57 @@ mod tests {
         world.vacate_home(a).unwrap();
         let ghost = AgentId(99);
         assert_eq!(world.vacate_home(ghost), Err(WorldError::UnknownAgent(ghost)));
+    }
+
+    #[test]
+    fn assign_workplace_sets_and_moves() {
+        let mut world = World::new();
+        let h1 = world.add_house("1 Mill Lane", vec![]);
+        let h2 = world.add_house("2 Kiln Row", vec![]);
+        let a = world.spawn_agent("a", None, None);
+        world.assign_workplace(a, h1).unwrap();
+        assert_eq!(world.agent(a).unwrap().workplace, Some(h1));
+        // re-assigning moves the workplace link
+        world.assign_workplace(a, h2).unwrap();
+        assert_eq!(world.agent(a).unwrap().workplace, Some(h2));
+    }
+
+    #[test]
+    fn assign_workplace_checks_agent_then_house() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let a = world.spawn_agent("a", None, None);
+        let ghost_agent = AgentId(99);
+        let ghost_house = HouseId(99);
+        assert_eq!(
+            world.assign_workplace(ghost_agent, house),
+            Err(WorldError::UnknownAgent(ghost_agent))
+        );
+        assert_eq!(
+            world.assign_workplace(a, ghost_house),
+            Err(WorldError::UnknownHouse(ghost_house))
+        );
+        assert_eq!(
+            world.assign_workplace(ghost_agent, ghost_house),
+            Err(WorldError::UnknownAgent(ghost_agent))
+        );
+        // nothing changed on any Err
+        assert_eq!(world.agent(a).unwrap().workplace, None);
+    }
+
+    #[test]
+    fn vacate_workplace_clears_and_tolerates_unemployed() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let a = world.spawn_agent("a", None, Some(house));
+        world.vacate_workplace(a).unwrap();
+        assert_eq!(world.agent(a).unwrap().workplace, None);
+        // already-unemployed is an Ok no-op
+        world.vacate_workplace(a).unwrap();
+        let ghost = AgentId(99);
+        assert_eq!(
+            world.vacate_workplace(ghost),
+            Err(WorldError::UnknownAgent(ghost))
+        );
     }
 }
