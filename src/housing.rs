@@ -2,6 +2,7 @@
 //! area. Firms will later attach to a `HouseId`, possibly shared with homes.
 
 use crate::agent::AgentId;
+use crate::business::Business;
 
 /// Identifies one house. Separate from [`AgentId`] on purpose: places are
 /// not economic actors and never hold money.
@@ -20,5 +21,11 @@ pub struct House {
     pub address: String,
     /// Who owns the place. Ownership is stored here; occupancy never is.
     pub owners: Vec<AgentId>,
+    /// The business operating here, if any (composition, Amendment 10 — a
+    /// house either hosts one or doesn't; capability is data, not a type
+    /// split). At most one per house (v1). Attach via
+    /// `World::create_business`.
+    #[allow(dead_code)]
+    pub business: Option<Business>,
     // traits TODO: designed together with agent needs (quality, capacity, …)
 }

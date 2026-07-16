@@ -72,6 +72,7 @@ impl World {
             id,
             address: address.to_string(),
             owners,
+            business: None,
         });
         id
     }
@@ -426,5 +427,12 @@ mod tests {
             world.vacate_workplace(ghost),
             Err(WorldError::UnknownAgent(ghost))
         );
+    }
+
+    #[test]
+    fn houses_start_without_business() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        assert!(world.house(house).unwrap().business.is_none());
     }
 }
