@@ -12,6 +12,8 @@
 //!   balance; `transfer` / `mint` / `burn` are the only mutators and `audit`
 //!   panics on any conservation violation.
 //! - [`agent`] — [`agent::Agent`], the person-level economic actor.
+//! - [`business`] — [`business::Business`], a house's employer capability;
+//!   account-only money-wise (no balance field).
 //! - [`housing`] — [`housing::House`], first-class places agents live and
 //!   (later) work in.
 //! - [`role`] — [`role::Role`], the closed set of job roles.
@@ -33,6 +35,7 @@
 //! private items are included automatically.
 
 mod agent;
+mod business;
 mod engine;
 mod housing;
 mod money;
