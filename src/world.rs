@@ -12,8 +12,8 @@ use crate::money::{Accounts, Money, MoneyError};
 /// of these per tick. v1 is a single node, but nothing here assumes it stays
 /// that way.
 pub struct World {
-    /// Every person in the node. Reserved ids (Mint, External) have NO entry
-    /// here — they are accounts only.
+    /// Every person in the node. Reserved ids (Mint, External) and business
+    /// ids have NO entry here — they are accounts only.
     pub agents: Vec<Agent>,
     /// Every place in the node.
     pub houses: Vec<House>,
@@ -60,6 +60,9 @@ impl World {
             name: name.to_string(),
             home,
             workplace,
+            specialization: None,
+            employed_role: None,
+            education: 0,
         });
         id
     }
@@ -434,5 +437,15 @@ mod tests {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
         assert!(world.house(house).unwrap().business.is_none());
+    }
+
+    #[test]
+    fn agent_new_fields_default_to_none_and_zero() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        let agent = world.agent(a).unwrap();
+        assert_eq!(agent.specialization, None);
+        assert_eq!(agent.employed_role, None);
+        assert_eq!(agent.education, 0);
     }
 }

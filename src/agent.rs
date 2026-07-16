@@ -2,9 +2,11 @@
 //! amendment 3). Balances live only in `Accounts`, never on `Agent`.
 
 use crate::housing::HouseId;
+use crate::role::Role;
 
 /// Identifies one agent. Also keys `Accounts` balances — including the
-/// reserved Mint and External accounts, which have no `Agent` struct.
+/// reserved Mint/External accounts AND business ids, which have accounts
+/// but no `Agent` struct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AgentId(pub u32);
 
@@ -25,4 +27,18 @@ pub struct Agent {
     pub home: Option<HouseId>,
     /// Where this agent works, if anywhere. Unused until firms land.
     pub workplace: Option<HouseId>,
+    /// Role this agent is trained for; `None` = unspecialized/general
+    /// labour. Independent of `employed_role` — agents can work off-spec.
+    #[allow(dead_code)]
+    pub specialization: Option<Role>,
+    /// Role currently filled at `workplace`. Stored, not derived — nothing
+    /// else records it. Intended invariant, documented but NOT yet
+    /// enforced: `employed_role.is_some()` implies `workplace.is_some()`;
+    /// enforcement belongs to the future `assign_workplace` extension.
+    #[allow(dead_code)]
+    pub employed_role: Option<Role>,
+    /// Reserved skill scalar with no defined effect yet — range and meaning
+    /// are decided by the first spec that reads it.
+    #[allow(dead_code)]
+    pub education: u8,
 }
