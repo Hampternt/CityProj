@@ -164,6 +164,31 @@ impl World {
         self.accounts.transfer(from, to, amount)?;
         Ok(())
     }
+
+    /// Houses `agent` at `house` (link rule: writes only the agent-side
+    /// field; occupancy stays derived). Re-assigning an already-housed
+    /// agent moves them.
+    pub fn assign_home(&mut self, agent: AgentId, house: HouseId) -> Result<(), WorldError> {
+        if self.agent(agent).is_none() {
+            return Err(WorldError::UnknownAgent(agent)); // agent checked first
+        }
+        if self.house(house).is_none() {
+            return Err(WorldError::UnknownHouse(house));
+        }
+        self.agent_mut(agent).expect("existence checked above").home = Some(house);
+        Ok(())
+    }
+
+    /// Clears `agent`'s home; already-homeless is an Ok no-op.
+    pub fn vacate_home(&mut self, agent: AgentId) -> Result<(), WorldError> {
+        match self.agent_mut(agent) {
+            Some(person) => {
+                person.home = None;
+                Ok(())
+            }
+            None => Err(WorldError::UnknownAgent(agent)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +291,62 @@ mod tests {
             .unwrap();
         assert_eq!(world.accounts.balance_of(world.external_id), Money::new(20));
         world.accounts.audit();
+    }
+
+    #[test]
+    fn assign_home_sets_and_moves() {
+        let mut world = World::new();
+        let h1 = world.add_house("1 Mill Lane", vec![]);
+        let h2 = world.add_house("2 Kiln Row", vec![]);
+        let a = world.spawn_agent("a", None, None);
+        world.assign_home(a, h1).unwrap();
+        assert_eq!(world.occupants_of(h1), vec![a]);
+        // re-assigning moves — derived occupancy follows (link rule)
+        world.assign_home(a, h2).unwrap();
+        assert!(world.occupants_of(h1).is_empty());
+        assert_eq!(world.occupants_of(h2), vec![a]);
+    }
+
+    #[test]
+    fn assign_home_checks_agent_then_house() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let a = world.spawn_agent("a", None, None);
+        let ghost_agent = AgentId(99);
+        let ghost_house = HouseId(99);
+        assert_eq!(
+            world.assign_home(ghost_agent, house),
+            Err(WorldError::UnknownAgent(ghost_agent))
+        );
+        assert_eq!(
+            world.assign_home(a, ghost_house),
+            Err(WorldError::UnknownHouse(ghost_house))
+        );
+        // both unknown: agent reported (checked first)
+        assert_eq!(
+            world.assign_home(ghost_agent, ghost_house),
+            Err(WorldError::UnknownAgent(ghost_agent))
+        );
+        // reserved ids are NOT agents — accounts, not Agent structs
+        let mint = world.mint_id;
+        assert_eq!(
+            world.assign_home(mint, house),
+            Err(WorldError::UnknownAgent(mint))
+        );
+        // nothing changed on any Err
+        assert!(world.occupants_of(house).is_empty());
+    }
+
+    #[test]
+    fn vacate_home_clears_and_tolerates_homeless() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let a = world.spawn_agent("a", Some(house), None);
+        world.vacate_home(a).unwrap();
+        assert_eq!(world.agent(a).unwrap().home, None);
+        // already-homeless is an Ok no-op
+        world.vacate_home(a).unwrap();
+        let ghost = AgentId(99);
+        assert_eq!(world.vacate_home(ghost), Err(WorldError::UnknownAgent(ghost)));
     }
 }
