@@ -44,6 +44,13 @@ pub struct Business {
     /// The roles this business employs — one wage/headcount per role
     /// (Amendment 11: role-differentiated, never a flat figure).
     pub roles: HashMap<Role, RoleSlot>,
+    /// Wage debt per worker (arrears, 07-19 pricing spec): phase 3
+    /// accrues each tick's wage here, pays what the coffers cover via a
+    /// normal transfer, and keeps the shortfall. Entries are removed at
+    /// zero — an empty map means fully paid. Bookkeeping only, never a
+    /// negative balance (§8.2/§8.5).
+    #[allow(dead_code)] // read by Task 3 phase-3 payment, Task 6 inspection
+    pub owed_to: HashMap<AgentId, Money>,
 }
 
 impl Business {
@@ -54,6 +61,15 @@ impl Business {
         self.roles.values().fold(Money::ZERO, |sum, slot| {
             sum.plus(slot.wage.times(slot.headcount))
         })
+    }
+
+    /// Total outstanding wage debt across all workers. Display and
+    /// diagnostics; phase 3 works per-worker, not from this sum.
+    #[allow(dead_code)] // read by Task 6 inspection
+    pub fn owed_total(&self) -> Money {
+        self.owed_to
+            .values()
+            .fold(Money::ZERO, |sum, &owed| sum.plus(owed))
     }
 }
 
@@ -85,6 +101,7 @@ mod tests {
             price: Money::new(1),
             stock: 0,
             roles,
+            owed_to: HashMap::new(),
         };
         assert_eq!(business.roles[&Role::Engineer].wage, Money::new(12));
         assert_eq!(business.roles[&Role::Engineer].headcount, 2);
@@ -115,6 +132,7 @@ mod tests {
             price: Money::new(1),
             stock: 0,
             roles,
+            owed_to: HashMap::new(),
         };
         // 12×2 + 7×5
         assert_eq!(business.wage_bill(), Money::new(59));
@@ -124,7 +142,24 @@ mod tests {
             price: Money::new(5),
             stock: 0,
             roles: HashMap::new(),
+            owed_to: HashMap::new(),
         };
         assert_eq!(empty.wage_bill(), Money::ZERO);
+    }
+
+    #[test]
+    fn owed_total_sums_the_arrears_ledger() {
+        let mut business = Business {
+            id: AgentId(42),
+            product: Good::Food,
+            price: Money::new(1),
+            stock: 0,
+            roles: HashMap::new(),
+            owed_to: HashMap::new(),
+        };
+        assert_eq!(business.owed_total(), Money::ZERO);
+        business.owed_to.insert(AgentId(1), Money::new(30));
+        business.owed_to.insert(AgentId(2), Money::new(12));
+        assert_eq!(business.owed_total(), Money::new(42));
     }
 }

@@ -271,6 +271,7 @@ impl World {
             price,
             stock: 0,
             roles,
+            owed_to: HashMap::new(),
         });
         Ok(id)
     }
