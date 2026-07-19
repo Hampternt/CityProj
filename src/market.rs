@@ -45,6 +45,7 @@ const PRICE_FLOOR: Money = Money::new(1);
 /// `PRICE_FLOOR`. Pure and total. `offered == 0` is "no signal", not
 /// poor sales — the price holds. Callers guarantee `sold <= offered`.
 /// Ratio checks are integer cross-multiplication — no floats (§8.1).
+#[allow(dead_code)] // wired up in pricing tatonnement (Task 4)
 pub fn adjust_price(price: Money, offered: u32, sold: u32) -> Money {
     if offered == 0 {
         return price;
@@ -54,6 +55,7 @@ pub fn adjust_price(price: Money, offered: u32, sold: u32) -> Money {
     if sold * RAISE_THRESHOLD.1 >= offered * RAISE_THRESHOLD.0 {
         price.plus(step)
     } else if sold * LOWER_THRESHOLD.1 < offered * LOWER_THRESHOLD.0 {
+        // price would land below the floor if we subtract the step, so clamp to floor
         if price > step.plus(PRICE_FLOOR) {
             price.minus(step)
         } else {

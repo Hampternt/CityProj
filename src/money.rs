@@ -56,6 +56,7 @@ impl Money {
     /// Checked integer division, flooring — the proportional-step
     /// helper for pricing (§8.1: stays integer). Panics on a zero
     /// divisor; callers pass literal constants.
+    #[allow(dead_code)] // wired up in pricing tatonnement (Task 4)
     pub fn divided_by(self, divisor: u64) -> Money {
         Money(self.0.checked_div(divisor).expect("money division by zero"))
     }
