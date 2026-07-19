@@ -19,6 +19,7 @@ cargo clippy         # lint
 cargo test           # run all tests
 cargo test NAME      # run a single test by (sub)name
 cargo test -- --nocapture   # show stdout from tests
+cargo fmt            # format (fmt sweeps are part of the workflow)
 ```
 
 ## Current code state vs. target layout
@@ -48,8 +49,10 @@ new mechanics into the loop and money:
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last; `goods_market` holds the worked decide→apply template; `Intent` is
   the enum mechanics extend — `Intent::Buy` is its first variant.
-- `src/engine/game_loop.rs` — interactive shell only: Enter advances a tick,
-  an agent name inspects it, q quits.
+- `src/engine/game_loop.rs` — interactive shell (Enter advances a tick, an
+  agent name inspects it, q quits) plus `template_world`, the worldgen that
+  seeds the 07-19 farm/theater/jeweler scenario; no per-tick simulation
+  behavior.
 
 The 07-19 minimal-needs loop runs: phases 2 (produce), 3 (wages),
 4 (goods market via `Intent::Buy`), 5 (consume), and 8 (mint tops up
