@@ -3,6 +3,7 @@
 //! contract table. The conservation audit (§8.3) is unconditionally last.
 
 use crate::agent::Agent;
+use crate::housing::HouseId;
 use crate::world::World;
 
 /// What an agent wants to do, decided in a pure pass and executed in an
@@ -39,8 +40,19 @@ fn labor_market(_world: &mut World) {
 }
 
 /// Phase 2: labor + inputs → goods. Money ops allowed: none.
-fn produce(_world: &mut World) {
-    // TODO: firm production lands here.
+fn produce(world: &mut World) {
+    // The staffed check borrows world immutably; collect first, then
+    // mutate stock through house_mut.
+    let staffed: Vec<HouseId> = world
+        .businesses()
+        .filter(|(house, _)| world.employee_of(house.id).is_some())
+        .map(|(house, _)| house.id)
+        .collect();
+    for house_id in staffed {
+        let house = world.house_mut(house_id).expect("collected from businesses()");
+        let business = house.business.as_mut().expect("collected from businesses()");
+        business.stock += business.product.production_rate();
+    }
 }
 
 /// Phase 3: firms pay agreed wages. Money ops allowed: transfer only.
@@ -99,7 +111,56 @@ fn mint_phase(_world: &mut World) {
 mod tests {
     use super::*;
     use crate::agent::AgentId;
+    use crate::business::RoleSlot;
+    use crate::goods::Good;
+    use crate::housing::HouseId;
     use crate::money::Money;
+    use crate::role::Role;
+    use crate::world::World;
+    use std::collections::HashMap;
+
+    /// One single-role business at `wage`, staffed by a freshly spawned
+    /// worker. Returns (house, business account, worker).
+    fn staffed_business(
+        world: &mut World,
+        address: &str,
+        product: Good,
+        price: Money,
+        wage: Money,
+        worker_name: &str,
+    ) -> (HouseId, AgentId, AgentId) {
+        let house = world.add_house(address, vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(Role::Labourer, RoleSlot { wage, headcount: 1 });
+        let business = world
+            .create_business(house, product, price, roles)
+            .expect("fresh house");
+        let worker = world.spawn_agent(worker_name, None, Some(house));
+        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
+        (house, business, worker)
+    }
+
+    fn stock_of(world: &World, house: HouseId) -> u32 {
+        world.house(house).unwrap().business.as_ref().unwrap().stock
+    }
+
+    #[test]
+    fn produce_fills_staffed_stock_only() {
+        let mut world = World::new();
+        let (farm, _, _) =
+            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        // unstaffed: business exists, nobody works there
+        let idle_house = world.add_house("Idle", vec![]);
+        world
+            .create_business(idle_house, Good::Luxury, Money::new(5), HashMap::new())
+            .unwrap();
+        produce(&mut world);
+        assert_eq!(stock_of(&world, farm), Good::Food.production_rate());
+        assert_eq!(stock_of(&world, idle_house), 0);
+        // stock accumulates tick over tick
+        produce(&mut world);
+        assert_eq!(stock_of(&world, farm), 2 * Good::Food.production_rate());
+    }
 
     #[test]
     fn n_ticks_run_clean() {
