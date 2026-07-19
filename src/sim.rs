@@ -8,6 +8,7 @@ use crate::housing::HouseId;
 use crate::market::{self, Offer};
 use crate::money::Money;
 use crate::world::World;
+use std::collections::HashMap;
 
 /// What an agent wants to do, decided in a pure pass and executed in an
 /// apply pass (see `goods_market` for the worked template). Mechanics add
@@ -135,16 +136,23 @@ fn goods_market(world: &mut World) {
     // Decide (pure): every agent plans against the same tick-start offer
     // snapshot. No `&mut` anywhere — unit-testable and free of
     // iteration-order effects. Collective staleness (two buyers wanting
-    // the same last unit) is resolved at apply time.
-    let offers: Vec<Offer> = world
+    // the same last unit) is resolved at apply time. `houses` runs
+    // parallel to `offers` so the write-back below can reach each
+    // offer's business without a second lookup.
+    let (houses, offers): (Vec<HouseId>, Vec<Offer>) = world
         .businesses()
-        .map(|(_, business)| Offer {
-            business: business.id,
-            good: business.product,
-            price: business.price,
-            stock: business.stock,
+        .map(|(house, business)| {
+            (
+                house.id,
+                Offer {
+                    business: business.id,
+                    good: business.product,
+                    price: business.price,
+                    stock: business.stock,
+                },
+            )
         })
-        .collect();
+        .unzip();
     let intents: Vec<Intent> = world
         .agents
         .iter()
@@ -152,9 +160,26 @@ fn goods_market(world: &mut World) {
         .collect();
 
     // Apply: the ONLY place this phase moves money. Unaffordable intents
-    // fail cleanly (transfer errs) — wanting is unconstrained, paying is not.
+    // fail cleanly (transfer errs) — wanting is unconstrained, paying is
+    // not. `sold` counts units actually transacted, per business.
+    let mut sold: HashMap<AgentId, u32> = HashMap::new();
     for intent in intents {
-        apply_goods_intent(world, intent);
+        apply_goods_intent(world, intent, &mut sold);
+    }
+
+    // Price write-back (logic in market.rs, §8.6): each price adjusts
+    // from this tick's sell-through against the snapshot it was offered
+    // at. New prices take effect next tick — the decide pass above only
+    // ever saw the snapshot.
+    for (house_id, offer) in houses.into_iter().zip(offers) {
+        let units = sold.get(&offer.business).copied().unwrap_or(0);
+        world
+            .house_mut(house_id)
+            .expect("snapshotted from businesses()")
+            .business
+            .as_mut()
+            .expect("snapshotted from businesses()")
+            .price = market::adjust_price(offer.price, offer.stock, units);
     }
 }
 
@@ -172,7 +197,7 @@ fn decide_goods(agent: &Agent, wallet: Money, offers: &[Offer]) -> Vec<Intent> {
         .collect()
 }
 
-fn apply_goods_intent(world: &mut World, intent: Intent) {
+fn apply_goods_intent(world: &mut World, intent: Intent, sold: &mut HashMap<AgentId, u32>) {
     match intent {
         Intent::Buy {
             buyer,
@@ -210,6 +235,7 @@ fn apply_goods_intent(world: &mut World, intent: Intent) {
                 .agent_mut(buyer)
                 .expect("intents are decided from world.agents");
             *agent.inventory.entry(good).or_insert(0) += units;
+            *sold.entry(business).or_insert(0) += units;
         }
     }
 }
@@ -287,6 +313,10 @@ mod tests {
 
     fn stock_of(world: &World, house: HouseId) -> u32 {
         world.house(house).unwrap().business.as_ref().unwrap().stock
+    }
+
+    fn price_of(world: &World, house: HouseId) -> Money {
+        world.house(house).unwrap().business.as_ref().unwrap().price
     }
 
     fn set_stock(world: &mut World, house: HouseId, stock: u32) {
@@ -659,5 +689,71 @@ mod tests {
         assert_eq!(held(&world, idle, Good::Food), 0);
         // overproduction piles up on the shelf (40/tick made, ~10 eaten)
         assert!(stock_of(&world, farm_house) > 0);
+    }
+
+    #[test]
+    fn sell_out_raises_the_price_for_the_next_tick() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
+        set_stock(&mut world, farm_house, 10);
+        world.accounts.mint(worker, Money::new(20));
+        goods_market(&mut world);
+        // the whole shelf sold at the OLD price (10 × 2 = 20 coins)…
+        assert_eq!(held(&world, worker, Good::Food), 10);
+        assert_eq!(world.accounts.balance_of(farm), Money::new(20));
+        // …and the new price only exists after the phase: 2 + max(1, 2/10)
+        assert_eq!(price_of(&world, farm_house), Money::new(3));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn poor_sales_lower_the_price_saturating_at_the_floor() {
+        let mut world = World::new();
+        let (farm_house, _, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(5),
+            Money::new(35),
+            "f",
+        );
+        let (stall_house, _, _) = staffed_business(
+            &mut world,
+            "Stall",
+            Good::Entertainment,
+            Money::new(1),
+            Money::new(35),
+            "s",
+        );
+        set_stock(&mut world, farm_house, 50);
+        set_stock(&mut world, stall_house, 50);
+        // nobody has money → 0 of 50 sold everywhere
+        goods_market(&mut world);
+        assert_eq!(price_of(&world, farm_house), Money::new(4));
+        // a floor-price seller stays at the floor
+        assert_eq!(price_of(&world, stall_house), Money::new(1));
+    }
+
+    #[test]
+    fn empty_shelf_gives_no_price_signal() {
+        let mut world = World::new();
+        let (farm_house, _, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(7),
+            Money::new(35),
+            "f",
+        );
+        // stock 0 → offered 0: the price holds, NOT treated as poor sales
+        goods_market(&mut world);
+        assert_eq!(price_of(&world, farm_house), Money::new(7));
     }
 }

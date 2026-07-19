@@ -35,9 +35,9 @@ pub struct Business {
     /// The one good this business produces and sells (v1: single-product,
     /// single-node). Production chains are a future spec.
     pub product: Good,
-    /// Posted unit price, fixed at worldgen. Price *data* lives here;
-    /// pricing *logic* stays in `market.rs` (§8.6). Never adjusts in this
-    /// milestone.
+    /// Posted unit price, seeded at worldgen and adjusted every tick by
+    /// phase 4's `market::adjust_price` write-back. Price *data* lives
+    /// here; pricing *logic* stays in `market.rs` (§8.6).
     pub price: Money,
     /// Unsold units on hand: phase 2 adds, phase 4 sells.
     pub stock: u32,
