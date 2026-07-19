@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 
 use crate::agent::AgentId;
+use crate::goods::Good;
 use crate::money::Money;
 use crate::role::Role;
 
@@ -34,9 +35,29 @@ pub struct Business {
     /// Account key in [`Accounts`](crate::money::Accounts), allocated by
     /// `World::create_business` from the shared agent-id counter.
     pub id: AgentId,
+    /// The one good this business produces and sells (v1: single-product,
+    /// single-node). Production chains are a future spec.
+    pub product: Good,
+    /// Posted unit price, fixed at worldgen. Price *data* lives here;
+    /// pricing *logic* stays in `market.rs` (§8.6). Never adjusts in this
+    /// milestone.
+    pub price: Money,
+    /// Unsold units on hand: phase 2 adds, phase 4 sells.
+    pub stock: u32,
     /// The roles this business employs — one wage/headcount per role
     /// (Amendment 11: role-differentiated, never a flat figure).
     pub roles: HashMap<Role, RoleSlot>,
+}
+
+impl Business {
+    /// One tick of full staffing: sum over role slots of wage × headcount.
+    /// Phase 8 mints exactly this per staffed business; worldgen seeds it
+    /// once so tick 1's wages (paid before the first mint) never skip.
+    pub fn wage_bill(&self) -> Money {
+        self.roles
+            .values()
+            .fold(Money::ZERO, |sum, slot| sum.plus(slot.wage.times(slot.headcount)))
+    }
 }
 
 #[cfg(test)]
@@ -63,11 +84,38 @@ mod tests {
         );
         let business = Business {
             id: AgentId(42),
+            product: Good::Food,
+            price: Money::new(1),
+            stock: 0,
             roles,
         };
         assert_eq!(business.roles[&Role::Engineer].wage, Money::new(12));
         assert_eq!(business.roles[&Role::Engineer].headcount, 2);
         assert_eq!(business.roles[&Role::Labourer].wage, Money::new(7));
         assert_eq!(business.roles[&Role::Labourer].headcount, 5);
+    }
+
+    #[test]
+    fn wage_bill_sums_wage_times_headcount_over_slots() {
+        let mut roles = HashMap::new();
+        roles.insert(Role::Engineer, RoleSlot { wage: Money::new(12), headcount: 2 });
+        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(7), headcount: 5 });
+        let business = Business {
+            id: AgentId(42),
+            product: Good::Food,
+            price: Money::new(1),
+            stock: 0,
+            roles,
+        };
+        // 12×2 + 7×5
+        assert_eq!(business.wage_bill(), Money::new(59));
+        let empty = Business {
+            id: AgentId(43),
+            product: Good::Luxury,
+            price: Money::new(5),
+            stock: 0,
+            roles: HashMap::new(),
+        };
+        assert_eq!(empty.wage_bill(), Money::ZERO);
     }
 }

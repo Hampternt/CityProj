@@ -5,6 +5,7 @@
 
 use crate::agent::{Agent, AgentId};
 use crate::business::{Business, RoleSlot};
+use crate::goods::Good;
 use crate::housing::{House, HouseId};
 use crate::money::{Accounts, Money, MoneyError};
 use crate::role::Role;
@@ -66,6 +67,7 @@ impl World {
             specialization: None,
             employed_role: None,
             education: 0,
+            inventory: HashMap::new(),
         });
         id
     }
@@ -238,11 +240,14 @@ impl World {
     /// Attaches a new business to `house`, allocating its account id from
     /// the same counter as `spawn_agent` — never a reserved id, never
     /// reused, and NO `Agent` struct is created (business ids are
-    /// account-only, like Mint/External). Validates before touching state:
-    /// `Err` means nothing changed.
+    /// account-only, like Mint/External). Starts with zero stock; product
+    /// and price are fixed at creation (07-19: prices never adjust).
+    /// Validates before touching state: `Err` means nothing changed.
     pub fn create_business(
         &mut self,
         house: HouseId,
+        product: Good,
+        price: Money,
         roles: HashMap<Role, RoleSlot>,
     ) -> Result<AgentId, WorldError> {
         match self.house(house) {
@@ -255,7 +260,7 @@ impl World {
         let id = AgentId(self.next_agent_id);
         self.next_agent_id += 1;
         self.house_mut(house).expect("existence checked above").business =
-            Some(Business { id, roles });
+            Some(Business { id, product, price, stock: 0, roles });
         Ok(id)
     }
 
@@ -275,6 +280,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::goods::Good;
     use crate::money::{Money, MoneyError};
     use std::collections::HashMap;
 
@@ -506,7 +512,7 @@ mod tests {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
         let person = world.spawn_agent("a", None, None);
-        let business = world.create_business(house, HashMap::new()).unwrap();
+        let business = world.create_business(house, Good::Food, Money::new(1), HashMap::new()).unwrap();
         // shared counter: distinct from reserved ids and every spawned agent
         assert_ne!(business, world.mint_id);
         assert_ne!(business, world.external_id);
@@ -523,7 +529,7 @@ mod tests {
         let mut world = World::new();
         let ghost = HouseId(99);
         assert_eq!(
-            world.create_business(ghost, HashMap::new()),
+            world.create_business(ghost, Good::Food, Money::new(1), HashMap::new()),
             Err(WorldError::UnknownHouse(ghost))
         );
     }
@@ -532,9 +538,9 @@ mod tests {
     fn create_business_rejects_duplicate() {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
-        let first = world.create_business(house, HashMap::new()).unwrap();
+        let first = world.create_business(house, Good::Food, Money::new(1), HashMap::new()).unwrap();
         assert_eq!(
-            world.create_business(house, HashMap::new()),
+            world.create_business(house, Good::Food, Money::new(1), HashMap::new()),
             Err(WorldError::BusinessAlreadyExists(house))
         );
         // Err changed nothing: the original business is untouched
@@ -551,8 +557,8 @@ mod tests {
         world.add_house("2 Kiln Row", vec![]); // hosts nothing — must be skipped
         let h3 = world.add_house("3 Forge Way", vec![]);
         // created out of order to prove iteration follows `houses`, not creation
-        let b3 = world.create_business(h3, HashMap::new()).unwrap();
-        let b1 = world.create_business(h1, HashMap::new()).unwrap();
+        let b3 = world.create_business(h3, Good::Food, Money::new(1), HashMap::new()).unwrap();
+        let b1 = world.create_business(h1, Good::Food, Money::new(1), HashMap::new()).unwrap();
         let found: Vec<_> = world
             .businesses()
             .map(|(house, business)| (house.id, business.id))
@@ -565,7 +571,7 @@ mod tests {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
         let worker = world.spawn_agent("a", None, None);
-        let business = world.create_business(house, HashMap::new()).unwrap();
+        let business = world.create_business(house, Good::Food, Money::new(1), HashMap::new()).unwrap();
         world.accounts.mint(business, Money::new(100)); // sanctioned test funding
         // business → agent: the future pay_wages direction
         world.pay(business, worker, Money::new(40)).unwrap();
@@ -580,5 +586,25 @@ mod tests {
             Err(WorldError::UnknownAgent(ghost))
         );
         world.accounts.audit();
+    }
+
+    #[test]
+    fn create_business_sets_product_price_and_empty_stock() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        world
+            .create_business(house, Good::Entertainment, Money::new(2), HashMap::new())
+            .unwrap();
+        let business = world.house(house).unwrap().business.as_ref().unwrap();
+        assert_eq!(business.product, Good::Entertainment);
+        assert_eq!(business.price, Money::new(2));
+        assert_eq!(business.stock, 0);
+    }
+
+    #[test]
+    fn spawned_agents_start_with_an_empty_inventory() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        assert!(world.agent(a).unwrap().inventory.is_empty());
     }
 }

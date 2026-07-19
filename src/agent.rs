@@ -1,6 +1,9 @@
 //! Person-agents: the economic actor is the individual person (spec
 //! amendment 3). Balances live only in `Accounts`, never on `Agent`.
 
+use std::collections::HashMap;
+
+use crate::goods::Good;
 use crate::housing::HouseId;
 use crate::role::Role;
 
@@ -41,4 +44,9 @@ pub struct Agent {
     /// are decided by the first spec that reads it.
     #[allow(dead_code)]
     pub education: u8,
+    /// Personal stock of goods: refilled by phase-4 purchases, drained by
+    /// phase-5 consumption. Missing entry reads as 0. Goods are not money
+    /// — no conservation audit applies.
+    #[allow(dead_code)]
+    pub inventory: HashMap<Good, u32>,
 }
