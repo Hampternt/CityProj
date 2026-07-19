@@ -67,7 +67,13 @@ fn template_world() -> World {
     ];
     for (house, product, price, worker_name) in scenario {
         let mut roles = HashMap::new();
-        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 1,
+            },
+        );
         let business = world
             .create_business(house, product, price, roles)
             .expect("fresh house");

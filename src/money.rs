@@ -93,7 +93,9 @@ impl Accounts {
 
     /// Sum of ALL balances, including External.
     pub fn total_money(&self) -> Money {
-        self.balances.values().fold(Money::ZERO, |sum, &b| sum.plus(b))
+        self.balances
+            .values()
+            .fold(Money::ZERO, |sum, &b| sum.plus(b))
     }
 
     /// Lifetime total ever created via [`Accounts::mint`] (§8.4 log). Never

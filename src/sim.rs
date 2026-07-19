@@ -62,8 +62,13 @@ fn produce(world: &mut World) {
         .map(|(house, _)| house.id)
         .collect();
     for house_id in staffed {
-        let house = world.house_mut(house_id).expect("collected from businesses()");
-        let business = house.business.as_mut().expect("collected from businesses()");
+        let house = world
+            .house_mut(house_id)
+            .expect("collected from businesses()");
+        let business = house
+            .business
+            .as_mut()
+            .expect("collected from businesses()");
         business.stock += business.product.production_rate();
     }
 }
@@ -135,7 +140,12 @@ fn decide_goods(agent: &Agent, wallet: Money, offers: &[Offer]) -> Vec<Intent> {
 
 fn apply_goods_intent(world: &mut World, intent: Intent) {
     match intent {
-        Intent::Buy { buyer, business, good, units } => {
+        Intent::Buy {
+            buyer,
+            business,
+            good,
+            units,
+        } => {
             // Re-read live stock: an earlier buyer this phase may have
             // emptied the shelf. Cap, pay, then hand over the goods —
             // money and goods move together or not at all.
@@ -268,8 +278,14 @@ mod tests {
     #[test]
     fn produce_fills_staffed_stock_only() {
         let mut world = World::new();
-        let (farm, _, _) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let (farm, _, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
         // unstaffed: business exists, nobody works there
         let idle_house = world.add_house("Idle", vec![]);
         world
@@ -299,15 +315,23 @@ mod tests {
         let mut world = World::new();
         // corrupt the books via the sanctioned test hook; if any path
         // through tick skipped the audit, this would NOT panic
-        world.accounts.set_balance_for_test(AgentId(7), Money::new(999));
+        world
+            .accounts
+            .set_balance_for_test(AgentId(7), Money::new(999));
         tick(&mut world);
     }
 
     #[test]
     fn pay_wages_transfers_the_role_wage() {
         let mut world = World::new();
-        let (_, farm, worker) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
         world.accounts.mint(farm, Money::new(50)); // funded
         pay_wages(&mut world);
         assert_eq!(world.accounts.balance_of(worker), Money::new(35));
@@ -318,8 +342,14 @@ mod tests {
     #[test]
     fn unfunded_wage_skips_cleanly() {
         let mut world = World::new();
-        let (_, farm, worker) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
         world.accounts.mint(farm, Money::new(10)); // less than the wage
         pay_wages(&mut world); // must not panic, must not partially pay (§8.5)
         assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
@@ -331,7 +361,13 @@ mod tests {
         let mut world = World::new();
         let house = world.add_house("Idle", vec![]);
         let mut roles = HashMap::new();
-        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 1,
+            },
+        );
         let business = world
             .create_business(house, Good::Food, Money::new(1), roles)
             .unwrap();
@@ -345,7 +381,13 @@ mod tests {
         let mut world = World::new();
         let house = world.add_house("Farm", vec![]);
         let mut roles = HashMap::new();
-        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 1,
+            },
+        );
         let business = world
             .create_business(house, Good::Food, Money::new(1), roles)
             .unwrap();
@@ -363,7 +405,13 @@ mod tests {
         let mut world = World::new();
         let house = world.add_house("Farm", vec![]);
         let mut roles = HashMap::new();
-        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 1,
+            },
+        );
         let business = world
             .create_business(house, Good::Food, Money::new(1), roles)
             .unwrap();
@@ -379,8 +427,14 @@ mod tests {
     #[test]
     fn buy_moves_money_and_goods_together() {
         let mut world = World::new();
-        let (farm_house, farm, worker) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(2), Money::new(35), "f");
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
         set_stock(&mut world, farm_house, 50);
         world.accounts.mint(worker, Money::new(10));
         goods_market(&mut world);
@@ -395,8 +449,14 @@ mod tests {
     #[test]
     fn stale_intents_cap_to_live_stock() {
         let mut world = World::new();
-        let (farm_house, _, first) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "a");
+        let (farm_house, _, first) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "a",
+        );
         let second = world.spawn_agent("b", None, None);
         set_stock(&mut world, farm_house, 10);
         // both plan against the same 10-unit snapshot and could each afford it
@@ -414,8 +474,14 @@ mod tests {
     #[test]
     fn broke_buyers_change_nothing() {
         let mut world = World::new();
-        let (farm_house, farm, worker) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
         set_stock(&mut world, farm_house, 50);
         // no money minted to the worker at all
         goods_market(&mut world);
@@ -441,11 +507,23 @@ mod tests {
     #[test]
     fn mint_tops_up_staffed_businesses_by_one_wage_bill() {
         let mut world = World::new();
-        let (_, farm, _) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let (_, farm, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
         let idle_house = world.add_house("Idle", vec![]);
         let mut roles = HashMap::new();
-        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 1,
+            },
+        );
         let idle_business = world
             .create_business(idle_house, Good::Luxury, Money::new(5), roles)
             .unwrap();
@@ -463,8 +541,14 @@ mod tests {
     #[test]
     fn minimal_economy_feeds_the_worker_and_breaks_the_idle() {
         let mut world = World::new();
-        let (farm_house, farm, worker) =
-            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
         let idle = world.spawn_agent("idle", None, None);
         world.accounts.mint(farm, Money::new(35)); // one wage bill (tick-1 seed)
         for id in [worker, idle] {

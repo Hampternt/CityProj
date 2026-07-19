@@ -51,9 +51,9 @@ impl Business {
     /// Phase 8 mints exactly this per staffed business; worldgen seeds it
     /// once so tick 1's wages (paid before the first mint) never skip.
     pub fn wage_bill(&self) -> Money {
-        self.roles
-            .values()
-            .fold(Money::ZERO, |sum, slot| sum.plus(slot.wage.times(slot.headcount)))
+        self.roles.values().fold(Money::ZERO, |sum, slot| {
+            sum.plus(slot.wage.times(slot.headcount))
+        })
     }
 }
 
@@ -95,8 +95,20 @@ mod tests {
     #[test]
     fn wage_bill_sums_wage_times_headcount_over_slots() {
         let mut roles = HashMap::new();
-        roles.insert(Role::Engineer, RoleSlot { wage: Money::new(12), headcount: 2 });
-        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(7), headcount: 5 });
+        roles.insert(
+            Role::Engineer,
+            RoleSlot {
+                wage: Money::new(12),
+                headcount: 2,
+            },
+        );
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(7),
+                headcount: 5,
+            },
+        );
         let business = Business {
             id: AgentId(42),
             product: Good::Food,

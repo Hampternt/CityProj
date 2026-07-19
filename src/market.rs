@@ -106,12 +106,7 @@ fn best_buy(
 
 /// Cheapest affordable offer of `good` with stock left; price ties keep
 /// the earliest input offer.
-fn cheapest_offer(
-    good: Good,
-    budget: Money,
-    offers: &[Offer],
-    remaining: &[u32],
-) -> Option<usize> {
+fn cheapest_offer(good: Good, budget: Money, offers: &[Offer], remaining: &[u32]) -> Option<usize> {
     let mut cheapest: Option<usize> = None;
     for (index, offer) in offers.iter().enumerate() {
         if offer.good != good || remaining[index] == 0 || offer.price > budget {
@@ -131,7 +126,12 @@ mod tests {
     use std::collections::HashMap;
 
     fn offer(business: u32, good: Good, price: u64, stock: u32) -> Offer {
-        Offer { business: AgentId(business), good, price: Money::new(price), stock }
+        Offer {
+            business: AgentId(business),
+            good,
+            price: Money::new(price),
+            stock,
+        }
     }
 
     fn full_offers() -> Vec<Offer> {
@@ -155,7 +155,11 @@ mod tests {
         let plan = plan_purchases(Money::new(1), &HashMap::new(), &full_offers());
         assert_eq!(
             plan,
-            vec![Purchase { business: AgentId(10), good: Good::Food, units: 1 }]
+            vec![Purchase {
+                business: AgentId(10),
+                good: Good::Food,
+                units: 1
+            }]
         );
     }
 
@@ -166,7 +170,11 @@ mod tests {
         let plan = plan_purchases(Money::new(2), &inventory, &full_offers());
         assert_eq!(
             plan,
-            vec![Purchase { business: AgentId(11), good: Good::Entertainment, units: 1 }]
+            vec![Purchase {
+                business: AgentId(11),
+                good: Good::Entertainment,
+                units: 1
+            }]
         );
     }
 
@@ -176,20 +184,35 @@ mod tests {
         let plan = plan_purchases(Money::new(3), &HashMap::new(), &full_offers());
         assert_eq!(
             plan,
-            vec![Purchase { business: AgentId(10), good: Good::Food, units: 3 }]
+            vec![Purchase {
+                business: AgentId(10),
+                good: Good::Food,
+                units: 3
+            }]
         );
     }
 
     #[test]
     fn offer_stock_is_respected() {
         // only 2 food on the shelf; the rest of the budget moves down-list
-        let offers = vec![offer(10, Good::Food, 1, 2), offer(11, Good::Entertainment, 2, 1000)];
+        let offers = vec![
+            offer(10, Good::Food, 1, 2),
+            offer(11, Good::Entertainment, 2, 1000),
+        ];
         let plan = plan_purchases(Money::new(4), &HashMap::new(), &offers);
         assert_eq!(
             plan,
             vec![
-                Purchase { business: AgentId(10), good: Good::Food, units: 2 },
-                Purchase { business: AgentId(11), good: Good::Entertainment, units: 1 },
+                Purchase {
+                    business: AgentId(10),
+                    good: Good::Food,
+                    units: 2
+                },
+                Purchase {
+                    business: AgentId(11),
+                    good: Good::Entertainment,
+                    units: 1
+                },
             ]
         );
     }
@@ -202,7 +225,11 @@ mod tests {
         let plan = plan_purchases(Money::new(100), &inventory, &offers);
         assert_eq!(
             plan,
-            vec![Purchase { business: AgentId(10), good: Good::Food, units: 1 }]
+            vec![Purchase {
+                business: AgentId(10),
+                good: Good::Food,
+                units: 1
+            }]
         );
         // at the cap exactly: nothing to buy
         let at_cap = HashMap::from([(Good::Food, 70)]);
@@ -217,16 +244,31 @@ mod tests {
         assert_eq!(
             plan,
             vec![
-                Purchase { business: AgentId(21), good: Good::Food, units: 1 },
-                Purchase { business: AgentId(20), good: Good::Food, units: 1 },
+                Purchase {
+                    business: AgentId(21),
+                    good: Good::Food,
+                    units: 1
+                },
+                Purchase {
+                    business: AgentId(20),
+                    good: Good::Food,
+                    units: 1
+                },
             ]
         );
         // price tie: earlier input offer wins
-        let tied = vec![offer(30, Good::Food, 1, 1000), offer(31, Good::Food, 1, 1000)];
+        let tied = vec![
+            offer(30, Good::Food, 1, 1000),
+            offer(31, Good::Food, 1, 1000),
+        ];
         let plan = plan_purchases(Money::new(2), &HashMap::new(), &tied);
         assert_eq!(
             plan,
-            vec![Purchase { business: AgentId(30), good: Good::Food, units: 2 }]
+            vec![Purchase {
+                business: AgentId(30),
+                good: Good::Food,
+                units: 2
+            }]
         );
     }
 
@@ -239,7 +281,11 @@ mod tests {
         let plan = plan_purchases(Money::new(1), &inventory, &full_offers());
         assert_eq!(
             plan,
-            vec![Purchase { business: AgentId(10), good: Good::Food, units: 1 }]
+            vec![Purchase {
+                business: AgentId(10),
+                good: Good::Food,
+                units: 1
+            }]
         );
     }
 }
