@@ -235,4 +235,40 @@ mod tests {
         pay_wages(&mut world);
         assert_eq!(world.accounts.balance_of(business), Money::new(50));
     }
+
+    #[test]
+    fn roleless_worker_earns_nothing() {
+        let mut world = World::new();
+        let house = world.add_house("Farm", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        let business = world
+            .create_business(house, Good::Food, Money::new(1), roles)
+            .unwrap();
+        // Spawn worker at the workplace but WITHOUT setting employed_role
+        let worker = world.spawn_agent("f", None, Some(house));
+        // employed_role stays None
+        world.accounts.mint(business, Money::new(50));
+        pay_wages(&mut world);
+        assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(business), Money::new(50));
+    }
+
+    #[test]
+    fn unslotted_role_earns_nothing() {
+        let mut world = World::new();
+        let house = world.add_house("Farm", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        let business = world
+            .create_business(house, Good::Food, Money::new(1), roles)
+            .unwrap();
+        // Spawn worker and assign Engineer role, which is NOT in the business's roles
+        let worker = world.spawn_agent("e", None, Some(house));
+        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Engineer);
+        world.accounts.mint(business, Money::new(50));
+        pay_wages(&mut world);
+        assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(business), Money::new(50));
+    }
 }
