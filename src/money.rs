@@ -42,13 +42,19 @@ impl Money {
     }
 
     /// Checked addition; panics on `u64` overflow rather than wrapping.
-    fn plus(self, other: Money) -> Money {
+    pub fn plus(self, other: Money) -> Money {
         Money(self.0.checked_add(other.0).expect("money overflow"))
     }
 
     /// Checked subtraction; panics on underflow — callers verify funds first.
-    fn minus(self, other: Money) -> Money {
+    pub fn minus(self, other: Money) -> Money {
         Money(self.0.checked_sub(other.0).expect("money underflow"))
+    }
+
+    /// Checked multiplication by a unit count (`price × units`); panics
+    /// on `u64` overflow rather than wrapping.
+    pub fn times(self, count: u32) -> Money {
+        Money(self.0.checked_mul(count as u64).expect("money overflow"))
     }
 }
 
@@ -322,5 +328,18 @@ mod tests {
         // out of circulation but still counted by the audit
         assert_eq!(accounts.total_money(), Money::new(100));
         accounts.audit();
+    }
+
+    #[test]
+    fn times_scales_a_unit_price() {
+        assert_eq!(Money::new(5).times(3), Money::new(15));
+        assert_eq!(Money::new(5).times(0), Money::ZERO);
+        assert_eq!(Money::ZERO.times(999), Money::ZERO);
+    }
+
+    #[test]
+    #[should_panic(expected = "money overflow")]
+    fn times_panics_on_overflow() {
+        Money::new(u64::MAX).times(2);
     }
 }
