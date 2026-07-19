@@ -275,6 +275,18 @@ impl World {
             .iter()
             .filter_map(|house| house.business.as_ref().map(|business| (house, business)))
     }
+
+    /// The agent working at `house`: first match in `agents` order on the
+    /// `workplace` field — derived per the link rule, never stored
+    /// (mirrors [`occupants_of`](World::occupants_of)). `None` for
+    /// unstaffed or unknown houses. v1 businesses are single-headcount,
+    /// so "first" is "the" employee.
+    pub fn employee_of(&self, house: HouseId) -> Option<AgentId> {
+        self.agents
+            .iter()
+            .find(|agent| agent.workplace == Some(house))
+            .map(|agent| agent.id)
+    }
 }
 
 #[cfg(test)]
@@ -606,5 +618,23 @@ mod tests {
         let mut world = World::new();
         let a = world.spawn_agent("a", None, None);
         assert!(world.agent(a).unwrap().inventory.is_empty());
+    }
+
+    #[test]
+    fn employee_of_is_derived_first_match_in_agents_order() {
+        let mut world = World::new();
+        let shop = world.add_house("1 Mill Lane", vec![]);
+        let idle_house = world.add_house("2 Kiln Row", vec![]);
+        let first = world.spawn_agent("first", None, Some(shop));
+        world.spawn_agent("second", None, Some(shop));
+        // first match in `agents` order wins
+        assert_eq!(world.employee_of(shop), Some(first));
+        // unstaffed and unknown houses: None
+        assert_eq!(world.employee_of(idle_house), None);
+        assert_eq!(world.employee_of(HouseId(99)), None);
+        // derived, never stored: quitting is visible immediately
+        world.vacate_workplace(first).unwrap();
+        let second = world.agent_by_name("second").unwrap().id;
+        assert_eq!(world.employee_of(shop), Some(second));
     }
 }
