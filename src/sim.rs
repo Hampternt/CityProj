@@ -263,20 +263,11 @@ fn sinks(_world: &mut World) {
 }
 
 /// Phase 8: new money from reserve. Money ops allowed: mint only.
-/// Tops up each staffed business by one wage bill, funding the NEXT
-/// tick's phase 3 (worldgen seeds tick 1's). Accepted "broken" faucet
-/// (07-19 spec): the supply grows every tick until a real gold-backed
-/// mint job replaces this.
-fn mint_phase(world: &mut World) {
-    let bills: Vec<(AgentId, Money)> = world
-        .businesses()
-        .filter(|(house, _)| world.employee_of(house.id).is_some())
-        .map(|(_, business)| (business.id, business.wage_bill()))
-        .collect();
-    for (business, bill) in bills {
-        world.accounts.mint(business, bill);
-    }
-}
+/// Inert since the 07-19 pricing spec closed the tick-time faucet:
+/// worldgen's seed is the entire supply and the §8.3 audit pins
+/// `total_money()` there forever. TODO: the literal staffed Mint
+/// business (parent doc §2.1, gold goods → coins) lands here.
+fn mint_phase(_world: &mut World) {}
 
 #[cfg(test)]
 mod tests {
@@ -621,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn mint_tops_up_staffed_businesses_by_one_wage_bill() {
+    fn mint_phase_creates_no_money() {
         let mut world = World::new();
         let (_, farm, _) = staffed_business(
             &mut world,
@@ -631,23 +622,11 @@ mod tests {
             Money::new(35),
             "f",
         );
-        let idle_house = world.add_house("Idle", vec![]);
-        let mut roles = HashMap::new();
-        roles.insert(
-            Role::Labourer,
-            RoleSlot {
-                wage: Money::new(35),
-                headcount: 1,
-            },
-        );
-        let idle_business = world
-            .create_business(idle_house, Good::Luxury, Money::new(5), roles)
-            .unwrap();
+        world.accounts.mint(farm, Money::new(35)); // worldgen-style seed
         mint_phase(&mut world);
-        assert_eq!(world.accounts.balance_of(farm), Money::new(35));
-        // unstaffed: not a coin, even with slots posted
-        assert_eq!(world.accounts.balance_of(idle_business), Money::ZERO);
+        // the tick-time faucet is closed: nothing beyond the seed, ever
         assert_eq!(world.accounts.total_minted(), Money::new(35));
+        assert_eq!(world.accounts.total_money(), Money::new(35));
         world.accounts.audit();
     }
 
@@ -677,9 +656,10 @@ mod tests {
         for _ in 0..10 {
             tick(&mut world); // audit runs inside — any §8 break panics here
         }
-        // money never appears outside the mint: seed 3×35, then one wage
-        // bill (35) per tick — exact regardless of shopping dynamics
-        assert_eq!(world.accounts.total_minted(), Money::new(105 + 10 * 35));
+        // the worldgen seed (3 × 35) is the ENTIRE money supply, forever
+        // — the audit pins it there every tick
+        assert_eq!(world.accounts.total_minted(), Money::new(105));
+        assert_eq!(world.accounts.total_money(), Money::new(105));
         // the worker keeps earning, eating, and holding stock
         assert!(world.accounts.balance_of(worker) > Money::ZERO);
         assert!(held(&world, worker, Good::Food) > 0);

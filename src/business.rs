@@ -10,12 +10,11 @@ use crate::goods::Good;
 use crate::money::Money;
 use crate::role::Role;
 
-/// One role a business employs: the wage it offers and how many workers it
-/// wants. Read by phase 3 (`pay_wages`, via `wage`) and phase 8
-/// (`mint_phase`, via `wage_bill`). `wage` types against today's
-/// single-metal `Money`; the multi-metal migration pass revises it (single
-/// metal vs. bundle is that spec's open question) — don't design around the
-/// current type being final.
+/// One role a business employs: the wage it offers and how many workers
+/// it wants. Read by phase 3 (`pay_wages`, via `wage`). `wage` types
+/// against today's single-metal `Money`; the multi-metal migration pass
+/// revises it (single metal vs. bundle is that spec's open question) —
+/// don't design around the current type being final.
 #[derive(Debug)]
 pub struct RoleSlot {
     pub wage: Money,
@@ -54,8 +53,9 @@ pub struct Business {
 
 impl Business {
     /// One tick of full staffing: sum over role slots of wage × headcount.
-    /// Phase 8 mints exactly this per staffed business; worldgen seeds it
-    /// once so tick 1's wages (paid before the first mint) never skip.
+    /// Worldgen seeds each business with exactly this so tick 1's wages
+    /// (paid before any revenue) never skip; nothing reads it per-tick
+    /// since the 07-19 spec closed the phase-8 faucet.
     pub fn wage_bill(&self) -> Money {
         self.roles.values().fold(Money::ZERO, |sum, slot| {
             sum.plus(slot.wage.times(slot.headcount))
