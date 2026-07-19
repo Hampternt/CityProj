@@ -37,6 +37,7 @@
 mod agent;
 mod business;
 mod engine;
+mod goods;
 mod housing;
 mod money;
 mod role;
