@@ -3,10 +3,15 @@
 //! and reads input. Loop mechanics are unchanged: Enter advances, q quits;
 //! typing an agent's name inspects it.
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 
-use crate::agent::AgentId;
+use crate::agent::{Agent, AgentId};
+use crate::business::RoleSlot;
+use crate::goods::Good;
 use crate::housing::HouseId;
+use crate::money::Money;
+use crate::role::Role;
 use crate::sim;
 use crate::world::World;
 
@@ -42,19 +47,51 @@ pub fn run() {
     }
 }
 
-/// A hand-seeded template world to step through: three people, two houses.
-/// Nothing mints money yet, so every balance stays 0 until a faucet exists
-/// (the mint job — money only ever enters through earned paths, no genesis).
+/// The 07-19 minimal-needs scenario: farm, theater, and jeweler (one
+/// Labourer slot each at wage 35), three employed agents, one unemployed,
+/// all housed at the residence. Worldgen seeds every business with one
+/// wage bill — pay_wages runs before the first mint, so tick 1 must be
+/// pre-funded — and every agent with a small wallet plus one day's goods.
+/// All seeding goes through `mint`, so the audit counts it (§8.4).
 fn template_world() -> World {
     let mut world = World::new();
-    let alice = world.spawn_agent("alice", None, None);
-    let bob = world.spawn_agent("bob", None, None);
-    let carol = world.spawn_agent("carol", None, None);
-    let mill = world.add_house("1 Mill Lane", vec![alice]);
-    let kiln = world.add_house("2 Kiln Row", vec![bob]);
-    world.agent_mut(alice).expect("just spawned").home = Some(mill);
-    world.agent_mut(bob).expect("just spawned").home = Some(kiln);
-    world.agent_mut(carol).expect("just spawned").home = Some(kiln);
+    let residence = world.add_house("1 Mill Lane", vec![]);
+
+    let farm = world.add_house("Greenrow Farm", vec![]);
+    let theater = world.add_house("Gilt Curtain Theater", vec![]);
+    let jeweler = world.add_house("Karat & Co", vec![]);
+    let scenario = [
+        (farm, Good::Food, Money::new(1), "alice"),
+        (theater, Good::Entertainment, Money::new(2), "bob"),
+        (jeweler, Good::Luxury, Money::new(5), "carol"),
+    ];
+    for (house, product, price, worker_name) in scenario {
+        let mut roles = HashMap::new();
+        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        let business = world
+            .create_business(house, product, price, roles)
+            .expect("fresh house");
+        let bill = world
+            .house(house)
+            .expect("just added")
+            .business
+            .as_ref()
+            .expect("just created")
+            .wage_bill();
+        world.accounts.mint(business, bill);
+        let worker = world.spawn_agent(worker_name, Some(residence), Some(house));
+        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
+    }
+    world.spawn_agent("dave", Some(residence), None); // unemployed, housed
+
+    let everyone: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
+    for id in everyone {
+        world.accounts.mint(id, Money::new(35));
+        let agent = world.agent_mut(id).expect("listed above");
+        for good in Good::ALL {
+            agent.inventory.insert(good, good.consumption_rate());
+        }
+    }
     world
 }
 
@@ -91,15 +128,25 @@ fn render(world: &World, tick_count: u64) {
             or_none(&owners),
             or_none(&occupants),
         );
+        if let Some(business) = &house.business {
+            println!(
+                "    sells {} @{} · stock {} · balance {}",
+                business.product,
+                business.price,
+                business.stock,
+                world.accounts.balance_of(business.id),
+            );
+        }
     }
 
     println!("agents:");
     for agent in &world.agents {
         println!(
-            "  {} — balance {} · home {}",
+            "  {} — balance {} · home {} · {}",
             agent.name,
             world.accounts.balance_of(agent.id),
             describe_house(world, agent.home),
+            describe_inventory(agent),
         );
     }
 }
@@ -124,6 +171,18 @@ fn describe_house(world: &World, id: Option<HouseId>) -> String {
     id.and_then(|house_id| world.house(house_id))
         .map(|house| house.address.clone())
         .unwrap_or_else(|| "none".to_string())
+}
+
+/// One line of pantry: `food 10 · entertainment 5 · luxury 2`.
+fn describe_inventory(agent: &Agent) -> String {
+    Good::ALL
+        .iter()
+        .map(|good| {
+            let held = agent.inventory.get(good).copied().unwrap_or(0);
+            format!("{good} {held}")
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// Blocks until the user enters a command. EOF (e.g. Ctrl-D) and read
@@ -153,6 +212,7 @@ fn inspect(world: &World, name: &str) {
             println!("  balance   {}", world.accounts.balance_of(agent.id));
             println!("  home      {}", describe_house(world, agent.home));
             println!("  workplace {}", describe_house(world, agent.workplace));
+            println!("  goods     {}", describe_inventory(agent));
         }
         None => println!("no agent named '{name}'"),
     }
