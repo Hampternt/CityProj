@@ -193,8 +193,19 @@ fn sinks(_world: &mut World) {
 }
 
 /// Phase 8: new money from reserve. Money ops allowed: mint only.
-fn mint_phase(_world: &mut World) {
-    // TODO: the mint job (and later the gold-backing cap) lands here.
+/// Tops up each staffed business by one wage bill, funding the NEXT
+/// tick's phase 3 (worldgen seeds tick 1's). Accepted "broken" faucet
+/// (07-19 spec): the supply grows every tick until a real gold-backed
+/// mint job replaces this.
+fn mint_phase(world: &mut World) {
+    let bills: Vec<(AgentId, Money)> = world
+        .businesses()
+        .filter(|(house, _)| world.employee_of(house.id).is_some())
+        .map(|(_, business)| (business.id, business.wage_bill()))
+        .collect();
+    for (business, bill) in bills {
+        world.accounts.mint(business, bill);
+    }
 }
 
 #[cfg(test)]
@@ -425,5 +436,58 @@ mod tests {
         assert_eq!(held(&world, a, Good::Food), 15);
         assert_eq!(held(&world, a, Good::Entertainment), 0);
         assert_eq!(held(&world, a, Good::Luxury), 0);
+    }
+
+    #[test]
+    fn mint_tops_up_staffed_businesses_by_one_wage_bill() {
+        let mut world = World::new();
+        let (_, farm, _) =
+            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let idle_house = world.add_house("Idle", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(Role::Labourer, RoleSlot { wage: Money::new(35), headcount: 1 });
+        let idle_business = world
+            .create_business(idle_house, Good::Luxury, Money::new(5), roles)
+            .unwrap();
+        mint_phase(&mut world);
+        assert_eq!(world.accounts.balance_of(farm), Money::new(35));
+        // unstaffed: not a coin, even with slots posted
+        assert_eq!(world.accounts.balance_of(idle_business), Money::ZERO);
+        assert_eq!(world.accounts.total_minted(), Money::new(35));
+        world.accounts.audit();
+    }
+
+    /// The first playable loop, end to end: one farm, one worker, one
+    /// unemployed agent, seeded exactly like worldgen (wage bill on the
+    /// business; wallet + one day's goods per agent). Every tick audits.
+    #[test]
+    fn minimal_economy_feeds_the_worker_and_breaks_the_idle() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) =
+            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        let idle = world.spawn_agent("idle", None, None);
+        world.accounts.mint(farm, Money::new(35)); // one wage bill (tick-1 seed)
+        for id in [worker, idle] {
+            world.accounts.mint(id, Money::new(35));
+            let agent = world.agent_mut(id).unwrap();
+            for good in Good::ALL {
+                agent.inventory.insert(good, good.consumption_rate());
+            }
+        }
+        for _ in 0..10 {
+            tick(&mut world); // audit runs inside — any §8 break panics here
+        }
+        // money never appears outside the mint: seed 3×35, then one wage
+        // bill (35) per tick — exact regardless of shopping dynamics
+        assert_eq!(world.accounts.total_minted(), Money::new(105 + 10 * 35));
+        // the worker keeps earning, eating, and holding stock
+        assert!(world.accounts.balance_of(worker) > Money::ZERO);
+        assert!(held(&world, worker, Good::Food) > 0);
+        // the idle agent earned nothing: wallet drained, pantry empty
+        // (07-19 spec: nobody saves the unemployed this milestone)
+        assert_eq!(world.accounts.balance_of(idle), Money::ZERO);
+        assert_eq!(held(&world, idle, Good::Food), 0);
+        // overproduction piles up on the shelf (40/tick made, ~10 eaten)
+        assert!(stock_of(&world, farm_house) > 0);
     }
 }
