@@ -38,7 +38,6 @@ pub struct Agent {
     /// else records it. Intended invariant, documented but NOT yet
     /// enforced: `employed_role.is_some()` implies `workplace.is_some()`;
     /// enforcement belongs to the future `assign_workplace` extension.
-    #[allow(dead_code)]
     pub employed_role: Option<Role>,
     /// Reserved skill scalar with no defined effect yet — range and meaning
     /// are decided by the first spec that reads it.

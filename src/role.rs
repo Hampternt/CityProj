@@ -4,15 +4,12 @@
 //! finds every match needing an update. Business archetypes are DATA
 //! (combinations of these variants), never new types.
 
-// Struct-only refactor: nothing reads roles yet. Remove once the labor
-// market lands. Same rationale as money.rs's crate allow.
-#![allow(dead_code)]
-
 use std::fmt;
 
 /// One kind of job. `Copy + Eq + Hash` so it keys `HashMap<Role, RoleSlot>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
+    #[allow(dead_code)] // no caller until the labor market lands
     Engineer,
     Labourer,
 }
@@ -20,6 +17,7 @@ pub enum Role {
 impl Role {
     /// Every variant, hand-enumerated — zero-dep convention, same as
     /// `Metal::ALL`. Extend this when adding a variant.
+    #[allow(dead_code)] // no caller until the labor market lands
     pub const ALL: [Role; 2] = [Role::Engineer, Role::Labourer];
 }
 

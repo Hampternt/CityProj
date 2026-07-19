@@ -133,7 +133,6 @@ impl Default for World {
 /// Why a `World` command refused. The variant names the FIRST failed check;
 /// `Err` always means nothing changed (layer property, 07-03 spec). `Money`
 /// wraps the core's error unchanged (§8.5 no overdraft).
-#[allow(dead_code)] // no phase calls the command layer yet — same rationale as money.rs's crate allow
 #[derive(Debug, PartialEq, Eq)]
 pub enum WorldError {
     /// The id is neither a spawned agent, a reserved account, nor an
@@ -157,7 +156,6 @@ impl From<MoneyError> for WorldError {
 /// The command layer (07-03): validated wrappers that tick phases, worldgen,
 /// and the interactive shell all reuse. Every command validates BEFORE
 /// touching any state, so `Err` always means nothing changed.
-#[allow(dead_code)] // no phase calls these yet — same rationale as money.rs's crate allow
 impl World {
     /// Known to the books: a spawned agent, a reserved account id, or an
     /// existing business id (Amendment 14). `pay`'s guard against parking
@@ -189,6 +187,7 @@ impl World {
     /// Houses `agent` at `house` (link rule: writes only the agent-side
     /// field; occupancy stays derived). Re-assigning an already-housed
     /// agent moves them.
+    #[allow(dead_code)] // no caller until the labor market lands
     pub fn assign_home(&mut self, agent: AgentId, house: HouseId) -> Result<(), WorldError> {
         if self.agent(agent).is_none() {
             return Err(WorldError::UnknownAgent(agent)); // agent checked first
@@ -201,6 +200,7 @@ impl World {
     }
 
     /// Clears `agent`'s home; already-homeless is an Ok no-op.
+    #[allow(dead_code)] // no caller until the labor market lands
     pub fn vacate_home(&mut self, agent: AgentId) -> Result<(), WorldError> {
         match self.agent_mut(agent) {
             Some(person) => {
@@ -215,6 +215,7 @@ impl World {
     /// [`assign_home`](World::assign_home) on the `workplace` field. No
     /// firm-side checks in v1 — any existing house qualifies; firm
     /// validation arrives via spec amendment when firms land.
+    #[allow(dead_code)] // no caller until the labor market lands
     pub fn assign_workplace(&mut self, agent: AgentId, house: HouseId) -> Result<(), WorldError> {
         if self.agent(agent).is_none() {
             return Err(WorldError::UnknownAgent(agent)); // agent checked first
@@ -227,6 +228,7 @@ impl World {
     }
 
     /// Clears `agent`'s workplace; already-unemployed is an Ok no-op.
+    #[allow(dead_code)] // no caller until the labor market lands
     pub fn vacate_workplace(&mut self, agent: AgentId) -> Result<(), WorldError> {
         match self.agent_mut(agent) {
             Some(person) => {

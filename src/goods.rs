@@ -1,7 +1,3 @@
-// Data-only until the phases land (Tasks 6-10). Remove with Task 12's
-// dead-code sweep.
-#![allow(dead_code)]
-
 //! Goods: the closed set of consumable products (07-19 minimal-needs
 //! spec). Same closed-enum pattern as `Role`: add a variant + extend
 //! `ALL` and the compiler finds every match needing an update. The

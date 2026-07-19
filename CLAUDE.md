@@ -34,6 +34,10 @@ new mechanics into the loop and money:
 - `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
   `Business`/`RoleSlot` (per-role wages, account-only money) — struct-only,
   no behavior reads them yet.
+- `src/goods.rs` — `Good` (closed consumable enum) + the 07-19 per-good
+  constants table (consumption, weight, target days, production).
+- `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
+  sim.rs builds `Offer`s from `businesses()` and applies via `pay`.
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
@@ -46,12 +50,13 @@ new mechanics into the loop and money:
 - `src/engine/game_loop.rs` — interactive shell only: Enter advances a tick,
   an agent name inspects it, q quits.
 
-No economic behavior runs yet: phases 1–8 are TODO stubs, `Accounts` starts
-empty, and nothing mints — money enters only through earned paths once the
-mint job exists. Firms are deferred (TODO markers in `sim.rs`). If you change
-structure, update this section.
+The 07-19 minimal-needs loop runs: phases 2 (produce), 3 (wages),
+4 (goods market via `Intent::Buy`), 5 (consume), and 8 (mint tops up
+staffed wage bills — the accepted ever-growing supply) have behavior;
+phases 1, 6, 7 remain TODO stubs. Worldgen seeds the farm/theater/jeweler
+scenario. If you change structure, update this section.
 
-Next up: nothing approved. Pending approval (no plan until signed off):
+Next up: pending approval (no plan until signed off):
 [`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)
 — `Accounts` keyed by `(AgentId, Metal)`; revises shipped `money.rs`,
 `World::pay`, and `RoleSlot.wage` at its listed migration points. After

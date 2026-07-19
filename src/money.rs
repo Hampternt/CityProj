@@ -14,10 +14,6 @@
 //! accounts.audit();                                    // 95 == 100 − 5, or panic
 //! ```
 
-// The full §8.2 API ships before any mechanic calls it; tests exercise it
-// until the first mechanic does. Remove once the movers have real callers.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::fmt;
 
@@ -179,6 +175,7 @@ impl Accounts {
     ///
     /// [`MoneyError::InsufficientFunds`] if `from` holds less than `amount`
     /// — nothing applied.
+    #[allow(dead_code)] // the sinks phase (7) lands later
     pub fn burn(&mut self, from: AgentId, amount: Money) -> Result<(), MoneyError> {
         if amount == Money::ZERO {
             return Ok(());

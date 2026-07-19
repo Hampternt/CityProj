@@ -1,7 +1,3 @@
-// Data-only until the phases land (Tasks 6-10). Remove with Task 12's
-// dead-code sweep.
-#![allow(dead_code)]
-
 //! The goods market's shopping logic (§8.6: pricing/purchasing logic
 //! lives HERE, never on agents or money). `plan_purchases` is pure —
 //! wallet + inventory + posted offers in, purchase plan out; no world

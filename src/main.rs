@@ -14,8 +14,13 @@
 //! - [`agent`] — [`agent::Agent`], the person-level economic actor.
 //! - [`business`] — [`business::Business`], a house's employer capability;
 //!   account-only money-wise (no balance field).
+//! - [`goods`] — [`goods::Good`], the closed set of consumables and their
+//!   per-good constants.
 //! - [`housing`] — [`housing::House`], first-class places agents live and
 //!   (later) work in.
+//! - [`market`] — the goods market's pure shopping logic (§8.6);
+//!   [`market::plan_purchases`] turns wallet + inventory + offers into a
+//!   purchase plan.
 //! - [`role`] — [`role::Role`], the closed set of job roles.
 //! - [`world`] — [`world::World`] bundles agents, houses, and accounts, and
 //!   reserves the Mint and External account ids.

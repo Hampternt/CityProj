@@ -3,10 +3,6 @@
 //! Money-wise a business is only an account id (§8.2): balances live in
 //! `Accounts`, never here. Wages are per-role (Amendment 11), never flat.
 
-// Struct-only refactor: nothing reads these yet. Remove once hiring or
-// wage phases land. Same rationale as money.rs's crate allow.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use crate::agent::AgentId;
