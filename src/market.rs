@@ -29,6 +29,41 @@ pub struct Purchase {
     pub units: u32,
 }
 
+/// Pricing tuning constants (07-19 variable-pricing spec) — same status
+/// as the goods table: gameplay knobs, change freely.
+/// Sell-through ≥ 9/10 of offered raises the price one step.
+const RAISE_THRESHOLD: (u64, u64) = (9, 10); // (numerator, denominator)
+/// Sell-through < 1/2 of offered lowers the price one step.
+const LOWER_THRESHOLD: (u64, u64) = (1, 2);
+/// One step is `max(1, price / STEP_DIVISOR)` — proportional, integer-safe.
+const STEP_DIVISOR: u64 = 10;
+/// Prices never fall below this, so they can always recover upward.
+const PRICE_FLOOR: Money = Money::new(1);
+
+/// Per-business Walrasian tâtonnement (§8.6): sold out → raise, didn't
+/// sell → lower, one proportional step per tick, saturating at
+/// `PRICE_FLOOR`. Pure and total. `offered == 0` is "no signal", not
+/// poor sales — the price holds. Callers guarantee `sold <= offered`.
+/// Ratio checks are integer cross-multiplication — no floats (§8.1).
+pub fn adjust_price(price: Money, offered: u32, sold: u32) -> Money {
+    if offered == 0 {
+        return price;
+    }
+    let step = Money::new(1).max(price.divided_by(STEP_DIVISOR));
+    let (sold, offered) = (u64::from(sold), u64::from(offered));
+    if sold * RAISE_THRESHOLD.1 >= offered * RAISE_THRESHOLD.0 {
+        price.plus(step)
+    } else if sold * LOWER_THRESHOLD.1 < offered * LOWER_THRESHOLD.0 {
+        if price > step.plus(PRICE_FLOOR) {
+            price.minus(step)
+        } else {
+            PRICE_FLOOR
+        }
+    } else {
+        price
+    }
+}
+
 /// Greedy needs-shopping with diminishing returns: repeatedly buy 1 unit
 /// of the highest-scoring good — score = weight / (held + planned + 1) —
 /// that is (a) affordable in the remaining budget, (b) in remaining offer
@@ -287,5 +322,38 @@ mod tests {
                 units: 1
             }]
         );
+    }
+
+    #[test]
+    fn adjust_price_empty_shelf_is_no_signal() {
+        // offered 0 → unchanged, NOT treated as poor sales
+        assert_eq!(adjust_price(Money::new(5), 0, 0), Money::new(5));
+    }
+
+    #[test]
+    fn adjust_price_raises_on_high_sell_through() {
+        // 9/10 exactly hits the threshold; step = max(1, 5/10) = 1
+        assert_eq!(adjust_price(Money::new(5), 10, 9), Money::new(6));
+        // sold out
+        assert_eq!(adjust_price(Money::new(5), 10, 10), Money::new(6));
+        // proportional step: 100/10 = 10
+        assert_eq!(adjust_price(Money::new(100), 10, 10), Money::new(110));
+    }
+
+    #[test]
+    fn adjust_price_lowers_on_poor_sales_saturating_at_floor() {
+        // 4/10 < 1/2 → down one step (100/10 = 10)
+        assert_eq!(adjust_price(Money::new(100), 10, 4), Money::new(90));
+        // 2 − max(1, 2/10) lands exactly on the floor
+        assert_eq!(adjust_price(Money::new(2), 10, 0), Money::new(1));
+        // a floor-price seller with poor sales stays at the floor
+        assert_eq!(adjust_price(Money::new(1), 10, 0), Money::new(1));
+    }
+
+    #[test]
+    fn adjust_price_middling_sales_hold_the_price() {
+        // 5/10: exactly 1/2 is not < 1/2; 8/10 is below the raise threshold
+        assert_eq!(adjust_price(Money::new(10), 10, 5), Money::new(10));
+        assert_eq!(adjust_price(Money::new(10), 10, 8), Money::new(10));
     }
 }

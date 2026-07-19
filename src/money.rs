@@ -52,6 +52,13 @@ impl Money {
     pub fn times(self, count: u32) -> Money {
         Money(self.0.checked_mul(count as u64).expect("money overflow"))
     }
+
+    /// Checked integer division, flooring — the proportional-step
+    /// helper for pricing (§8.1: stays integer). Panics on a zero
+    /// divisor; callers pass literal constants.
+    pub fn divided_by(self, divisor: u64) -> Money {
+        Money(self.0.checked_div(divisor).expect("money division by zero"))
+    }
 }
 
 impl fmt::Display for Money {
@@ -340,5 +347,12 @@ mod tests {
     #[should_panic(expected = "money overflow")]
     fn times_panics_on_overflow() {
         Money::new(u64::MAX).times(2);
+    }
+
+    #[test]
+    fn divided_by_floors() {
+        assert_eq!(Money::new(25).divided_by(10), Money::new(2));
+        assert_eq!(Money::new(9).divided_by(10), Money::ZERO);
+        assert_eq!(Money::ZERO.divided_by(10), Money::ZERO);
     }
 }
