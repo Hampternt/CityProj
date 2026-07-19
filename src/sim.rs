@@ -73,24 +73,58 @@ fn produce(world: &mut World) {
     }
 }
 
-/// Phase 3: firms pay agreed wages. Money ops allowed: transfer only.
+/// Phase 3: firms pay agreed wages from their own coffers. Money ops
+/// allowed: transfer only. Each tick's wage first joins the business's
+/// `owed_to` ledger, then the business pays whatever its balance covers
+/// — coffers drain to exactly zero before any wage goes unpaid, and
+/// past-due wages repay automatically when revenue returns (arrears and
+/// the current wage share one pot).
 fn pay_wages(world: &mut World) {
-    // Decide from the snapshot: who is owed which role's wage. A worker
+    // Decide from the snapshot: who accrues which role's wage. A worker
     // with no employed_role, or a role the business doesn't slot, earns
     // nothing this milestone.
-    let owed: Vec<(AgentId, AgentId, Money)> = world
+    let accruals: Vec<(HouseId, AgentId, AgentId, Money)> = world
         .businesses()
         .filter_map(|(house, business)| {
             let worker = world.employee_of(house.id)?;
             let role = world.agent(worker)?.employed_role?;
             let slot = business.roles.get(&role)?;
-            Some((business.id, worker, slot.wage))
+            Some((house.id, business.id, worker, slot.wage))
         })
         .collect();
-    // Apply through the validated chokepoint. An unfunded wage errs and
-    // skips cleanly (§8.5) — never partial, never panicking.
-    for (business, worker, wage) in owed {
-        let _ = world.pay(business, worker, wage);
+    for (house_id, business_id, worker, wage) in accruals {
+        let business = world
+            .house_mut(house_id)
+            .expect("collected from businesses()")
+            .business
+            .as_mut()
+            .expect("collected from businesses()");
+        let owed = business
+            .owed_to
+            .get(&worker)
+            .copied()
+            .unwrap_or(Money::ZERO)
+            .plus(wage);
+        business.owed_to.insert(worker, owed);
+        // Pay what the coffers cover. Amount ≤ balance by construction,
+        // so the transfer cannot err — but if it ever does, skip cleanly
+        // (§8.5): the ledger keeps the full debt, never settled without
+        // its payment.
+        let payable = world.accounts.balance_of(business_id).min(owed);
+        if payable == Money::ZERO || world.pay(business_id, worker, payable).is_err() {
+            continue;
+        }
+        let business = world
+            .house_mut(house_id)
+            .expect("collected from businesses()")
+            .business
+            .as_mut()
+            .expect("collected from businesses()");
+        if owed == payable {
+            business.owed_to.remove(&worker);
+        } else {
+            business.owed_to.insert(worker, owed.minus(payable));
+        }
     }
 }
 
@@ -275,6 +309,19 @@ mod tests {
             .unwrap_or(0)
     }
 
+    fn owed(world: &World, house: HouseId, worker: AgentId) -> Money {
+        world
+            .house(house)
+            .unwrap()
+            .business
+            .as_ref()
+            .unwrap()
+            .owed_to
+            .get(&worker)
+            .copied()
+            .unwrap_or(Money::ZERO)
+    }
+
     #[test]
     fn produce_fills_staffed_stock_only() {
         let mut world = World::new();
@@ -324,7 +371,7 @@ mod tests {
     #[test]
     fn pay_wages_transfers_the_role_wage() {
         let mut world = World::new();
-        let (_, farm, worker) = staffed_business(
+        let (farm_house, farm, worker) = staffed_business(
             &mut world,
             "Farm",
             Good::Food,
@@ -336,13 +383,15 @@ mod tests {
         pay_wages(&mut world);
         assert_eq!(world.accounts.balance_of(worker), Money::new(35));
         assert_eq!(world.accounts.balance_of(farm), Money::new(15));
+        // fully funded: nothing carried
+        assert_eq!(owed(&world, farm_house, worker), Money::ZERO);
         world.accounts.audit();
     }
 
     #[test]
-    fn unfunded_wage_skips_cleanly() {
+    fn underfunded_wage_drains_coffers_and_records_the_rest_as_arrears() {
         let mut world = World::new();
-        let (_, farm, worker) = staffed_business(
+        let (farm_house, farm, worker) = staffed_business(
             &mut world,
             "Farm",
             Good::Food,
@@ -351,9 +400,46 @@ mod tests {
             "f",
         );
         world.accounts.mint(farm, Money::new(10)); // less than the wage
-        pay_wages(&mut world); // must not panic, must not partially pay (§8.5)
+        pay_wages(&mut world);
+        // partial payment IS a full valid transfer of a smaller amount (§8.5)
+        assert_eq!(world.accounts.balance_of(worker), Money::new(10));
+        assert_eq!(world.accounts.balance_of(farm), Money::ZERO);
+        assert_eq!(owed(&world, farm_house, worker), Money::new(25));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn arrears_accrue_and_repay_when_revenue_returns() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        // broke business: the full wage becomes debt, no transfer happens
+        pay_wages(&mut world);
         assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
-        assert_eq!(world.accounts.balance_of(farm), Money::new(10));
+        assert_eq!(owed(&world, farm_house, worker), Money::new(35));
+        // revenue returns: this tick's wage joins the pot and all 70 clears
+        world.accounts.mint(farm, Money::new(100));
+        pay_wages(&mut world);
+        assert_eq!(world.accounts.balance_of(worker), Money::new(70));
+        assert_eq!(world.accounts.balance_of(farm), Money::new(30));
+        // paid-off entries leave the map entirely
+        assert!(
+            world
+                .house(farm_house)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+        world.accounts.audit();
     }
 
     #[test]

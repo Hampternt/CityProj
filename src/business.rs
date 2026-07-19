@@ -49,7 +49,6 @@ pub struct Business {
     /// normal transfer, and keeps the shortfall. Entries are removed at
     /// zero — an empty map means fully paid. Bookkeeping only, never a
     /// negative balance (§8.2/§8.5).
-    #[allow(dead_code)] // read by Task 3 phase-3 payment, Task 6 inspection
     pub owed_to: HashMap<AgentId, Money>,
 }
 
