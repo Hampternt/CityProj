@@ -245,7 +245,8 @@ impl World {
     /// the same counter as `spawn_agent` — never a reserved id, never
     /// reused, and NO `Agent` struct is created (business ids are
     /// account-only, like Mint/External). Starts with zero stock; product
-    /// and price are fixed at creation (07-19: prices never adjust).
+    /// is fixed at creation, price is the initial posted price; phase 4's
+    /// `market::adjust_price` adjusts price each tick based on sell-through.
     /// Validates before touching state: `Err` means nothing changed.
     pub fn create_business(
         &mut self,

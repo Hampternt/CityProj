@@ -50,9 +50,11 @@ pub fn run() {
 /// The 07-19 minimal-needs scenario: farm, theater, and jeweler (one
 /// Labourer slot each at wage 35), three employed agents, one unemployed,
 /// all housed at the residence. Worldgen seeds every business with one
-/// wage bill — pay_wages runs before the first mint, so tick 1 must be
-/// pre-funded — and every agent with a small wallet plus one day's goods.
-/// All seeding goes through `mint`, so the audit counts it (§8.4).
+/// wage bill — tick 1 must be pre-funded because there is no per-tick mint
+/// faucet; the seed is the entire money supply and tick 1's wages are paid
+/// before any business revenue exists — and every agent with a small wallet
+/// plus one day's goods. All seeding goes through `mint`, so the audit
+/// counts it (§8.4).
 fn template_world() -> World {
     let mut world = World::new();
     let residence = world.add_house("1 Mill Lane", vec![]);

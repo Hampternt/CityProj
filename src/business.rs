@@ -45,9 +45,11 @@ pub struct Business {
     pub roles: HashMap<Role, RoleSlot>,
     /// Wage debt per worker (arrears, 07-19 pricing spec): phase 3
     /// accrues each tick's wage here, pays what the coffers cover via a
-    /// normal transfer, and keeps the shortfall. Entries are removed at
-    /// zero — an empty map means fully paid. Bookkeeping only, never a
-    /// negative balance (§8.2/§8.5).
+    /// normal transfer, and keeps the shortfall. Only the current employee's
+    /// debt is paid down by phase 3; a departed worker's entry persists
+    /// unpaid until a future job-switching/payout mechanic reads the ledger.
+    /// Entries are removed at zero — an empty map means fully paid.
+    /// Bookkeeping only, never a negative balance (§8.2/§8.5).
     pub owed_to: HashMap<AgentId, Money>,
 }
 
