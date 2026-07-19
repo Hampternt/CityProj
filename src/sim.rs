@@ -3,15 +3,27 @@
 //! contract table. The conservation audit (§8.3) is unconditionally last.
 
 use crate::agent::{Agent, AgentId};
+use crate::goods::Good;
 use crate::housing::HouseId;
+use crate::market::{self, Offer};
 use crate::money::Money;
 use crate::world::World;
 
 /// What an agent wants to do, decided in a pure pass and executed in an
 /// apply pass (see `goods_market` for the worked template). Mechanics add
-/// variants; the skeleton has none, so every `match intent {}` is
-/// exhaustive and adding a variant is a compile-time forcing function.
-pub enum Intent {}
+/// variants; every `match intent` stays exhaustive so a new variant is a
+/// compile-time forcing function on every apply fn.
+pub enum Intent {
+    /// Buy `units` of `good` from `business`'s stock (phase 4). Planned
+    /// against the tick-start snapshot, so `units` may exceed stock by
+    /// apply time — apply caps to what is really on the shelf.
+    Buy {
+        buyer: AgentId,
+        business: AgentId,
+        good: Good,
+        units: u32,
+    },
+}
 
 /// Runs one tick: phases 1–8 in exactly the spec table's order — labor
 /// clears, produce, wages, goods clear, consume, invest, sinks, mint — then
@@ -81,10 +93,24 @@ fn pay_wages(world: &mut World) {
 /// only. This phase is the WORKED decide→apply TEMPLATE — every behavior
 /// phase copies this two-pass shape.
 fn goods_market(world: &mut World) {
-    // Decide (pure): each agent reads the tick-start snapshot and returns
-    // what it WANTS to do. No `&mut` anywhere — unit-testable and free of
-    // iteration-order effects.
-    let intents: Vec<Intent> = world.agents.iter().flat_map(decide_goods).collect();
+    // Decide (pure): every agent plans against the same tick-start offer
+    // snapshot. No `&mut` anywhere — unit-testable and free of
+    // iteration-order effects. Collective staleness (two buyers wanting
+    // the same last unit) is resolved at apply time.
+    let offers: Vec<Offer> = world
+        .businesses()
+        .map(|(_, business)| Offer {
+            business: business.id,
+            good: business.product,
+            price: business.price,
+            stock: business.stock,
+        })
+        .collect();
+    let intents: Vec<Intent> = world
+        .agents
+        .iter()
+        .flat_map(|agent| decide_goods(agent, world.accounts.balance_of(agent.id), &offers))
+        .collect();
 
     // Apply: the ONLY place this phase moves money. Unaffordable intents
     // fail cleanly (transfer errs) — wanting is unconstrained, paying is not.
@@ -93,15 +119,55 @@ fn goods_market(world: &mut World) {
     }
 }
 
-/// TODO: needs-driven purchasing lands here. Stays pure.
-fn decide_goods(_agent: &Agent) -> Vec<Intent> {
-    Vec::new()
+/// Needs-driven purchasing. Stays pure; the shopping algorithm itself
+/// lives in market.rs (§8.6) — this just binds it to one agent.
+fn decide_goods(agent: &Agent, wallet: Money, offers: &[Offer]) -> Vec<Intent> {
+    market::plan_purchases(wallet, &agent.inventory, offers)
+        .into_iter()
+        .map(|purchase| Intent::Buy {
+            buyer: agent.id,
+            business: purchase.business,
+            good: purchase.good,
+            units: purchase.units,
+        })
+        .collect()
 }
 
-fn apply_goods_intent(_world: &mut World, intent: Intent) {
-    // Exhaustive over zero variants: adding an Intent variant forces every
-    // apply fn to handle it at compile time.
-    match intent {}
+fn apply_goods_intent(world: &mut World, intent: Intent) {
+    match intent {
+        Intent::Buy { buyer, business, good, units } => {
+            // Re-read live stock: an earlier buyer this phase may have
+            // emptied the shelf. Cap, pay, then hand over the goods —
+            // money and goods move together or not at all.
+            let found = world
+                .businesses()
+                .find(|(_, b)| b.id == business)
+                .map(|(house, b)| (house.id, b.price));
+            let Some((house_id, price)) = found else {
+                return; // business vanished — intents don't outlive facts
+            };
+            let live_stock = world
+                .house(house_id)
+                .expect("found above")
+                .business
+                .as_ref()
+                .expect("found above")
+                .stock;
+            let units = units.min(live_stock);
+            if units == 0 {
+                return;
+            }
+            if world.pay(buyer, business, price.times(units)).is_err() {
+                return; // §8.5: skip cleanly, stock untouched
+            }
+            let house = world.house_mut(house_id).expect("found above");
+            house.business.as_mut().expect("found above").stock -= units;
+            let agent = world
+                .agent_mut(buyer)
+                .expect("intents are decided from world.agents");
+            *agent.inventory.entry(good).or_insert(0) += units;
+        }
+    }
 }
 
 /// Phase 5: goods consumed toward needs. Money ops allowed: none.
@@ -159,6 +225,26 @@ mod tests {
 
     fn stock_of(world: &World, house: HouseId) -> u32 {
         world.house(house).unwrap().business.as_ref().unwrap().stock
+    }
+
+    fn set_stock(world: &mut World, house: HouseId, stock: u32) {
+        world
+            .house_mut(house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .stock = stock;
+    }
+
+    fn held(world: &World, agent: AgentId, good: Good) -> u32 {
+        world
+            .agent(agent)
+            .unwrap()
+            .inventory
+            .get(&good)
+            .copied()
+            .unwrap_or(0)
     }
 
     #[test]
@@ -270,5 +356,53 @@ mod tests {
         pay_wages(&mut world);
         assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
         assert_eq!(world.accounts.balance_of(business), Money::new(50));
+    }
+
+    #[test]
+    fn buy_moves_money_and_goods_together() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) =
+            staffed_business(&mut world, "Farm", Good::Food, Money::new(2), Money::new(35), "f");
+        set_stock(&mut world, farm_house, 50);
+        world.accounts.mint(worker, Money::new(10));
+        goods_market(&mut world);
+        // 10 coins at price 2 → 5 units, capped well below stock and target
+        assert_eq!(held(&world, worker, Good::Food), 5);
+        assert_eq!(stock_of(&world, farm_house), 45);
+        assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(farm), Money::new(10));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn stale_intents_cap_to_live_stock() {
+        let mut world = World::new();
+        let (farm_house, _, first) =
+            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "a");
+        let second = world.spawn_agent("b", None, None);
+        set_stock(&mut world, farm_house, 10);
+        // both plan against the same 10-unit snapshot and could each afford it
+        world.accounts.mint(first, Money::new(10));
+        world.accounts.mint(second, Money::new(10));
+        goods_market(&mut world);
+        // agents-order: first drains the shelf, second is capped to zero
+        assert_eq!(held(&world, first, Good::Food), 10);
+        assert_eq!(held(&world, second, Good::Food), 0);
+        assert_eq!(world.accounts.balance_of(second), Money::new(10)); // unspent
+        assert_eq!(stock_of(&world, farm_house), 0);
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn broke_buyers_change_nothing() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) =
+            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), Money::new(35), "f");
+        set_stock(&mut world, farm_house, 50);
+        // no money minted to the worker at all
+        goods_market(&mut world);
+        assert_eq!(held(&world, worker, Good::Food), 0);
+        assert_eq!(stock_of(&world, farm_house), 50);
+        assert_eq!(world.accounts.balance_of(farm), Money::ZERO);
     }
 }

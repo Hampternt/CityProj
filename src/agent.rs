@@ -47,6 +47,5 @@ pub struct Agent {
     /// Personal stock of goods: refilled by phase-4 purchases, drained by
     /// phase-5 consumption. Missing entry reads as 0. Goods are not money
     /// — no conservation audit applies.
-    #[allow(dead_code)]
     pub inventory: HashMap<Good, u32>,
 }
