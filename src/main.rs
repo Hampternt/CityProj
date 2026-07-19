@@ -39,6 +39,7 @@ mod business;
 mod engine;
 mod goods;
 mod housing;
+mod market;
 mod money;
 mod role;
 mod sim;
