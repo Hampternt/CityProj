@@ -34,12 +34,14 @@ new mechanics into the loop and money:
 - `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
 - `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
   `Business`/`RoleSlot` (per-role wages, account-only money); phase 3
-  (`pay_wages`) reads `employed_role` and `RoleSlot.wage`, phase 8 reads
-  `wage_bill()`.
+  (`pay_wages`) reads `employed_role` and `RoleSlot.wage` and keeps the
+  per-worker `owed_to` wage-arrears ledger.
 - `src/goods.rs` — `Good` (closed consumable enum) + the 07-19 per-good
   constants table (consumption, weight, target days, production).
 - `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
-  sim.rs builds `Offer`s from `businesses()` and applies via `pay`.
+  sim.rs builds `Offer`s from `businesses()` and applies via `pay`;
+  `adjust_price`: per-business tâtonnement (sold out → raise, didn't
+  sell → lower) with its tuning constants alongside.
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
@@ -54,17 +56,37 @@ new mechanics into the loop and money:
   seeds the 07-19 farm/theater/jeweler scenario; no per-tick simulation
   behavior.
 
-The 07-19 minimal-needs loop runs: phases 2 (produce), 3 (wages),
-4 (goods market via `Intent::Buy`), 5 (consume), and 8 (mint tops up
-staffed wage bills — the accepted ever-growing supply) have behavior;
-phases 1, 6, 7 remain TODO stubs. Worldgen seeds the farm/theater/jeweler
-scenario. If you change structure, update this section.
+The 07-19 loops run: phases 2 (produce), 3 (wages from business coffers,
+shortfalls carried as `owed_to` arrears and repaid when revenue returns),
+4 (goods market via `Intent::Buy`, then per-business `adjust_price`
+write-back — new prices take effect next tick), and 5 (consume) have
+behavior; phases 1, 6, 7, and 8 are TODO stubs. The tick-time mint
+faucet is closed: worldgen's seed is the entire money supply and the
+audit pins it there. Worldgen seeds the farm/theater/jeweler scenario.
+If you change structure, update this section.
 
 Next up: pending approval (no plan until signed off):
 [`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)
 — `Accounts` keyed by `(AgentId, Metal)`; revises shipped `money.rs`,
 `World::pay`, and `RoleSlot.wage` at its listed migration points. After
 that: a wage-payment/hiring behavior spec built on `World::businesses()`.
+
+## Roadmap (recorded 2026-07-19; future specs design these)
+
+- **Physical goods movement.** Goods will physically travel: producer →
+  market / wherever needed, moved by hauler/logistics-type businesses.
+  Agents already have inventories; houses and market venues get their own
+  storage; agents travel to a market to buy and back home to stow. Until
+  then businesses sell from their own `stock` — the seam where "shelf"
+  becomes "market venue inventory" is the `Offer` struct, so don't bake
+  in the assumption that stock lives only on businesses.
+- **Money creation.** As designed in the parent doc §2.1: a *literal
+  staffed Mint business* that consumes precious-metal goods to mint coins
+  (seigniorage formula deferred by the 07-12 multi-metal spec), plus
+  trade with outside markets through `External`.
+- **Wage market.** The `adjust_price` pattern applied to `RoleSlot.wage`
+  in phase 1 (can't fill a slot → raise, queue of applicants → lower),
+  plus employee happiness / job-switching driven by the arrears ledger.
 
 ## Hard invariants (never violate)
 

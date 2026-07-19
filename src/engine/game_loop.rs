@@ -136,11 +136,12 @@ fn render(world: &World, tick_count: u64) {
         );
         if let Some(business) = &house.business {
             println!(
-                "    sells {} @{} · stock {} · balance {}",
+                "    sells {} @{} · stock {} · balance {} · owed {}",
                 business.product,
                 business.price,
                 business.stock,
                 world.accounts.balance_of(business.id),
+                business.owed_total(),
             );
         }
     }

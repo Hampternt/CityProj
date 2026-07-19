@@ -64,7 +64,6 @@ impl Business {
 
     /// Total outstanding wage debt across all workers. Display and
     /// diagnostics; phase 3 works per-worker, not from this sum.
-    #[allow(dead_code)] // read by Task 6 inspection
     pub fn owed_total(&self) -> Money {
         self.owed_to
             .values()
