@@ -171,8 +171,15 @@ fn apply_goods_intent(world: &mut World, intent: Intent) {
 }
 
 /// Phase 5: goods consumed toward needs. Money ops allowed: none.
-fn consume(_world: &mut World) {
-    // TODO: needs fulfillment lands here.
+/// Shortfall just bottoms out at zero this milestone — no starvation
+/// consequences yet (07-19 spec: out of scope).
+fn consume(world: &mut World) {
+    for agent in &mut world.agents {
+        for good in Good::ALL {
+            let held = agent.inventory.entry(good).or_insert(0);
+            *held = held.saturating_sub(good.consumption_rate());
+        }
+    }
 }
 
 /// Phase 6: expand capacity / take profit. Money ops allowed: transfer only.
@@ -404,5 +411,19 @@ mod tests {
         assert_eq!(held(&world, worker, Good::Food), 0);
         assert_eq!(stock_of(&world, farm_house), 50);
         assert_eq!(world.accounts.balance_of(farm), Money::ZERO);
+    }
+
+    #[test]
+    fn consume_drains_inventories_saturating_at_zero() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        let agent = world.agent_mut(a).unwrap();
+        agent.inventory.insert(Good::Food, 25);
+        agent.inventory.insert(Good::Entertainment, 3); // below the rate of 5
+        // Luxury absent: stays absent-or-zero, never underflows
+        consume(&mut world);
+        assert_eq!(held(&world, a, Good::Food), 15);
+        assert_eq!(held(&world, a, Good::Entertainment), 0);
+        assert_eq!(held(&world, a, Good::Luxury), 0);
     }
 }
