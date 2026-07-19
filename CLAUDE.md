@@ -32,8 +32,9 @@ new mechanics into the loop and money:
   `transfer`/`mint`/`burn` movers, `audit` panics on imbalance).
 - `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
 - `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
-  `Business`/`RoleSlot` (per-role wages, account-only money) — struct-only,
-  no behavior reads them yet.
+  `Business`/`RoleSlot` (per-role wages, account-only money); phase 3
+  (`pay_wages`) reads `employed_role` and `RoleSlot.wage`, phase 8 reads
+  `wage_bill()`.
 - `src/goods.rs` — `Good` (closed consumable enum) + the 07-19 per-good
   constants table (consumption, weight, target days, production).
 - `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
@@ -46,7 +47,7 @@ new mechanics into the loop and money:
   `pay` recognizes business ids (refactor Am. 14).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last; `goods_market` holds the worked decide→apply template; `Intent` is
-  the (empty) enum mechanics extend.
+  the enum mechanics extend — `Intent::Buy` is its first variant.
 - `src/engine/game_loop.rs` — interactive shell only: Enter advances a tick,
   an agent name inspects it, q quits.
 

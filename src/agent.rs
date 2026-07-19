@@ -28,7 +28,9 @@ pub struct Agent {
     pub name: String,
     /// Where this agent lives, if anywhere.
     pub home: Option<HouseId>,
-    /// Where this agent works, if anywhere. Unused until firms land.
+    /// Where this agent works, if anywhere. Read by `World::employee_of`
+    /// for the staffed-business phases; hiring itself lands with the
+    /// labor market.
     pub workplace: Option<HouseId>,
     /// Role this agent is trained for; `None` = unspecialized/general
     /// labour. Independent of `employed_role` — agents can work off-spec.

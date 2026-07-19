@@ -11,7 +11,8 @@ use crate::money::Money;
 use crate::role::Role;
 
 /// One role a business employs: the wage it offers and how many workers it
-/// wants. No behavior reads this yet. `wage` types against today's
+/// wants. Read by phase 3 (`pay_wages`, via `wage`) and phase 8
+/// (`mint_phase`, via `wage_bill`). `wage` types against today's
 /// single-metal `Money`; the multi-metal migration pass revises it (single
 /// metal vs. bundle is that spec's open question) — don't design around the
 /// current type being final.
