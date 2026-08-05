@@ -13,7 +13,16 @@ use crate::housing::HouseId;
 use crate::money::Money;
 use crate::role::Role;
 use crate::sim;
+use crate::terrain::Terrain;
 use crate::world::World;
+
+/// The shell's display terrain: generated once at startup, held alongside
+/// — not inside — the economy `World` (no sim consumer yet). Fixed seed
+/// so every run shows the same land. 64×64 vertices at cell 50 is a
+/// ~320 m square sampled every 5 m (spec, `generate` contract).
+const MAP_SEED: u64 = 20260728;
+const MAP_VERTICES: u32 = 64;
+const MAP_CELL_SIZE: i64 = 50;
 
 /// One parsed line of user input at the tick prompt.
 enum Command {
@@ -21,6 +30,8 @@ enum Command {
     Advance,
     /// `q` (any case), EOF, or a read error: leave the loop.
     Quit,
+    /// `map` (any case): export the terrain to map.json.
+    Map,
     /// Anything else is taken as an agent name to inspect.
     Inspect(String),
 }
@@ -29,6 +40,7 @@ enum Command {
 /// Starts from the hand-seeded [`template_world`].
 pub fn run() {
     let mut world = template_world();
+    let terrain = Terrain::generate(MAP_SEED, MAP_VERTICES, MAP_VERTICES, MAP_CELL_SIZE);
     let mut tick_count: u64 = 0;
 
     loop {
@@ -43,6 +55,7 @@ pub fn run() {
                 tick_count += 1;
             }
             Command::Inspect(name) => inspect(&world, &name),
+            Command::Map => export_map(&terrain),
         }
     }
 }
@@ -197,7 +210,9 @@ fn describe_inventory(agent: &Agent) -> String {
 /// Blocks until the user enters a command. EOF (e.g. Ctrl-D) and read
 /// errors quit cleanly, same as before.
 fn read_command(tick_count: u64) -> Command {
-    print!("[tick {tick_count}] Enter = advance · <agent name> = inspect · q = quit > ");
+    print!(
+        "[tick {tick_count}] Enter = advance · <agent name> = inspect · map = export map.json · q = quit > "
+    );
     // stdout is line-buffered; flush so the prompt shows before we block.
     let _ = io::stdout().flush();
 
@@ -207,9 +222,26 @@ fn read_command(tick_count: u64) -> Command {
         Ok(_) => match line.trim() {
             "" => Command::Advance,
             quit if quit.eq_ignore_ascii_case("q") => Command::Quit,
+            // Shadows any agent literally named "map" — acceptable for a
+            // debug command.
+            map if map.eq_ignore_ascii_case("map") => Command::Map,
             name => Command::Inspect(name.to_string()),
         },
     }
+}
+
+/// Writes the terrain to map.json in the working directory. A write
+/// failure prints an error and the sim continues (spec, map export
+/// contract).
+fn export_map(terrain: &Terrain) {
+    match std::fs::write("map.json", terrain.to_json()) {
+        Ok(()) => println!("wrote map.json — open tools/map_viewer.html and load it"),
+        Err(error) => println!("could not write map.json: {error}"),
+    }
+    print!("press Enter to continue... ");
+    let _ = io::stdout().flush();
+    let mut line = String::new();
+    let _ = io::stdin().read_line(&mut line);
 }
 
 /// Prints one agent's details, then waits for Enter so the next clear-screen
