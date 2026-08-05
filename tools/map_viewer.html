@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CityProj map viewer</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #14141a; color: #ccc; overflow: hidden; }
+  #bar { padding: 8px 12px; position: absolute; z-index: 1; }
+  canvas { display: block; cursor: grab; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <input type="file" id="file" accept=".json,application/json">
+  <span>load map.json · drag = rotate · wheel = zoom</span>
+</div>
+<canvas id="view"></canvas>
+<script>
+"use strict";
+// Input contract: {"unit_meters":0.1,"cell_size":C,"vertices_x":X,
+// "vertices_y":Y,"elevations":[...]} row-major — produced by
+// Terrain::to_json; this file and that serializer change together.
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+let map = null;
+let angle = Math.PI / 4;   // rotation of the map around the vertical axis
+let zoom = 1;
+const Z_EXAGGERATION = 2;  // display-only vertical stretch so relief reads
+const LIGHT = normalize([-0.5, -0.7, 0.8]); // fixed in world space
+
+function normalize(v) {
+  const len = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+document.getElementById("file").addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  file.text().then((text) => {
+    map = JSON.parse(text);
+    fitZoom();
+    draw();
+  });
+});
+
+function elevation(vx, vy) {
+  return map.elevations[vy * map.vertices_x + vx];
+}
+
+// Map-centered world coordinates of a vertex, rotated by `angle`.
+function rotated(vx, vy) {
+  const x = (vx - (map.vertices_x - 1) / 2) * map.cell_size;
+  const y = (vy - (map.vertices_y - 1) / 2) * map.cell_size;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  return [x * cos - y * sin, x * sin + y * cos];
+}
+
+// Isometric projection: screen x from the rotated difference, screen y
+// from the rotated sum minus exaggerated elevation.
+function project(r, z) {
+  return [
+    (r[0] - r[1]) * 0.866 * zoom + canvas.width / 2,
+    (r[0] + r[1]) * 0.5 * zoom - z * Z_EXAGGERATION * zoom + canvas.height / 2,
+  ];
+}
+
+function fitZoom() {
+  const span = Math.max(map.vertices_x, map.vertices_y) * map.cell_size;
+  zoom = Math.min(canvas.width, canvas.height) / (span * 2.2);
+}
+
+// Lowland green → highland grey-brown, darkened by hillshade.
+function cellColor(z, shade) {
+  const t = Math.min(z / 400, 1);
+  const r = 70 + t * 110, g = 110 + t * 40, b = 60 + t * 60;
+  const s = 0.35 + 0.65 * shade;
+  return `rgb(${Math.round(r * s)},${Math.round(g * s)},${Math.round(b * s)})`;
+}
+
+function draw() {
+  ctx.fillStyle = "#14141a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!map) return;
+
+  // Painter's algorithm: sort cells far-to-near. Depth in this projection
+  // is the rotated coordinate sum (larger = nearer the viewer).
+  const cells = [];
+  for (let vy = 0; vy < map.vertices_y - 1; vy++) {
+    for (let vx = 0; vx < map.vertices_x - 1; vx++) {
+      const r = rotated(vx + 0.5, vy + 0.5);
+      cells.push({ vx, vy, depth: r[0] + r[1] });
+    }
+  }
+  cells.sort((a, b) => a.depth - b.depth);
+
+  for (const { vx, vy } of cells) {
+    const z00 = elevation(vx, vy), z10 = elevation(vx + 1, vy);
+    const z01 = elevation(vx, vy + 1), z11 = elevation(vx + 1, vy + 1);
+    // Hillshade from the cell's average gradient, in unrotated world
+    // space so the sun stays fixed to the terrain while the view spins.
+    const dzdx = (z10 + z11 - z00 - z01) / (2 * map.cell_size);
+    const dzdy = (z01 + z11 - z00 - z10) / (2 * map.cell_size);
+    const n = normalize([-dzdx, -dzdy, 1]);
+    const shade = Math.max(0, n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]);
+
+    const p00 = project(rotated(vx, vy), z00);
+    const p10 = project(rotated(vx + 1, vy), z10);
+    const p11 = project(rotated(vx + 1, vy + 1), z11);
+    const p01 = project(rotated(vx, vy + 1), z01);
+    ctx.beginPath();
+    ctx.moveTo(p00[0], p00[1]);
+    ctx.lineTo(p10[0], p10[1]);
+    ctx.lineTo(p11[0], p11[1]);
+    ctx.lineTo(p01[0], p01[1]);
+    ctx.closePath();
+    ctx.fillStyle = cellColor((z00 + z10 + z01 + z11) / 4, shade);
+    ctx.fill();
+  }
+}
+
+let dragging = false, lastX = 0;
+canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; });
+window.addEventListener("mouseup", () => { dragging = false; });
+window.addEventListener("mousemove", (e) => {
+  if (!dragging) return;
+  angle += (e.clientX - lastX) * 0.01;
+  lastX = e.clientX;
+  draw();
+});
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  zoom *= Math.exp(-e.deltaY * 0.001);
+  draw();
+}, { passive: false });
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  if (map) fitZoom();
+  draw();
+}
+window.addEventListener("resize", resize);
+resize();
+</script>
+</body>
+</html>
