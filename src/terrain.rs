@@ -443,6 +443,18 @@ mod tests {
     }
 
     #[test]
+    fn generate_matches_viewer_canary() {
+        // Pinned parity values shared with tools/map_viewer.html's startup
+        // canary (spec, "parity canary" unit): if either side drifts from
+        // the other, one of the two checks fails.
+        let t = Terrain::generate(20260728, 64, 64, 50);
+        // Vertex (0, 0) and vertex (33, 17) — world (1650, 850) at cell
+        // size 50; elevation_at returns stored samples exactly at vertices.
+        assert_eq!(t.elevation_at(0, 0), Ok(235));
+        assert_eq!(t.elevation_at(1650, 850), Ok(183));
+    }
+
+    #[test]
     #[should_panic(expected = "2x2")]
     fn generate_rejects_degenerate_dims() {
         Terrain::generate(0, 1, 64, 50);
