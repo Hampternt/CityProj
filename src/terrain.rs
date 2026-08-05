@@ -100,6 +100,64 @@ impl Terrain {
     }
 }
 
+// ── Travel tuning constants ─────────────────────────────────────────────
+// Same status as the pricing table in `market.rs`: first-guess values,
+// retuning is a constants edit. NOTE for the future hauler spec: whether
+// these ticks are economy ticks or finer movement sub-steps is that
+// spec's question — don't let the unit silently harden (spec, "Travel
+// tuning constants").
+
+/// Baseline wagon speed on flat ground, world units per tick.
+pub const WAGON_FLAT_SPEED: u32 = 50;
+/// Uphill speed divisor grows as 1 + UPHILL_DRAG·grade.
+pub const UPHILL_DRAG: f64 = 8.0;
+/// Downhill speed multiplier grows as 1 + DOWNHILL_BOOST·|grade|.
+pub const DOWNHILL_BOOST: f64 = 2.0;
+/// Downhill speed never exceeds this multiple of flat speed.
+pub const DOWNHILL_CAP: f64 = 1.25;
+
+/// How fast something moves on flat ground; the drag/boost/cap constants
+/// above apply to every profile. The seam future hauler/wagon mechanics
+/// extend (more fields as needed — load, mode, …).
+pub struct SpeedProfile {
+    /// Flat-ground speed in world units per tick.
+    pub flat_speed: u32,
+}
+
+/// The standard wagon.
+pub const WAGON: SpeedProfile = SpeedProfile {
+    flat_speed: WAGON_FLAT_SPEED,
+};
+
+/// Ticks to travel the straight ground segment `from → to` (single
+/// segment — no pathfinding): 3D distance between the ground points,
+/// divided by grade-adjusted speed, `ceil`ed to whole ticks (≥ 1). The
+/// asymmetry invariant holds on effective speed pre-quantization:
+/// speed(uphill) < speed(flat) ≤ speed(downhill) ≤ cap·flat.
+pub fn travel_time(
+    terrain: &Terrain,
+    from: (i64, i64),
+    to: (i64, i64),
+    profile: &SpeedProfile,
+) -> Result<u64, TerrainError> {
+    let g = grade(terrain, from, to)?;
+    let z_from = terrain.elevation_at(from.0, from.1)? as f64;
+    let z_to = terrain.elevation_at(to.0, to.1)? as f64;
+    let dx = (to.0 - from.0) as f64;
+    let dy = (to.1 - from.1) as f64;
+    let dz = z_to - z_from;
+    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+    let flat = profile.flat_speed as f64;
+    let speed = if g > 0.0 {
+        flat / (1.0 + UPHILL_DRAG * g)
+    } else if g < 0.0 {
+        (flat * (1.0 + DOWNHILL_BOOST * g.abs())).min(DOWNHILL_CAP * flat)
+    } else {
+        flat
+    };
+    Ok((dist / speed).ceil() as u64)
+}
+
 /// Signed grade (rise/run) of the straight ground segment `from → to`:
 /// elevation difference over horizontal 2D distance. Uphill (to higher)
 /// is positive. Pure; the f64 is transient — never stored. A free
@@ -214,6 +272,55 @@ mod tests {
         assert_eq!(grade(&t, (5, 5), (5, 5)), Err(TerrainError::ZeroRun));
         assert_eq!(grade(&t, (0, 0), (99, 0)), Err(TerrainError::OutOfBounds));
         assert_eq!(grade(&t, (-1, 0), (5, 5)), Err(TerrainError::OutOfBounds));
+    }
+
+    /// 10% grade along +x over a 1000-unit run; flat along y at x=0.
+    fn hill() -> Terrain {
+        Terrain::new(2, 2, 1000, vec![0, 100, 0, 100])
+    }
+
+    #[test]
+    fn travel_time_uphill_flat_downhill_asymmetry() {
+        let t = hill();
+        // Uphill: g=0.1 → speed 50/1.8 ≈ 27.78; dist √(1000²+100²) ≈ 1004.99 → 37.
+        let uphill = travel_time(&t, (0, 0), (1000, 0), &WAGON).unwrap();
+        // Flat: 1000/50 = 20 exactly.
+        let flat = travel_time(&t, (0, 0), (0, 1000), &WAGON).unwrap();
+        // Downhill: speed min(50·1.2, 62.5) = 60 → ≈ 16.75 → 17.
+        let downhill = travel_time(&t, (1000, 0), (0, 0), &WAGON).unwrap();
+        assert_eq!(uphill, 37);
+        assert_eq!(flat, 20);
+        assert_eq!(downhill, 17);
+        assert!(uphill > flat && flat > downhill);
+    }
+
+    #[test]
+    fn travel_time_caps_downhill_speed() {
+        // 50% grade: uncapped boost would be 50·2 = 100; cap holds it at 62.5.
+        let t = Terrain::new(2, 2, 1000, vec![0, 500, 0, 500]);
+        // dist √(1000²+500²) ≈ 1118.03 → /62.5 ≈ 17.89 → 18 (uncapped would be 12).
+        assert_eq!(travel_time(&t, (1000, 0), (0, 0), &WAGON), Ok(18));
+        // Same pair uphill: speed 50/5 = 10 → 112.
+        assert_eq!(travel_time(&t, (0, 0), (1000, 0), &WAGON), Ok(112));
+    }
+
+    #[test]
+    fn travel_time_is_at_least_one_tick() {
+        let t = Terrain::new(2, 2, 1000, vec![0, 0, 0, 0]);
+        assert_eq!(travel_time(&t, (0, 0), (1, 0), &WAGON), Ok(1));
+    }
+
+    #[test]
+    fn travel_time_propagates_errors() {
+        let t = hill();
+        assert_eq!(
+            travel_time(&t, (5, 5), (5, 5), &WAGON),
+            Err(TerrainError::ZeroRun)
+        );
+        assert_eq!(
+            travel_time(&t, (0, 0), (9999, 0), &WAGON),
+            Err(TerrainError::OutOfBounds)
+        );
     }
 
     #[test]
