@@ -26,6 +26,9 @@
 //!   reserves the Mint and External account ids.
 //! - [`sim`] — [`sim::tick`], the fixed 9-phase tick; mechanics land inside
 //!   phases, never around them.
+//! - [`terrain`] — world coordinates and the ground heightmap; pure
+//!   movement math (grade, travel time) with its tuning constants
+//!   alongside, plus the deterministic terrain generator.
 //! - [`engine`] — the interactive shell; presentation only, no simulation
 //!   behavior.
 //!
@@ -48,6 +51,10 @@ mod market;
 mod money;
 mod role;
 mod sim;
+// A pure-math foundation with no in-sim consumer yet (07-28 spec): only the
+// shell's `map` export calls into it. Drop the allow when mechanics do.
+#[allow(dead_code)]
+mod terrain;
 mod world;
 
 /// Entry point: hands control to the interactive shell in
