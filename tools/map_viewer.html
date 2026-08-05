@@ -33,6 +33,12 @@
     <input id="o2p" type="number" min="1" value="4"><input id="o2a" type="number" step="0.05" value="0.25">
   </div>
   <div class="row">
+    <input id="mapname" type="text" placeholder="map name">
+    <button id="saveBtn">Save</button>
+    <select id="saved"></select>
+    <button id="deleteBtn">Delete</button>
+  </div>
+  <div class="row">
     <input type="file" id="file" accept=".json,application/json">
     <span id="status">drag = rotate · wheel = zoom</span>
   </div>
@@ -206,6 +212,89 @@ document.getElementById("randomBtn").addEventListener("click", () => {
   document.getElementById("seed").value = buf[0].toString();
   regenerate();
 });
+
+// ── Saved maps: parameters only, never elevations — regeneration is
+// deterministic (spec, "saved-map record" unit). Seed is a string
+// because u64 exceeds Number's exact-integer range.
+const STORE_KEY = "cityproj.saved_maps";
+
+function loadStore() {
+  // Missing/corrupt store → empty rather than crashing (spec).
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+    return parsed !== null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveStore(store) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(store));
+}
+
+function refreshSavedList() {
+  const select = document.getElementById("saved");
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "— saved maps —";
+  select.appendChild(placeholder);
+  for (const name of Object.keys(loadStore()).sort()) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+}
+
+document.getElementById("saveBtn").addEventListener("click", () => {
+  const name = document.getElementById("mapname").value.trim();
+  if (!name) {
+    setStatus("name a map before saving");
+    return;
+  }
+  const p = readParams();
+  const store = loadStore();
+  store[name] = {  // same name overwrites (spec)
+    seed: p.seed.toString(),
+    vertices_x: p.verticesX,
+    vertices_y: p.verticesY,
+    cell_size: p.cellSize,
+    max_elevation: p.maxElevation,
+    octaves: p.octaves,
+  };
+  saveStore(store);
+  refreshSavedList();
+  document.getElementById("saved").value = name;
+  setStatus(`saved "${name}"`);
+});
+
+document.getElementById("saved").addEventListener("change", (event) => {
+  const record = loadStore()[event.target.value];
+  if (!record) return;
+  document.getElementById("seed").value = record.seed;
+  document.getElementById("vx").value = record.vertices_x;
+  document.getElementById("vy").value = record.vertices_y;
+  document.getElementById("cell").value = record.cell_size;
+  document.getElementById("maxelev").value = record.max_elevation;
+  record.octaves.forEach(([period, amplitude], i) => {
+    document.getElementById(`o${i}p`).value = period;
+    document.getElementById(`o${i}a`).value = amplitude;
+  });
+  regenerate();
+});
+
+document.getElementById("deleteBtn").addEventListener("click", () => {
+  const name = document.getElementById("saved").value;
+  if (!name) return;
+  const store = loadStore();
+  delete store[name];
+  saveStore(store);
+  refreshSavedList();
+  setStatus(`deleted "${name}"`);
+});
+
+refreshSavedList();
 
 document.getElementById("file").addEventListener("change", (event) => {
   const file = event.target.files[0];
