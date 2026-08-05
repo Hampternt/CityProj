@@ -98,6 +98,79 @@ impl Terrain {
     fn sample(&self, vx: i64, vy: i64) -> f64 {
         self.elevations[(vy * self.vertices_x as i64 + vx) as usize] as f64
     }
+
+    /// Deterministic, dependency-free terrain: layered value noise from an
+    /// integer hash lattice. Identical inputs give an identical `Terrain`
+    /// on every platform — arithmetic and integer/hash ops only, no libm
+    /// (spec, `generate` contract). Elevations land in [0, 400] units
+    /// (0–40 m). Panics on dims < 2×2 or cell_size ≤ 0 — worldgen
+    /// programmer error, matching `template_world`'s style.
+    pub fn generate(seed: u64, vertices_x: u32, vertices_y: u32, cell_size: i64) -> Terrain {
+        assert!(
+            vertices_x >= 2 && vertices_y >= 2,
+            "terrain needs at least a 2x2 vertex grid"
+        );
+        assert!(cell_size > 0, "cell_size must be positive");
+        let total_amplitude: f64 = NOISE_OCTAVES.iter().map(|(_, a)| a).sum();
+        let mut elevations = Vec::with_capacity(vertices_x as usize * vertices_y as usize);
+        for vy in 0..vertices_y {
+            for vx in 0..vertices_x {
+                let mut n = 0.0;
+                for (octave, (period, amplitude)) in NOISE_OCTAVES.iter().enumerate() {
+                    n += amplitude * value_noise(seed, octave as u64, vx, vy, *period);
+                }
+                elevations.push((n / total_amplitude * MAX_ELEVATION).round() as i64);
+            }
+        }
+        Terrain::new(vertices_x, vertices_y, cell_size, elevations)
+    }
+}
+
+// ── Terrain generation ──────────────────────────────────────────────────
+
+/// Highest generated elevation, world units (400 = 40 m).
+const MAX_ELEVATION: f64 = 400.0;
+
+/// Noise layers as (lattice period in vertices, amplitude). The base
+/// 16-vertex period gives ~4 hills across the shipped 64-vertex map;
+/// smaller octaves add detail. Tuning these reshapes the land.
+const NOISE_OCTAVES: [(u32, f64); 3] = [(16, 1.0), (8, 0.5), (4, 0.25)];
+
+/// One octave of value noise at vertex (vx, vy): hash the four
+/// surrounding lattice corners to values in [0, 1) and blend bilinearly
+/// with a smoothstep fade. Polynomials only — no libm.
+fn value_noise(seed: u64, octave: u64, vx: u32, vy: u32, period: u32) -> f64 {
+    let ix = vx / period;
+    let iy = vy / period;
+    let sx = smoothstep((vx % period) as f64 / period as f64);
+    let sy = smoothstep((vy % period) as f64 / period as f64);
+    let v00 = lattice_value(seed, octave, ix, iy);
+    let v10 = lattice_value(seed, octave, ix + 1, iy);
+    let v01 = lattice_value(seed, octave, ix, iy + 1);
+    let v11 = lattice_value(seed, octave, ix + 1, iy + 1);
+    let south = v00 + sx * (v10 - v00);
+    let north = v01 + sx * (v11 - v01);
+    south + sy * (north - south)
+}
+
+/// The classic cubic fade t²(3 − 2t): eases lattice blending so hills
+/// roll instead of crease.
+fn smoothstep(t: f64) -> f64 {
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Hashes (seed, octave, lattice point) to a uniform value in [0, 1)
+/// with a splitmix64-style avalanche. Pure integer ops, so identical on
+/// every platform.
+fn lattice_value(seed: u64, octave: u64, ix: u32, iy: u32) -> f64 {
+    let mut h = seed
+        ^ octave.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (ix as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ (iy as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+    h = (h ^ (h >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    h ^= h >> 31;
+    (h >> 11) as f64 / (1u64 << 53) as f64
 }
 
 // ── Travel tuning constants ─────────────────────────────────────────────
@@ -321,6 +394,42 @@ mod tests {
             travel_time(&t, (0, 0), (9999, 0), &WAGON),
             Err(TerrainError::OutOfBounds)
         );
+    }
+
+    #[test]
+    fn generate_is_deterministic() {
+        let a = Terrain::generate(20260728, 64, 64, 50);
+        let b = Terrain::generate(20260728, 64, 64, 50);
+        assert_eq!(a.elevations, b.elevations);
+    }
+
+    #[test]
+    fn generate_seeds_differ() {
+        let a = Terrain::generate(1, 64, 64, 50);
+        let b = Terrain::generate(2, 64, 64, 50);
+        assert_ne!(a.elevations, b.elevations);
+    }
+
+    #[test]
+    fn generate_stays_within_elevation_bounds() {
+        let t = Terrain::generate(20260728, 64, 64, 50);
+        assert!(t.elevations.iter().all(|&e| (0..=400).contains(&e)));
+    }
+
+    #[test]
+    fn generate_has_visible_relief_at_shipped_size() {
+        // "Rolling hills and at least one valley" is verified by eye in the
+        // viewer; this pins the mechanical part — real vertical spread.
+        let t = Terrain::generate(20260728, 64, 64, 50);
+        let max = t.elevations.iter().max().unwrap();
+        let min = t.elevations.iter().min().unwrap();
+        assert!(max - min >= 100, "relief too flat: {min}..{max}");
+    }
+
+    #[test]
+    #[should_panic(expected = "2x2")]
+    fn generate_rejects_degenerate_dims() {
+        Terrain::generate(0, 1, 64, 50);
     }
 
     #[test]
