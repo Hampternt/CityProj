@@ -5,14 +5,37 @@
 <title>CityProj map viewer</title>
 <style>
   body { margin: 0; font-family: system-ui, sans-serif; background: #14141a; color: #ccc; overflow: hidden; }
-  #bar { padding: 8px 12px; position: absolute; z-index: 1; }
+  #bar { padding: 8px 12px; position: absolute; z-index: 1; margin: 6px;
+         background: rgba(20, 20, 26, 0.85); border-radius: 6px; font-size: 13px; }
+  #bar .row { margin-top: 4px; }
+  #bar input[type=number] { width: 4.5em; }
+  #bar #seed { width: 13em; }
   canvas { display: block; cursor: grab; }
 </style>
 </head>
 <body>
 <div id="bar">
-  <input type="file" id="file" accept=".json,application/json">
-  <span>load map.json · drag = rotate · wheel = zoom</span>
+  <div class="row">
+    <label>seed <input id="seed" type="text" value="20260728"></label>
+    <button id="randomBtn">Random</button>
+    <button id="genBtn">Generate</button>
+  </div>
+  <div class="row">
+    <label>vx <input id="vx" type="number" min="2" max="512" value="64"></label>
+    <label>vy <input id="vy" type="number" min="2" max="512" value="64"></label>
+    <label>cell <input id="cell" type="number" min="1" value="50"></label>
+    <label>max elev <input id="maxelev" type="number" min="1" value="400"></label>
+  </div>
+  <div class="row">
+    octaves (period, amplitude):
+    <input id="o0p" type="number" min="1" value="16"><input id="o0a" type="number" step="0.05" value="1">
+    <input id="o1p" type="number" min="1" value="8"><input id="o1a" type="number" step="0.05" value="0.5">
+    <input id="o2p" type="number" min="1" value="4"><input id="o2a" type="number" step="0.05" value="0.25">
+  </div>
+  <div class="row">
+    <input type="file" id="file" accept=".json,application/json">
+    <span id="status">drag = rotate · wheel = zoom</span>
+  </div>
 </div>
 <canvas id="view"></canvas>
 <script>
@@ -120,6 +143,69 @@ function parityCanary() {
   }
   return t;
 }
+
+// ── Playground controls ──────────────────────────────────────────────
+function setStatus(text) {
+  document.getElementById("status").textContent = text;
+}
+
+// Clamp to [min, max] instead of erroring (spec, error handling), and
+// write the clamped value back so the panel shows what was used.
+function clampInt(el, min, max) {
+  const raw = Math.floor(Number(el.value));
+  const clamped = Math.min(Math.max(Number.isFinite(raw) ? raw : min, min), max);
+  el.value = clamped;
+  return clamped;
+}
+
+function clampFloat(el, min, max) {
+  const raw = Number(el.value);
+  const clamped = Math.min(Math.max(Number.isFinite(raw) ? raw : min, min), max);
+  el.value = clamped;
+  return clamped;
+}
+
+// u64 seed; anything unparseable or out of range → 0 (spec).
+function parseSeed(text) {
+  try {
+    const s = BigInt(text.trim());
+    return s >= 0n && s <= U64 ? s : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+function readParams() {
+  return {
+    seed: parseSeed(document.getElementById("seed").value),
+    verticesX: clampInt(document.getElementById("vx"), 2, 512),
+    verticesY: clampInt(document.getElementById("vy"), 2, 512),
+    cellSize: clampInt(document.getElementById("cell"), 1, 1000000),
+    maxElevation: clampInt(document.getElementById("maxelev"), 1, 1000000),
+    octaves: [0, 1, 2].map((i) => [
+      clampInt(document.getElementById(`o${i}p`), 1, 512),
+      clampFloat(document.getElementById(`o${i}a`), 0.01, 100),
+    ]),
+  };
+}
+
+function regenerate() {
+  const params = readParams();
+  document.getElementById("seed").value = params.seed.toString();
+  map = generateTerrain(params);
+  fitZoom();
+  draw();
+  setStatus(`generated seed ${params.seed}`);
+}
+
+document.getElementById("genBtn").addEventListener("click", regenerate);
+
+document.getElementById("randomBtn").addEventListener("click", () => {
+  const buf = new BigUint64Array(1);
+  crypto.getRandomValues(buf);
+  document.getElementById("seed").value = buf[0].toString();
+  regenerate();
+});
 
 document.getElementById("file").addEventListener("change", (event) => {
   const file = event.target.files[0];
