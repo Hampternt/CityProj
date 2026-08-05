@@ -124,6 +124,22 @@ impl Terrain {
         }
         Terrain::new(vertices_x, vertices_y, cell_size, elevations)
     }
+
+    /// Hand-serialized flat JSON for `tools/map_viewer.html` — its input
+    /// contract; the viewer and this format change together. No serde by
+    /// design (no new dependencies).
+    pub fn to_json(&self) -> String {
+        let elevations = self
+            .elevations
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"unit_meters\":0.1,\"cell_size\":{},\"vertices_x\":{},\"vertices_y\":{},\"elevations\":[{}]}}",
+            self.cell_size, self.vertices_x, self.vertices_y, elevations
+        )
+    }
 }
 
 // ── Terrain generation ──────────────────────────────────────────────────
@@ -430,6 +446,15 @@ mod tests {
     #[should_panic(expected = "2x2")]
     fn generate_rejects_degenerate_dims() {
         Terrain::generate(0, 1, 64, 50);
+    }
+
+    #[test]
+    fn to_json_matches_the_viewer_contract_exactly() {
+        let t = Terrain::new(2, 2, 10, vec![0, 10, 20, 40]);
+        assert_eq!(
+            t.to_json(),
+            r#"{"unit_meters":0.1,"cell_size":10,"vertices_x":2,"vertices_y":2,"elevations":[0,10,20,40]}"#
+        );
     }
 
     #[test]
