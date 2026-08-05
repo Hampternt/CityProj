@@ -300,9 +300,22 @@ document.getElementById("file").addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (!file) return;
   file.text().then((text) => {
-    map = JSON.parse(text);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      setStatus(`could not parse ${file.name}: ${err.message}`);
+      return;
+    }
+    if (!Number.isInteger(parsed.vertices_x) || !Number.isInteger(parsed.vertices_y)
+        || !Array.isArray(parsed.elevations)) {
+      setStatus(`${file.name} is not a map.json export`);
+      return;
+    }
+    map = parsed;
     fitZoom();
     draw();
+    setStatus(`loaded ${file.name}`);
   });
 });
 

@@ -57,7 +57,10 @@ new mechanics into the loop and money:
   alongside; deterministic value-noise `generate`; `to_json` for the
   viewer. No in-sim consumer yet — the shell holds a display terrain and
   the `map` command exports `map.json` for `tools/map_viewer.html`
-  (self-contained, open in a browser).
+  (self-contained, open in a browser), which is also a terrain
+  playground: in-browser generation parity-pinned to `generate` by the
+  `generate_matches_viewer_canary` test, parameter knobs, and named maps
+  saved to localStorage (parameters only; not wired into the sim).
 - `src/engine/game_loop.rs` — interactive shell (Enter advances a tick, an
   agent name inspects it, `map` exports map.json, q quits) plus
   `template_world`, the worldgen that seeds the 07-19 farm/theater/jeweler
