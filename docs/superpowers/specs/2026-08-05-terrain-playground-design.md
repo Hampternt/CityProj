@@ -57,9 +57,11 @@ Then:   returns a map object in the exact in-memory shape the existing
         hash uses BigInt with wrapping masks (bit-exact splitmix64-style
         avalanche, same constants as `lattice_value`); noise blending and
         rounding are plain f64 doubles mirroring Rust's operation order.
-        Rounding is `Math.floor(v + 0.5)` — equal to Rust's
-        half-away-from-zero `.round()` for the non-negative values produced
-        here (JS `Math.round` differs on negative halves; not used).
+        Rounding is `Math.round(v)` — exact nearest with ties toward +∞,
+        identical to Rust's half-away-from-zero `.round()` for the
+        non-negative values produced here. (Not `Math.floor(v + 0.5)`:
+        computing `v + 0.5` can double-round when the sum isn't
+        representable.)
 Error:  none — callers clamp inputs first (playground tool, not a library).
 Refs:   @src/terrain.rs `generate`, `value_noise`, `lattice_value`,
         `smoothstep`; @tools/map_viewer.html input contract comment.
