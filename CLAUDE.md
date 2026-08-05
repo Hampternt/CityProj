@@ -51,10 +51,17 @@ new mechanics into the loop and money:
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last; `goods_market` holds the worked decide→apply template; `Intent` is
   the enum mechanics extend — `Intent::Buy` is its first variant.
+- `src/terrain.rs` — world coordinates (`Point3`, 1 unit = 0.1 m) and the
+  triangulated integer heightmap (`Terrain`, `elevation_at`); pure movement
+  math (`grade`, `travel_time` + `SpeedProfile`) with its tuning constants
+  alongside; deterministic value-noise `generate`; `to_json` for the
+  viewer. No in-sim consumer yet — the shell holds a display terrain and
+  the `map` command exports `map.json` for `tools/map_viewer.html`
+  (self-contained, open in a browser).
 - `src/engine/game_loop.rs` — interactive shell (Enter advances a tick, an
-  agent name inspects it, q quits) plus `template_world`, the worldgen that
-  seeds the 07-19 farm/theater/jeweler scenario; no per-tick simulation
-  behavior.
+  agent name inspects it, `map` exports map.json, q quits) plus
+  `template_world`, the worldgen that seeds the 07-19 farm/theater/jeweler
+  scenario; no per-tick simulation behavior.
 
 The 07-19 loops run: phases 2 (produce), 3 (wages from business coffers,
 shortfalls carried as `owed_to` arrears and repaid when revenue returns),
@@ -87,6 +94,9 @@ that: a wage-payment/hiring behavior spec built on `World::businesses()`.
 - **Wage market.** The `adjust_price` pattern applied to `RoleSlot.wage`
   in phase 1 (can't fill a slot → raise, queue of applicants → lower),
   plus employee happiness / job-switching driven by the arrears ledger.
+- **Building volumes.** Buildings will occupy 3D volumes (footprint +
+  vertical extent, above or below ground) addressed by `Point3` — never
+  tile-locked to the terrain grid, which only stores the ground surface.
 - **Ideas parking lot:** [`docs/ideas.md`](docs/ideas.md) — non-binding
   theorycraft for coordinate-system mechanics (ore fields, roads, zones,
   water). Ideas graduate from there via brainstorming, never straight to
