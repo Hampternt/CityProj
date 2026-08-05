@@ -20,6 +20,8 @@
 // Input contract: {"unit_meters":0.1,"cell_size":C,"vertices_x":X,
 // "vertices_y":Y,"elevations":[...]} row-major — produced by
 // Terrain::to_json; this file and that serializer change together.
+// Maps can also be generated in-browser: generateTerrain below is a
+// parity-pinned port of Terrain::generate (see the canary).
 const canvas = document.getElementById("view");
 const ctx = canvas.getContext("2d");
 let map = null;
@@ -31,6 +33,92 @@ const LIGHT = normalize([-0.5, -0.7, 0.8]); // fixed in world space
 function normalize(v) {
   const len = Math.hypot(v[0], v[1], v[2]);
   return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+// ── Terrain generation — JS port of src/terrain.rs generate ──────────
+// Parity invariant (spec): at the default parameters below, elevations
+// are integer-for-integer identical to Rust Terrain::generate for every
+// seed. The hash is bit-exact via BigInt; the float blending mirrors
+// Rust's operation order in plain f64 doubles. src/terrain.rs is the
+// source of truth — change these together.
+const U64 = (1n << 64n) - 1n;
+
+const DEFAULT_PARAMS = {
+  seed: 20260728n,
+  verticesX: 64,
+  verticesY: 64,
+  cellSize: 50,
+  maxElevation: 400,
+  octaves: [[16, 1.0], [8, 0.5], [4, 0.25]],  // Rust NOISE_OCTAVES
+};
+
+// Splitmix64-style avalanche, same constants as Rust lattice_value.
+function latticeValue(seedBig, octaveBig, ix, iy) {
+  let h = seedBig
+    ^ (octaveBig * 0x9E3779B97F4A7C15n & U64)
+    ^ (BigInt(ix) * 0xC2B2AE3D27D4EB4Fn & U64)
+    ^ (BigInt(iy) * 0x165667B19E3779F9n & U64);
+  h = (h ^ (h >> 30n)) * 0xBF58476D1CE4E5B9n & U64;
+  h = (h ^ (h >> 27n)) * 0x94D049BB133111EBn & U64;
+  h ^= h >> 31n;
+  return Number(h >> 11n) / Number(1n << 53n);
+}
+
+// The classic cubic fade t²(3 − 2t), as in Rust smoothstep.
+function fade(t) {
+  return t * t * (3.0 - 2.0 * t);
+}
+
+// One octave of value noise at vertex (vx, vy) — mirrors Rust value_noise.
+function valueNoise(seedBig, octave, vx, vy, period) {
+  const ix = Math.floor(vx / period);
+  const iy = Math.floor(vy / period);
+  const sx = fade((vx % period) / period);
+  const sy = fade((vy % period) / period);
+  const o = BigInt(octave);
+  const v00 = latticeValue(seedBig, o, ix, iy);
+  const v10 = latticeValue(seedBig, o, ix + 1, iy);
+  const v01 = latticeValue(seedBig, o, ix, iy + 1);
+  const v11 = latticeValue(seedBig, o, ix + 1, iy + 1);
+  const south = v00 + sx * (v10 - v00);
+  const north = v01 + sx * (v11 - v01);
+  return south + sy * (north - south);
+}
+
+// Math.round, NOT Math.floor(v + 0.5): round is exact nearest (ties
+// toward +∞ — same as Rust's half-away-from-zero for our v ≥ 0), while
+// v + 0.5 can double-round.
+function generateTerrain({ seed, verticesX, verticesY, cellSize, maxElevation, octaves }) {
+  const seedBig = BigInt(seed) & U64;
+  const totalAmplitude = octaves.reduce((sum, [, amplitude]) => sum + amplitude, 0);
+  const elevations = [];
+  for (let vy = 0; vy < verticesY; vy++) {
+    for (let vx = 0; vx < verticesX; vx++) {
+      let n = 0.0;
+      for (let o = 0; o < octaves.length; o++) {
+        const [period, amplitude] = octaves[o];
+        n += amplitude * valueNoise(seedBig, o, vx, vy, period);
+      }
+      elevations.push(Math.round(n / totalAmplitude * maxElevation));
+    }
+  }
+  return { cell_size: cellSize, vertices_x: verticesX, vertices_y: verticesY, elevations };
+}
+
+// Startup self-check against the values pinned by the Rust test
+// generate_matches_viewer_canary (spec, "parity canary" unit).
+function parityCanary() {
+  const t = generateTerrain(DEFAULT_PARAMS);
+  const got00 = t.elevations[0];
+  const got3317 = t.elevations[17 * 64 + 33];
+  if (got00 === 235 && got3317 === 183) {
+    console.log("terrain parity canary ok");
+  } else {
+    console.warn(
+      `terrain parity canary FAILED: (0,0)=${got00} want 235, `
+      + `(33,17)=${got3317} want 183 — src/terrain.rs generate is the source of truth`);
+  }
+  return t;
 }
 
 document.getElementById("file").addEventListener("change", (event) => {
@@ -139,6 +227,7 @@ function resize() {
   if (map) fitZoom();
   draw();
 }
+map = parityCanary();  // playground opens showing the default-seed map
 window.addEventListener("resize", resize);
 resize();
 </script>
