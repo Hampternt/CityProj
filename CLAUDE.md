@@ -87,6 +87,10 @@ that: a wage-payment/hiring behavior spec built on `World::businesses()`.
 - **Wage market.** The `adjust_price` pattern applied to `RoleSlot.wage`
   in phase 1 (can't fill a slot → raise, queue of applicants → lower),
   plus employee happiness / job-switching driven by the arrears ledger.
+- **Ideas parking lot:** [`docs/ideas.md`](docs/ideas.md) — non-binding
+  theorycraft for coordinate-system mechanics (ore fields, roads, zones,
+  water). Ideas graduate from there via brainstorming, never straight to
+  code.
 
 ## Hard invariants (never violate)
 

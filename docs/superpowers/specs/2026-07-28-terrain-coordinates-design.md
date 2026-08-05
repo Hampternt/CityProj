@@ -29,6 +29,11 @@ performance tricks (LOD, chunking) are explicitly not this layer's concern.
 The terrain grid is only how the ground surface is stored, not how things
 are located.
 
+**Future mechanics on this foundation** (resource fields / ore prospecting,
+roads & paths, zones, water) are theorycrafted in
+[`docs/ideas.md`](../../ideas.md) — non-binding, no implication for this
+spec.
+
 - **Fits into:** new @src/terrain.rs; @src/engine/game_loop.rs (the `map`
   shell command — I/O only); new tools/map_viewer.html; CLAUDE.md (state
   section + Roadmap).
@@ -62,7 +67,11 @@ are located.
 Effective speed: `flat / (1 + UPHILL_DRAG·g)` when g > 0;
 `min(flat·(1 + DOWNHILL_BOOST·|g|), DOWNHILL_CAP·flat)` when g < 0. A 10%
 uphill grade ≈ 0.56× flat speed. These are first-guess values; retuning them
-is a constants edit, not a design change.
+is a constants edit, not a design change. One flag for the future hauler
+spec: at these values crossing the shipped map takes ~64 ticks, and the
+parent doc's tick is "a day/week" — whether movement runs on economy ticks
+or finer sub-steps is that spec's question to settle, so `travel_time`'s
+tick unit must not silently harden into "economy tick".
 
 ## Contracts (the hard reference the plan is written from)
 
@@ -71,7 +80,8 @@ is a constants edit, not a design change.
 Signature: `pub fn elevation_at(&self, x: i64, y: i64) -> Result<i64, TerrainError>`
 on `pub struct Terrain { vertices_x: u32, vertices_y: u32, cell_size: i64, elevations: Vec<i64> }`
 (row-major, `vertices_x · vertices_y` samples; constructor validates length
-and `cell_size > 0`).
+and `cell_size > 0`, panicking on violation — programmer error, matching
+`generate`'s style).
 Given:  an in-domain (x, y) in world units.
 Then:   pure. Locates the containing cell, picks the triangle via the fixed
         SW→NE diagonal, barycentric-interpolates the three vertex
@@ -114,7 +124,10 @@ Signature: `pub fn generate(seed: u64, vertices_x: u32, vertices_y: u32, cell_si
 Given:  any seed; dimensions ≥ 2×2; cell_size > 0.
 Then:   deterministic and dependency-free: identical inputs produce an
         identical `Terrain` on every platform (integer/hash-based lattice
-        noise — algorithm is the plan's to choose within this constraint).
+        noise — algorithm is the plan's to choose within this constraint:
+        integer/hash and f64 arithmetic ops only, no transcendental
+        functions (`sin`, `pow`, …), which route through platform libm and
+        may differ across platforms).
         All elevations in [0, 400] units (0–40 m) with visible relief:
         rolling hills and at least one valley at the intended shipped size
         (64×64 vertices, cell_size 50 — a ~320 m square at 5 m spacing).
@@ -149,7 +162,8 @@ Refs:   @src/terrain.rs, @src/engine/game_loop.rs, tools/map_viewer.html.
   drag-rotate and wheel-zoom, no external resources. Verified by opening in
   a browser, not by unit tests.
 - Shell help text gains the `map` command; CLAUDE.md state section gains
-  terrain.rs and the viewer; Roadmap gains the building-volumes note above.
+  terrain.rs and the viewer; Roadmap gains the building-volumes note above
+  and a pointer to docs/ideas.md.
 - Tests: vertex-exact and midpoint interpolation, grade sign both
   directions, travel-time asymmetry (uphill > flat ≥ downhill, same pair),
   generator determinism (two calls, same seed, identical), out-of-bounds
