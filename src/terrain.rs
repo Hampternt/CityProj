@@ -100,6 +100,24 @@ impl Terrain {
     }
 }
 
+/// Signed grade (rise/run) of the straight ground segment `from → to`:
+/// elevation difference over horizontal 2D distance. Uphill (to higher)
+/// is positive. Pure; the f64 is transient — never stored. A free
+/// function per the spec, like `travel_time` below.
+pub fn grade(terrain: &Terrain, from: (i64, i64), to: (i64, i64)) -> Result<f64, TerrainError> {
+    // Checked before domain: a zero-run query is malformed regardless of
+    // where the point lies.
+    if from == to {
+        return Err(TerrainError::ZeroRun);
+    }
+    let z_from = terrain.elevation_at(from.0, from.1)? as f64;
+    let z_to = terrain.elevation_at(to.0, to.1)? as f64;
+    let dx = (to.0 - from.0) as f64;
+    let dy = (to.1 - from.1) as f64;
+    let run = (dx * dx + dy * dy).sqrt();
+    Ok((z_to - z_from) / run)
+}
+
 /// Straight-line (Euclidean) distance between two points, in world units.
 /// f64 is transient — callers quantize if they store the result.
 pub fn distance(a: Point3, b: Point3) -> f64 {
@@ -178,6 +196,24 @@ mod tests {
     #[should_panic(expected = "2x2")]
     fn new_rejects_degenerate_grid() {
         Terrain::new(1, 2, 10, vec![0, 10]);
+    }
+
+    #[test]
+    fn grade_is_positive_uphill_and_negative_downhill() {
+        // Elevations [0, 10, 0, 10]: rises 10 over run 10 along +x.
+        let t = Terrain::new(2, 2, 10, vec![0, 10, 0, 10]);
+        let up = grade(&t, (0, 0), (10, 0)).unwrap();
+        let down = grade(&t, (10, 0), (0, 0)).unwrap();
+        assert!((up - 1.0).abs() < 1e-12);
+        assert!((down + 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn grade_rejects_zero_run_and_out_of_bounds() {
+        let t = ramp();
+        assert_eq!(grade(&t, (5, 5), (5, 5)), Err(TerrainError::ZeroRun));
+        assert_eq!(grade(&t, (0, 0), (99, 0)), Err(TerrainError::OutOfBounds));
+        assert_eq!(grade(&t, (-1, 0), (5, 5)), Err(TerrainError::OutOfBounds));
     }
 
     #[test]
