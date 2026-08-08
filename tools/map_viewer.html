@@ -5,14 +5,43 @@
 <title>CityProj map viewer</title>
 <style>
   body { margin: 0; font-family: system-ui, sans-serif; background: #14141a; color: #ccc; overflow: hidden; }
-  #bar { padding: 8px 12px; position: absolute; z-index: 1; }
+  #bar { padding: 8px 12px; position: absolute; z-index: 1; margin: 6px;
+         background: rgba(20, 20, 26, 0.85); border-radius: 6px; font-size: 13px; }
+  #bar .row { margin-top: 4px; }
+  #bar input[type=number] { width: 4.5em; }
+  #bar #seed { width: 13em; }
   canvas { display: block; cursor: grab; }
 </style>
 </head>
 <body>
 <div id="bar">
-  <input type="file" id="file" accept=".json,application/json">
-  <span>load map.json · drag = rotate · wheel = zoom</span>
+  <div class="row">
+    <label>seed <input id="seed" type="text" value="20260728"></label>
+    <button id="randomBtn">Random</button>
+    <button id="genBtn">Generate</button>
+  </div>
+  <div class="row">
+    <label>vx <input id="vx" type="number" min="2" max="512" value="64"></label>
+    <label>vy <input id="vy" type="number" min="2" max="512" value="64"></label>
+    <label>cell <input id="cell" type="number" min="1" value="50"></label>
+    <label>max elev <input id="maxelev" type="number" min="1" value="400"></label>
+  </div>
+  <div class="row">
+    octaves (period, amplitude):
+    <input id="o0p" type="number" min="1" value="16"><input id="o0a" type="number" step="0.05" value="1">
+    <input id="o1p" type="number" min="1" value="8"><input id="o1a" type="number" step="0.05" value="0.5">
+    <input id="o2p" type="number" min="1" value="4"><input id="o2a" type="number" step="0.05" value="0.25">
+  </div>
+  <div class="row">
+    <input id="mapname" type="text" placeholder="map name">
+    <button id="saveBtn">Save</button>
+    <select id="saved"></select>
+    <button id="deleteBtn">Delete</button>
+  </div>
+  <div class="row">
+    <input type="file" id="file" accept=".json,application/json">
+    <span id="status">drag = rotate · wheel = zoom</span>
+  </div>
 </div>
 <canvas id="view"></canvas>
 <script>
@@ -20,6 +49,8 @@
 // Input contract: {"unit_meters":0.1,"cell_size":C,"vertices_x":X,
 // "vertices_y":Y,"elevations":[...]} row-major — produced by
 // Terrain::to_json; this file and that serializer change together.
+// Maps can also be generated in-browser: generateTerrain below is a
+// parity-pinned port of Terrain::generate (see the canary).
 const canvas = document.getElementById("view");
 const ctx = canvas.getContext("2d");
 let map = null;
@@ -33,13 +64,258 @@ function normalize(v) {
   return [v[0] / len, v[1] / len, v[2] / len];
 }
 
+// ── Terrain generation — JS port of src/terrain.rs generate ──────────
+// Parity invariant (spec): at the default parameters below, elevations
+// are integer-for-integer identical to Rust Terrain::generate for every
+// seed. The hash is bit-exact via BigInt; the float blending mirrors
+// Rust's operation order in plain f64 doubles. src/terrain.rs is the
+// source of truth — change these together.
+const U64 = (1n << 64n) - 1n;
+
+const DEFAULT_PARAMS = {
+  seed: 20260728n,
+  verticesX: 64,
+  verticesY: 64,
+  cellSize: 50,
+  maxElevation: 400,
+  octaves: [[16, 1.0], [8, 0.5], [4, 0.25]],  // Rust NOISE_OCTAVES
+};
+
+// Splitmix64-style avalanche, same constants as Rust lattice_value.
+function latticeValue(seedBig, octaveBig, ix, iy) {
+  let h = seedBig
+    ^ (octaveBig * 0x9E3779B97F4A7C15n & U64)
+    ^ (BigInt(ix) * 0xC2B2AE3D27D4EB4Fn & U64)
+    ^ (BigInt(iy) * 0x165667B19E3779F9n & U64);
+  h = (h ^ (h >> 30n)) * 0xBF58476D1CE4E5B9n & U64;
+  h = (h ^ (h >> 27n)) * 0x94D049BB133111EBn & U64;
+  h ^= h >> 31n;
+  return Number(h >> 11n) / Number(1n << 53n);
+}
+
+// The classic cubic fade t²(3 − 2t), as in Rust smoothstep.
+function fade(t) {
+  return t * t * (3.0 - 2.0 * t);
+}
+
+// One octave of value noise at vertex (vx, vy) — mirrors Rust value_noise.
+function valueNoise(seedBig, octave, vx, vy, period) {
+  const ix = Math.floor(vx / period);
+  const iy = Math.floor(vy / period);
+  const sx = fade((vx % period) / period);
+  const sy = fade((vy % period) / period);
+  const o = BigInt(octave);
+  const v00 = latticeValue(seedBig, o, ix, iy);
+  const v10 = latticeValue(seedBig, o, ix + 1, iy);
+  const v01 = latticeValue(seedBig, o, ix, iy + 1);
+  const v11 = latticeValue(seedBig, o, ix + 1, iy + 1);
+  const south = v00 + sx * (v10 - v00);
+  const north = v01 + sx * (v11 - v01);
+  return south + sy * (north - south);
+}
+
+// Math.round, NOT Math.floor(v + 0.5): round is exact nearest (ties
+// toward +∞ — same as Rust's half-away-from-zero for our v ≥ 0), while
+// v + 0.5 can double-round.
+function generateTerrain({ seed, verticesX, verticesY, cellSize, maxElevation, octaves }) {
+  const seedBig = BigInt(seed) & U64;
+  const totalAmplitude = octaves.reduce((sum, [, amplitude]) => sum + amplitude, 0);
+  const elevations = [];
+  for (let vy = 0; vy < verticesY; vy++) {
+    for (let vx = 0; vx < verticesX; vx++) {
+      let n = 0.0;
+      for (let o = 0; o < octaves.length; o++) {
+        const [period, amplitude] = octaves[o];
+        n += amplitude * valueNoise(seedBig, o, vx, vy, period);
+      }
+      elevations.push(Math.round(n / totalAmplitude * maxElevation));
+    }
+  }
+  return { cell_size: cellSize, vertices_x: verticesX, vertices_y: verticesY, elevations };
+}
+
+// Startup self-check against the values pinned by the Rust test
+// generate_matches_viewer_canary (spec, "parity canary" unit).
+function parityCanary() {
+  const t = generateTerrain(DEFAULT_PARAMS);
+  const got00 = t.elevations[0];
+  const got3317 = t.elevations[17 * 64 + 33];
+  if (got00 === 235 && got3317 === 183) {
+    console.log("terrain parity canary ok");
+  } else {
+    console.warn(
+      `terrain parity canary FAILED: (0,0)=${got00} want 235, `
+      + `(33,17)=${got3317} want 183 — src/terrain.rs generate is the source of truth`);
+  }
+  return t;
+}
+
+// ── Playground controls ──────────────────────────────────────────────
+function setStatus(text) {
+  document.getElementById("status").textContent = text;
+}
+
+// Clamp to [min, max] instead of erroring (spec, error handling), and
+// write the clamped value back so the panel shows what was used.
+function clampInt(el, min, max) {
+  const raw = Math.floor(Number(el.value));
+  const clamped = Math.min(Math.max(Number.isFinite(raw) ? raw : min, min), max);
+  el.value = clamped;
+  return clamped;
+}
+
+function clampFloat(el, min, max) {
+  const raw = Number(el.value);
+  const clamped = Math.min(Math.max(Number.isFinite(raw) ? raw : min, min), max);
+  el.value = clamped;
+  return clamped;
+}
+
+// u64 seed; anything unparseable or out of range → 0 (spec).
+function parseSeed(text) {
+  try {
+    const s = BigInt(text.trim());
+    return s >= 0n && s <= U64 ? s : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+function readParams() {
+  return {
+    seed: parseSeed(document.getElementById("seed").value),
+    verticesX: clampInt(document.getElementById("vx"), 2, 512),
+    verticesY: clampInt(document.getElementById("vy"), 2, 512),
+    cellSize: clampInt(document.getElementById("cell"), 1, 1000000),
+    maxElevation: clampInt(document.getElementById("maxelev"), 1, 1000000),
+    octaves: [0, 1, 2].map((i) => [
+      clampInt(document.getElementById(`o${i}p`), 1, 512),
+      clampFloat(document.getElementById(`o${i}a`), 0.01, 100),
+    ]),
+  };
+}
+
+function regenerate() {
+  const params = readParams();
+  document.getElementById("seed").value = params.seed.toString();
+  map = generateTerrain(params);
+  fitZoom();
+  draw();
+  setStatus(`generated seed ${params.seed}`);
+}
+
+document.getElementById("genBtn").addEventListener("click", regenerate);
+
+document.getElementById("randomBtn").addEventListener("click", () => {
+  const buf = new BigUint64Array(1);
+  crypto.getRandomValues(buf);
+  document.getElementById("seed").value = buf[0].toString();
+  regenerate();
+});
+
+// ── Saved maps: parameters only, never elevations — regeneration is
+// deterministic (spec, "saved-map record" unit). Seed is a string
+// because u64 exceeds Number's exact-integer range.
+const STORE_KEY = "cityproj.saved_maps";
+
+function loadStore() {
+  // Missing/corrupt store → empty rather than crashing (spec).
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+    return parsed !== null && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveStore(store) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(store));
+}
+
+function refreshSavedList() {
+  const select = document.getElementById("saved");
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "— saved maps —";
+  select.appendChild(placeholder);
+  for (const name of Object.keys(loadStore()).sort()) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+}
+
+document.getElementById("saveBtn").addEventListener("click", () => {
+  const name = document.getElementById("mapname").value.trim();
+  if (!name) {
+    setStatus("name a map before saving");
+    return;
+  }
+  const p = readParams();
+  const store = loadStore();
+  store[name] = {  // same name overwrites (spec)
+    seed: p.seed.toString(),
+    vertices_x: p.verticesX,
+    vertices_y: p.verticesY,
+    cell_size: p.cellSize,
+    max_elevation: p.maxElevation,
+    octaves: p.octaves,
+  };
+  saveStore(store);
+  refreshSavedList();
+  document.getElementById("saved").value = name;
+  setStatus(`saved "${name}"`);
+});
+
+document.getElementById("saved").addEventListener("change", (event) => {
+  const record = loadStore()[event.target.value];
+  if (!record) return;
+  document.getElementById("seed").value = record.seed;
+  document.getElementById("vx").value = record.vertices_x;
+  document.getElementById("vy").value = record.vertices_y;
+  document.getElementById("cell").value = record.cell_size;
+  document.getElementById("maxelev").value = record.max_elevation;
+  record.octaves.forEach(([period, amplitude], i) => {
+    document.getElementById(`o${i}p`).value = period;
+    document.getElementById(`o${i}a`).value = amplitude;
+  });
+  regenerate();
+});
+
+document.getElementById("deleteBtn").addEventListener("click", () => {
+  const name = document.getElementById("saved").value;
+  if (!name) return;
+  const store = loadStore();
+  delete store[name];
+  saveStore(store);
+  refreshSavedList();
+  setStatus(`deleted "${name}"`);
+});
+
+refreshSavedList();
+
 document.getElementById("file").addEventListener("change", (event) => {
   const file = event.target.files[0];
   if (!file) return;
   file.text().then((text) => {
-    map = JSON.parse(text);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      setStatus(`could not parse ${file.name}: ${err.message}`);
+      return;
+    }
+    if (!Number.isInteger(parsed.vertices_x) || !Number.isInteger(parsed.vertices_y)
+        || !Array.isArray(parsed.elevations)) {
+      setStatus(`${file.name} is not a map.json export`);
+      return;
+    }
+    map = parsed;
     fitZoom();
     draw();
+    setStatus(`loaded ${file.name}`);
   });
 });
 
@@ -139,6 +415,7 @@ function resize() {
   if (map) fitZoom();
   draw();
 }
+map = parityCanary();  // playground opens showing the default-seed map
 window.addEventListener("resize", resize);
 resize();
 </script>
