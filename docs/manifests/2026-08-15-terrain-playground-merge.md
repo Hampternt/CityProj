@@ -80,3 +80,36 @@ and re-establishes it.
   the unmerged branch surfaced. Nothing about the branch's behavior is taken
   on trust: its own plan's browser checks are unticked and it has never met
   a pack gate.
+- **2026-08-15** — item 1 under way. Served the worktree's viewer over
+  `http://localhost:7431` (`.claude/launch.json`, config `map-viewer`) —
+  opening it as a `file://` snapshot runs no scripts and gives no
+  localStorage, so it proves nothing. Verified so far, in the page:
+  - **Parity canary passes in the browser**: console logs
+    `terrain parity canary ok` on load.
+  - **Parity holds beyond the two pinned vertices.** Loading the Rust
+    `map` export of seed 20260728 and then generating the same map in the
+    browser produced *pixel-identical* canvases (canvas fingerprint
+    `3d2592d4` both times). The export's first elevation is 235, the
+    canary's pinned (0, 0).
+  - **Random** produced seed 9377536411959497377 with a changed canvas and
+    matching status line; **Generate** redrew on parameter change.
+  - **Clamps write back**: vx 9999 → 512, octave period 0 → 1, both
+    reflected in the inputs and in the redrawn map.
+  - **Save / reselect survive a reload**: the record is parameters only,
+    seed kept as a decimal string (`12345678901234567890` round-tripped
+    exactly, past Number's safe range), and reselecting after F5 restored
+    every input and regenerated.
+  - **Bad file loads report**: `could not parse broken.json: …` for
+    malformed JSON, `notamap.json is not a map.json export` for valid JSON
+    of the wrong shape.
+  - **Delete**: the handler is correct — invoking it empties the store and
+    sets `deleted "alpha"` — but this was *not* confirmed through a pointer
+    click, see below.
+- **2026-08-15** — **item 1 blocked on real pointer input.** The Browser
+  pane is not displayed, so the page composites no frames: the canvas came
+  up 0×0 until a `resize` event was dispatched, screenshots time out, and
+  synthetic clicks stopped reaching the page entirely (an instrumented
+  capture listener on Generate — a button that had worked minutes earlier —
+  recorded no `mousedown`, `mouseup` or `click`). So drag-to-rotate,
+  wheel-to-zoom, and clicking as a human remain unverified, and nobody has
+  actually *looked* at the render. Not merging on measurements alone.
