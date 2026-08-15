@@ -13,14 +13,19 @@ part of the definition of merged. Manifests live in `docs/manifests/`.
 A city economy simulated from the household up, advanced one tick at a time
 from a terminal shell. Enter advances a tick, `q` quits.
 
-Each tick redraws the town: the money supply and where it sits, every house
-with its occupants and the business trading from it, and every agent with
-their balance, home, workplace and the goods in their inventory. Typing an
-agent's name inspects that one person instead.
+Each tick redraws the town in place: the money supply and where it sits,
+every house with its occupants and the business trading from it — what it
+sells, at what price, its stock, its coffers and any wages it owes — and
+every agent with their balance, home and the goods in their inventory.
 
-The seeded scenario is a farm, a theater and a jeweler with the households
-that work in them — enough to watch a small economy run rather than a blank
-world.
+The seeded scenario is one household of four sharing a house, three of them
+employed at a farm, a theater and a jeweler — enough to watch a small
+economy run rather than a blank world.
+
+Typing an agent's name is meant to inspect that one person, adding their
+workplace to what the tick view shows. It does not currently work: the
+detail prints and is immediately wiped by the next redraw, so nothing is
+readable (observed 2026-08-15).
 
 ## What a tick does
 
