@@ -22,10 +22,9 @@ The seeded scenario is one household of four sharing a house, three of them
 employed at a farm, a theater and a jeweler — enough to watch a small
 economy run rather than a blank world.
 
-Typing an agent's name is meant to inspect that one person, adding their
-workplace to what the tick view shows. It does not currently work: the
-detail prints and is immediately wiped by the next redraw, so nothing is
-readable (observed 2026-08-15).
+Typing an agent's name is meant to inspect one person — their workplace as
+well as their holdings — but the detail is wiped by the next redraw before
+it can be read (observed 2026-08-15).
 
 ## What a tick does
 

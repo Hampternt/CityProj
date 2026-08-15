@@ -41,8 +41,9 @@ and re-establishes it.
 
 ## Items
 
-- [ ] **1. Verify the playground in a real browser.** Open the branch's
-  `tools/map_viewer.html` and exercise each claim: startup shows a generated
+- [ ] **1. Verify the playground in a real browser.** Open
+  `.claude/worktrees/terrain-playground/tools/map_viewer.html` — the live
+  worktree for this branch — and exercise each claim: startup shows a generated
   map, Random and Generate produce different landscapes, the size and octave
   inputs change the result and clamp at their limits, Save / reselect /
   Delete round-trip across a reload, and a malformed JSON drop reports
@@ -54,7 +55,10 @@ and re-establishes it.
   Done: `./scripts/verify.sh` prints `VERIFY OK`, with the test count quoted
   and the parity canary among the tests that ran.
 - [ ] **3. Merge to `main` and retire the worktree.** Resolve the CLAUDE.md
-  conflict as decided above.
+  conflict as decided above, then `git worktree remove
+  .claude/worktrees/terrain-playground`. The worktree is gitignored, so it
+  leaves no trace once removed — check it out again from the branch if the
+  merge has to be redone.
   Done: `git log main --oneline` lists all five commits, `./scripts/verify.sh`
   is green on `main`, and `git worktree list` no longer shows the playground
   worktree.
