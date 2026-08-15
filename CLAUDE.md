@@ -10,17 +10,25 @@ The architecture reference is
 Read it before non-trivial work. If code and that doc disagree, stop and reconcile
 — do not silently diverge.
 
+What the sim *is*, at feature altitude, lives in
+[`docs/INVENTORY.md`](docs/INVENTORY.md); the plans live in
+[`docs/manifests/`](docs/manifests/). This file is structure and invariants.
+
 ## Commands
 
 ```sh
+./scripts/check.sh   # item gate: fmt + clippy (-D warnings) + build — after every item
+./scripts/verify.sh  # pack gate: check.sh + the full test suite — the acceptance line
 cargo run            # run the sim (interactive: Enter advances a tick, q quits)
 cargo check          # fast type-check
-cargo clippy         # lint
-cargo test           # run all tests
 cargo test NAME      # run a single test by (sub)name
 cargo test -- --nocapture   # show stdout from tests
 cargo fmt            # format (fmt sweeps are part of the workflow)
 ```
+
+The item gate cannot vouch for logic — nothing here has compile-time query
+checking, so an item touching money, wages, the market or the tick order runs
+that area's tests too (`cargo test money::`, `cargo test market::`).
 
 ## Current code state vs. target layout
 
@@ -72,11 +80,18 @@ faucet is closed: worldgen's seed is the entire money supply and the
 audit pins it there. Worldgen seeds the farm/theater/jeweler scenario.
 If you change structure, update this section.
 
-Next up: pending approval (no plan until signed off):
+Next up: pending approval (no pack manifest until signed off):
 [`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)
 — `Accounts` keyed by `(AgentId, Metal)`; revises shipped `money.rs`,
-`World::pay`, and `RoleSlot.wage` at its listed migration points. After
-that: a wage-payment/hiring behavior spec built on `World::businesses()`.
+`World::pay`, and `RoleSlot.wage` at its listed migration points. Its
+proposed pack sequence is
+[`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md).
+After that: a wage-payment/hiring behavior spec built on
+`World::businesses()`.
+
+Also in flight: the terrain playground, implemented on
+`worktree-terrain-playground` and not yet merged —
+[`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md).
 
 ## Roadmap (recorded 2026-07-19; future specs design these)
 
@@ -138,12 +153,22 @@ These come from §8 of the design doc. Breaking one is a bug even if tests pass.
 Two artifacts, one review gate between them — do not merge them, but scale the
 ceremony to the change:
 
-- **Trivial change** → skip both, just do it.
+- **Trivial change** → skip both, just do it. That is one item's worth of work.
 - **Feature-sized** → one spec doc from
   [`docs/superpowers/specs/_template.md`](docs/superpowers/specs/_template.md):
   a short Design section, a **Contracts** section, then an approval gate. The
-  plan (separate file, from `writing-plans`) is written *from* the contracts.
-- **Major / multi-subsystem** → separate spec and plan files as usual.
+  plan is written *from* the contracts, as a manifest in `docs/manifests/`.
+- **Major / multi-subsystem** → the spec, then a container manifest whose
+  packs are one level deep.
+
+**The plan artifact is a manifest** — `docs/manifests/YYYY-MM-DD-<name>.md`,
+plan, progress record and history in one file, per the item/pack/container
+workflow in the user-global `CLAUDE.md`. Specs keep their own directory and
+keep their approval gate; a spec is what a manifest is written *from*.
+`docs/superpowers/plans/` is frozen history from the previous `writing-plans`
+format — read it for context, never add to it. The general retrofit procedure
+and the manifest templates live in
+`~/projects/planvisualiser/docs/CONVERTING-A-PROJECT.md`.
 
 **Contracts are the hard reference.** Write a spec-level I/O contract
 (signature + Given/Then + Error + invariant ref) for a unit only when it is
@@ -163,5 +188,8 @@ lift it back into the spec and re-approve rather than burying it in one task.
 - Keep each module to one clear job (see §7 layout). When a file grows past its
   purpose, split it.
 - Follow the existing patterns before introducing new ones.
-- Verify before claiming done: `cargo check`, `cargo clippy`, `cargo test` — quote
-  real output, not "it compiles."
+- Verify before claiming done: `./scripts/check.sh` after an item,
+  `./scripts/verify.sh` before a pack closes — quote real output, not "it
+  compiles." "It compiles" is an item-gate claim, never a pack-gate one.
+- Keep `docs/INVENTORY.md` current: folding a pack's 🚧 pointer into a real
+  entry is part of that pack's definition of merged.
