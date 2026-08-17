@@ -89,5 +89,5 @@ written are the map exports. Quality gates: `scripts/check.sh` (item) and
 
 ---
 
-*In transit: multi-metal money, proposed
+*In transit: multi-metal money, pack 1 (the metal-keyed core) in progress
 (`docs/manifests/2026-08-15-multi-metal-money.md`).*

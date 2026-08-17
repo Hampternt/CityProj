@@ -1,8 +1,8 @@
 # Multi-metal money — Pack 1: the metal-keyed core
 
-**Status:** DRAFT 2026-08-17 — the boundary correction below is **accepted**
-(user, 2026-08-17) and the container is amended to match. Plan only: nothing
-implemented, no item started, no branch cut. Awaiting the go.
+**Status:** IN PROGRESS 2026-08-17 — go received; items executing in order on
+`main` from base `7555b73`. The boundary correction below is **accepted**
+(user, 2026-08-17) and the container is amended to match.
 **Container:** `2026-08-15-multi-metal-money.md`
 **Branch:** `main`
 

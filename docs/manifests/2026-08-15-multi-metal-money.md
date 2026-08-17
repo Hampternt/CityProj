@@ -1,7 +1,7 @@
 # Multi-metal money (container)
 
-**Status:** PLANNED 2026-08-17 — the spec's approval gate is signed. Pack 1 is
-next and its item manifest is not written yet; nothing is active.
+**Status:** ACTIVE 2026-08-17 — pack 1 in progress on `main`; its item
+manifest is `2026-08-17-mmm-pack1-metal-core.md`.
 **Branch:** `main`
 **Origin:** the design spec
 `docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`, written
@@ -53,7 +53,8 @@ The line moved to *arity versus semantics*.
 
 ### Pack 1 — the metal-keyed core
 
-Item manifest: `docs/manifests/2026-08-17-mmm-pack1-metal-core.md` (DRAFT).
+Item manifest: `docs/manifests/2026-08-17-mmm-pack1-metal-core.md` (IN
+PROGRESS 2026-08-17).
 
 New `metal.rs`; `Accounts` keyed by `(AgentId, Metal)` with per-metal
 `transfer`/`mint`/`burn`, read queries and audit; the **eleven** existing
