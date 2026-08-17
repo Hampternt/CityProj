@@ -41,14 +41,28 @@ wage spec that stays on hold behind all of it.
 
 ## Packs
 
-Only the active pack gets an item manifest; the list below is the proposed
-shape, one level deep. Nothing is active — the container is PROPOSED.
+Only the active pack gets an item manifest; the list below is one level deep.
+Pack 1 is written and not started; pack 2 is proposed shape only.
+
+The boundary between the two was **amended 2026-08-17** — see the Ledger. The
+original split gave pack 1 the metal-keyed `Accounts` and pack 2 "every call
+site migrated", which measurement showed cannot compile: one method's arity
+change alone yields 2 build errors and 29 clippy errors, and `check.sh` is
+exactly those two commands, so pack 1's first item would fail the item gate.
+The line moved to *arity versus semantics*.
 
 ### Pack 1 — the metal-keyed core
 
+Item manifest: `docs/manifests/2026-08-17-mmm-pack1-metal-core.md` (DRAFT).
+
 New `metal.rs`; `Accounts` keyed by `(AgentId, Metal)` with per-metal
-`transfer`/`mint`/`burn`, read queries and audit; the ten existing money
-tests ported, plus the spec's three new ones.
+`transfer`/`mint`/`burn`, read queries and audit; the **eleven** existing
+`Accounts` tests ported (not ten — the spec's count drops
+`total_money_includes_external`), plus **four** new test functions against the
+spec's three names. Plus, by the amendment, the **arity sweep**: the 65 lines
+in `world.rs`, `sim.rs` and `engine/game_loop.rs` that would otherwise not
+compile, each written `Metal::Gold`. Behaviour is unchanged throughout and the
+shell's output stays byte-identical.
 
 Observable: the test suite proves the metals are separate ledgers — moving
 and burning gold leaves silver's balance and totals untouched, an untouched
@@ -56,8 +70,16 @@ pair reads zero, and corrupting only silver still panics naming silver.
 
 ### Pack 2 — the sim runs on metals
 
-Every call site migrated: `World::pay`, the world and sim tests, and the
-shell's money summary rebuilt to report per metal.
+The **semantic** migration, which is what this pack always described: `World::pay`
+gains its metal parameter, worldgen decides which metals a world is seeded with,
+each call site chooses its real metal in place of pack 1's `Metal::Gold`, and the
+shell's money summary is rebuilt to report per metal.
+
+Its migration list is not a static inventory but a command — every site pack 2
+owns carries a literal `Metal::Gold`, so
+`grep -rn 'Metal::Gold' --include=*.rs src/ | grep -v '^src/money.rs'`
+regenerates it on demand. That is the replacement for the compiler errors the
+amendment spends.
 
 Observable: the seeded town runs ticks as before, with the header showing
 gold, silver and copper separately instead of one total, and the audit green
@@ -85,3 +107,34 @@ every tick.
   migrated" is pack 2's only unbounded phrase and pack 2 should be written
   against a number rather than a guess. No pack manifest written and no work
   started — signing the gate authorizes planning, not execution.
+
+- **2026-08-17** — pack 1's manifest written
+  (`2026-08-17-mmm-pack1-metal-core.md`, eight items, one ⚠), and with it a
+  proposed amendment to this container's pack boundary, **accepted by the user
+  the same day**. The original split was not a judgement call that went the
+  other way; it was unbuildable. Changing the arity of `mint` alone gives 2
+  errors under `cargo build` and 29 under `cargo clippy --all-targets -- -D
+  warnings`, which are exactly the two commands `./scripts/check.sh` runs, so
+  pack 1's first item failed the item gate before the pack gate was in sight.
+  Rust has no overloading, so no compatibility shim exists that does not invent
+  a name the spec's Contracts do not fix — and `CLAUDE.md` forbids renaming
+  them. The boundary is now arity (pack 1) versus semantics (pack 2), which
+  keeps pack 2's own sentence intact.
+
+  **What the amendment costs.** This container's Decisions lean on the compiler
+  for future safety — "extending the enum and letting the compiler find every
+  match arm". The sweep spends that: once 65 lines compile with a hardcoded
+  `Metal::Gold`, nothing fails if pack 2 misses a site. The replacement is the
+  `Metal::Gold` grep recorded under Pack 2, which cannot go stale the way a
+  written inventory can.
+
+  **Three counts corrected against this container and the spec**, recorded
+  rather than silently adopted: eleven `Accounts` tests, not ten; 87 money-API
+  lines outside `money.rs`, against the spec's Migration impact naming three;
+  and four new test functions, not three, because `#[should_panic]` is
+  function-level and the spec's corrupt-only-silver case witnesses naming
+  rather than independence. Pack 1's item 7 supersedes the spec's Migration
+  impact for pack 2's benefit.
+
+  Still nothing implemented, no branch cut, no box ticked. Awaiting the go on
+  pack 1.

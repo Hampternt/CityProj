@@ -1,8 +1,8 @@
 # Multi-metal money — Pack 1: the metal-keyed core
 
-**Status:** DRAFT 2026-08-17 — plan only, nothing implemented, no item started.
-Awaiting the user's go. It also proposes a correction to the container's pack
-boundary (see below), which needs accepting or rejecting before item 1.
+**Status:** DRAFT 2026-08-17 — the boundary correction below is **accepted**
+(user, 2026-08-17) and the container is amended to match. Plan only: nothing
+implemented, no item started, no branch cut. Awaiting the go.
 **Container:** `2026-08-15-multi-metal-money.md`
 **Branch:** `main`
 
@@ -34,8 +34,8 @@ fix — which `CLAUDE.md` forbids ("copy them verbatim, never rename"). A
 parallel `MetalAccounts` fares worse: the spec says `Accounts` is *modified*,
 and the eleven ported tests would exercise a type the sim does not use.
 
-**Proposed correction, for the user to accept or reject.** Move the boundary,
-and move it as little as possible:
+**The correction, accepted by the user 2026-08-17.** Move the boundary, and
+move it as little as possible:
 
 - **Pack 1 absorbs the *arity* sweep.** It changes only what would otherwise
   not compile, writing the literal `Metal::Gold` at each site. Measured forced
@@ -66,9 +66,12 @@ grep -rn 'Metal::Gold' --include=*.rs src/ | grep -v '^src/money.rs'
 regenerates the migration list on demand. That is a better artifact than the
 static inventory the signed gate asked for, and item 7 writes both down.
 
-This is a change to an approved container. It is proposed here, not absorbed:
-if it is rejected, pack 1 has **no gateable item list at all** and the container
-needs a different pack 1, not a redrafted manifest.
+This was a change to an approved container, so it was put to the user rather
+than absorbed. Accepted 2026-08-17; `2026-08-15-multi-metal-money.md` now
+carries the amended pack-1 and pack-2 sentences and a ledger entry recording
+why. The alternative was not a redrafted manifest — a rejection would have left
+pack 1 with no gateable item list at all, and the container needing a different
+pack 1.
 
 ## State on arrival (measured 2026-08-17)
 
@@ -177,11 +180,9 @@ What follows is only what this pack must decide and neither document does.
 
 ## Items
 
-These items assume the boundary correction above is accepted. If it is
-rejected, this list does not survive rejection in reduced form — items 2–4 are
-the sweep — and pack 1 has no gateable item at all, for the reason measured at
-the top (2 build errors and 29 clippy errors from a single method's arity
-change). Nothing below is started; every box is unticked because no go exists.
+The boundary correction above is accepted, so items 2–4 — the arity sweep —
+are this pack's to carry. Nothing below is started; every box is unticked
+because no go exists.
 
 - [ ] **1. `Metal`, and the books re-keyed behind unchanged signatures.** New
   `src/metal.rs` with `pub enum Metal { Gold, Silver, Copper }`, a hand-written
@@ -420,3 +421,22 @@ These are lines, not distinct call expressions — `game_loop.rs:132–134` is o
   marker and an `Item manifest:` line to resolve the container↔pack link, and
   `docs/INVENTORY.md:92–93`'s "*In transit: multi-metal money, proposed*".
   Nothing is implemented, no branch cut, no box ticked. Awaiting go.
+
+- **2026-08-17** — **boundary correction accepted by the user.** The entry above
+  left it open as the one thing needing them; it is now taken. The container
+  `2026-08-15-multi-metal-money.md` carries the amended pack-1 and pack-2
+  sentences, a `### Pack 1` heading that names this file, and a ledger entry
+  recording what the amendment costs (the compiler no longer finds pack 2's
+  sites) and what repays it (every one carries a literal `Metal::Gold`, so a
+  grep regenerates the list). Items 2–4 — the arity sweep — are therefore this
+  pack's to carry, and the conditional that opened the item list is resolved.
+
+  Two of the three stale lines the entry above flagged are fixed with it: the
+  container's "Nothing is active — the container is PROPOSED" and its `### Pack
+  1` heading, which now resolves the container↔pack link. The third,
+  `docs/INVENTORY.md:92–93`'s "*In transit: multi-metal money, proposed*", is
+  left deliberately — "proposed" stops being true when work starts, not when a
+  plan is agreed, so it ships with the first commit rather than now.
+
+  Still a plan. Nothing implemented, no branch cut, no box ticked. Awaiting the
+  go on item 1.
