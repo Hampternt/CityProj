@@ -1,7 +1,7 @@
 # Terrain playground — land it on main
 
-**Status:** ACTIVE 2026-08-15 — verified in the browser and gated; merge pending
-**Branch:** `worktree-terrain-playground`
+**Status:** COMPLETE 2026-08-15 — merged to `main`, gate green, inventory folded
+**Branch:** `worktree-terrain-playground` → merged into `main` at `0d926ab`
 
 Observable: from a clean `main` checkout, opening `tools/map_viewer.html`
 generates a landscape in the browser — no `map.json`, no shell run — and a
@@ -54,7 +54,7 @@ and re-establishes it.
 - [x] **2. Pack gate on the branch.**
   Done: `./scripts/verify.sh` prints `VERIFY OK`, with the test count quoted
   and the parity canary among the tests that ran.
-- [ ] **3. Merge to `main` and retire the worktree.** Resolve the CLAUDE.md
+- [x] **3. Merge to `main` and retire the worktree.** Resolve the CLAUDE.md
   conflict as decided above, then `git worktree remove
   .claude/worktrees/terrain-playground`. The worktree is gitignored, so it
   leaves no trace once removed — check it out again from the branch if the
@@ -62,7 +62,7 @@ and re-establishes it.
   Done: `git log main --oneline` lists all five commits, `./scripts/verify.sh`
   is green on `main`, and `git worktree list` no longer shows the playground
   worktree.
-- [ ] **4. Fold the 🚧 line into a real inventory entry.**
+- [x] **4. Fold the 🚧 line into a real inventory entry.**
   Done: `docs/INVENTORY.md` describes browser generation and saved maps in
   the present tense and carries no 🚧 pointer at this manifest.
 
@@ -138,3 +138,16 @@ and re-establishes it.
   warnings, `cargo test` **99 passed, 0 failed**, including
   `terrain::tests::generate_matches_viewer_canary`. The merge brings the
   scripts onto the branch's history, so item 3's gate run is the real one.
+- **2026-08-15** — items 3 and 4 done; **pack closed.** The CLAUDE.md
+  conflict the Decisions section braced for never materialised: git
+  auto-merged the branch's terrain bullet alongside the conversion's gate
+  commands and inventory pointer, so no hand resolution was needed. Pack
+  gate on the merged tree: `./scripts/verify.sh` → `VERIFY OK`, **99 tests
+  passed**. All five commits are on `main` under merge `0d926ab`, and
+  `git worktree list` shows only the main checkout. The inventory's 🚧 line
+  is now a real entry describing in-page generation, saved maps and
+  map.json loading, and the section is retitled "Terrain and the map
+  playground" — the viewer is not only a viewer any more.
+- **2026-08-15** — housekeeping alongside the fold: `.claude/launch.json`'s
+  `map-viewer` config now serves `tools/` from the repo root rather than the
+  retired worktree, and CLAUDE.md's in-flight note became a landed note.

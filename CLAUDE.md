@@ -92,9 +92,9 @@ proposed pack sequence is
 After that: a wage-payment/hiring behavior spec built on
 `World::businesses()`.
 
-Also in flight: the terrain playground, implemented on
-`worktree-terrain-playground` and not yet merged —
-[`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md).
+The terrain playground landed on 2026-08-15 —
+[`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)
+records what was verified in the browser before the merge.
 
 ## Roadmap (recorded 2026-07-19; future specs design these)
 

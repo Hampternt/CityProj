@@ -50,7 +50,7 @@ are not simulated yet — those ticks pass through untouched.
   wages denominated per metal, and the conservation guarantee holding metal
   by metal. Container: `docs/manifests/2026-08-15-multi-metal-money.md`
 
-## Terrain and the map viewer — `map` · `tools/map_viewer.html`
+## Terrain and the map playground — `map` · `tools/map_viewer.html`
 
 The town sits on a generated landscape: an integer heightmap over world
 coordinates measured in decimetres, with ground elevation defined everywhere
@@ -58,17 +58,27 @@ between the sampled points, not just at them. Travel across it accounts for
 slope — the same distance costs more uphill, at a speed profile that can be
 swapped per traveller.
 
-`map` in the shell writes the current landscape to `map.json`.
 `tools/map_viewer.html` opens in any browser with no server or build step and
-draws that file as a hillshaded isometric landscape; drag rotates, the wheel
-zooms.
+draws a landscape as a hillshaded isometric surface; drag rotates, the wheel
+zooms. It is also where landscapes are made:
+
+- Generate terrain in the page itself — a seed to type or roll at random,
+  the map's size and cell spacing, its maximum elevation, and the three
+  octaves that set how rugged or rolling it comes out. Out-of-range entries
+  are clamped and written back, so the panel always shows what was used.
+- Save a landscape under a name and pick it back off a list later, kept in
+  the browser between visits. Records store the parameters, not the terrain,
+  so reselecting one regenerates it exactly.
+- Load a `map.json` written by the shell's `map` command to look at the
+  landscape the sim is holding. A file that isn't one says so instead of
+  breaking.
+
+The browser's generator and the simulation's produce the same landscape from
+the same seed, down to the individual elevation — a pinned test on each side
+fails if they ever drift apart.
 
 Nothing in the simulation reads the terrain yet — agents have no position and
 buildings have no footprint. It exists to be looked at and built on.
-
-- 🚧 Terrain playground — generating and tuning landscapes in the browser
-  instead of only viewing exported ones, with named maps saved locally.
-  Pack: `docs/manifests/2026-08-15-terrain-playground-merge.md`
 
 ## Infrastructure
 
@@ -79,6 +89,5 @@ written are the map exports. Quality gates: `scripts/check.sh` (item) and
 
 ---
 
-*In transit: the terrain playground merge
-(`docs/manifests/2026-08-15-terrain-playground-merge.md`); multi-metal money
-proposed (`docs/manifests/2026-08-15-multi-metal-money.md`).*
+*In transit: multi-metal money, proposed
+(`docs/manifests/2026-08-15-multi-metal-money.md`).*

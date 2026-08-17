@@ -9,7 +9,7 @@
         "http.server",
         "7431",
         "--directory",
-        ".claude/worktrees/terrain-playground/tools"
+        "tools"
       ],
       "port": 7431
     }
