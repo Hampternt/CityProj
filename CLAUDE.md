@@ -38,7 +38,14 @@ is in place — that spec's ⟨REF⟩ sections are the standing contract for hoo
 new mechanics into the loop and money:
 
 - `src/money.rs` — `Money`, `MoneyError`, `Accounts` (the §8 trusted core:
-  `transfer`/`mint`/`burn` movers, `audit` panics on imbalance).
+  `transfer`/`mint`/`burn` movers, `audit` panics on imbalance). Since
+  08-17 (multi-metal pack 1) the books are keyed `(AgentId, Metal)` with
+  per-metal totals; every mover and reader takes a `Metal`, and `audit`
+  checks each `Metal::ALL` entry independently, panicking once naming
+  every broken metal.
+- `src/metal.rs` — `Metal` (closed coinage-metal enum: gold/silver/copper)
+  + hand-written `Metal::ALL` and lowercase `Display`; the orthogonal key
+  for every balance and conservation total (07-12 spec).
 - `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
 - `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
   `Business`/`RoleSlot` (per-role wages, account-only money); phase 3
@@ -85,12 +92,17 @@ faucet is closed: worldgen's seed is the entire money supply and the
 audit pins it there. Worldgen seeds the farm/theater/jeweler scenario.
 If you change structure, update this section.
 
-Next up: pending approval (no pack manifest until signed off):
-[`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)
-— `Accounts` keyed by `(AgentId, Metal)`; revises shipped `money.rs`,
-`World::pay`, and `RoleSlot.wage` at its listed migration points. Its
-proposed pack sequence is
-[`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md).
+In flight: multi-metal money
+([`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md),
+spec
+[`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)).
+Pack 1 (the metal-keyed core) landed 2026-08-17: every call site outside
+`money.rs` writes the literal `Metal::Gold`, so runtime behavior is
+unchanged and silver/copper are zero by design. Pack 2 — the semantic
+migration (`World::pay` gains its metal parameter, worldgen chooses seed
+metals, per-metal shell summary) — is next; its manifest is unwritten and
+it has no go. Its migration list regenerates via
+`grep -rn 'Metal::Gold' --include=*.rs src/ | grep -v '^src/money.rs' | grep -v '^src/metal.rs'`.
 After that: a wage-payment/hiring behavior spec built on
 `World::businesses()`.
 

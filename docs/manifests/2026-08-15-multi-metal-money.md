@@ -1,7 +1,7 @@
 # Multi-metal money (container)
 
-**Status:** ACTIVE 2026-08-17 — pack 1 in progress on `main`; its item
-manifest is `2026-08-17-mmm-pack1-metal-core.md`.
+**Status:** ACTIVE 2026-08-17 — pack 1 is DONE (landed on `main` the same
+day); pack 2 is next and its item manifest is not written yet.
 **Branch:** `main`
 **Origin:** the design spec
 `docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`, written
@@ -53,8 +53,8 @@ The line moved to *arity versus semantics*.
 
 ### Pack 1 — the metal-keyed core
 
-Item manifest: `docs/manifests/2026-08-17-mmm-pack1-metal-core.md` (IN
-PROGRESS 2026-08-17).
+Item manifest: `docs/manifests/2026-08-17-mmm-pack1-metal-core.md` (DONE
+2026-08-17 — landed on `main`, base `7555b73`, suite 99 → 103).
 
 New `metal.rs`; `Accounts` keyed by `(AgentId, Metal)` with per-metal
 `transfer`/`mint`/`burn`, read queries and audit; the **eleven** existing
@@ -139,3 +139,17 @@ every tick.
 
   Still nothing implemented, no branch cut, no box ticked. Awaiting the go on
   pack 1.
+
+- **2026-08-17** — **pack 1 executed and closed on `main`** (base `7555b73`).
+  Pack gate green: `VERIFY OK`, 103 passed, `cargo test money::` 18 passed,
+  shell output byte-identical to base (measured). The metal-keyed core is in:
+  `metal.rs`, `Accounts` on `(AgentId, Metal)`, per-metal totals, the
+  collect-all audit naming every broken metal, and the arity sweep writing
+  `Metal::Gold` at all 65 forced sites. Pack 2's migration list regenerates
+  via the `Metal::Gold` grep — extended to exclude `src/metal.rs` too, which
+  now exists and matches twice definitionally (pack 1's ledger, item-7
+  deviation). One caveat carried in pack 1's ledger: both review passes (the
+  item-5 ⚠ and the pack's) ran inline rather than through `/code-review`,
+  which the session's permission board denied; an independent review over
+  `7555b73..HEAD` is recommended before pack 2 leans on the audit. Pack 2
+  remains proposed shape only; its manifest is unwritten and it has no go.
