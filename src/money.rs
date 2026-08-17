@@ -396,6 +396,37 @@ mod tests {
     }
 
     #[test]
+    fn metals_are_independently_conserved() {
+        // Move and burn ONLY gold: silver's balance and both its totals
+        // must come through untouched — the metals are separate ledgers.
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Metal::Gold, Money::new(100));
+        accounts.mint(b(), Metal::Silver, Money::new(40));
+        accounts
+            .transfer(a(), b(), Metal::Gold, Money::new(30))
+            .unwrap();
+        accounts.burn(a(), Metal::Gold, Money::new(20)).unwrap();
+        assert_eq!(accounts.balance_of(b(), Metal::Silver), Money::new(40));
+        assert_eq!(accounts.total_minted(Metal::Silver), Money::new(40));
+        assert_eq!(accounts.total_burned(Metal::Silver), Money::ZERO);
+        assert_eq!(accounts.total_money(Metal::Silver), Money::new(40));
+        assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(50));
+        assert_eq!(accounts.balance_of(b(), Metal::Gold), Money::new(30));
+        assert_eq!(accounts.total_burned(Metal::Gold), Money::new(20));
+        accounts.audit();
+    }
+
+    #[test]
+    fn unknown_metal_pair_reads_zero() {
+        // An untouched (agent, metal) pair reads zero — the implicit-account
+        // rule, now per pair: holding gold says nothing about copper.
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Metal::Gold, Money::new(100));
+        assert_eq!(accounts.balance_of(a(), Metal::Copper), Money::ZERO);
+        assert_eq!(accounts.balance_of(b(), Metal::Silver), Money::ZERO);
+    }
+
+    #[test]
     fn total_money_includes_external() {
         // External is just an id from Accounts' perspective; 1 is its
         // reserved value (World reserves it properly in Task 2).
