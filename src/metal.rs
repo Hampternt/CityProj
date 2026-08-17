@@ -18,8 +18,8 @@ pub enum Metal {
 
 impl Metal {
     /// Every metal, hand-written — no enum-iteration crate, per the
-    /// zero-dep convention.
-    #[allow(dead_code)] // the item-5 audit rewrite iterates this
+    /// zero-dep convention. The audit iterates this; adding a metal here
+    /// puts it under conservation automatically.
     pub const ALL: [Metal; 3] = [Metal::Gold, Metal::Silver, Metal::Copper];
 }
 

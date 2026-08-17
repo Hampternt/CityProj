@@ -140,25 +140,40 @@ impl Accounts {
         self.total_minted.insert(metal, minted);
     }
 
-    /// §8.3: asserts conservation. Initial supply is zero (no genesis), so
-    /// circulating money must equal minted − burned exactly.
+    /// §8.3: asserts conservation, independently per metal. Initial supply
+    /// is zero (no genesis), so each metal's circulating money must equal
+    /// its minted − burned exactly. Every [`Metal::ALL`] entry gets a
+    /// verdict before anything panics — one broken metal must not mask
+    /// checking the rest.
     ///
     /// # Panics
     ///
     /// Panics on any imbalance — by design, never softened to a `Result`. A
-    /// failed audit means the §8.2 chokepoint was bypassed somewhere; the sim
-    /// must not keep running on corrupt books.
+    /// failed audit means the §8.2 chokepoint was bypassed somewhere; the
+    /// sim must not keep running on corrupt books. The message's pinned
+    /// prefix names every failing metal in [`Metal::ALL`] order:
+    /// `conservation audit failed for gold, silver (§8.3)`.
     pub fn audit(&self) {
-        let expected = self
-            .total_minted(Metal::Gold)
-            .0
-            .checked_sub(self.total_burned(Metal::Gold).0)
-            .expect("audit failed: total_burned exceeds total_minted (§8.3)");
-        assert_eq!(
-            self.total_money(Metal::Gold),
-            Money(expected),
-            "conservation audit failed: circulating money != minted - burned (§8.3)"
-        );
+        let mut broken: Vec<Metal> = Vec::new();
+        for metal in Metal::ALL {
+            // Two failure kinds, both collected: burned > minted (the
+            // subtraction has no answer) and circulating ≠ minted − burned.
+            let conserved = match self
+                .total_minted(metal)
+                .0
+                .checked_sub(self.total_burned(metal).0)
+            {
+                None => false,
+                Some(expected) => self.total_money(metal) == Money(expected),
+            };
+            if !conserved {
+                broken.push(metal);
+            }
+        }
+        if !broken.is_empty() {
+            let names: Vec<String> = broken.iter().map(Metal::to_string).collect();
+            panic!("conservation audit failed for {} (§8.3)", names.join(", "));
+        }
     }
 
     /// §8.2/§8.5: moves money between accounts, or errs with NO state change.
@@ -344,11 +359,39 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "failed for silver")]
     fn audit_panics_on_imbalance() {
+        // Corrupt ONLY silver while gold stays balanced: the panic must name
+        // silver — and "failed for silver" is deliberately NOT a substring of
+        // the both-broken message "failed for gold, silver", so this also
+        // separates one-broken from all-broken.
         let mut accounts = Accounts::new();
         accounts.mint(a(), Metal::Gold, Money::new(100));
-        accounts.set_balance_for_test(a(), Metal::Gold, Money::new(150));
+        accounts.set_balance_for_test(a(), Metal::Silver, Money::new(150));
+        accounts.audit();
+    }
+
+    #[test]
+    fn audit_checks_every_metal() {
+        // Balanced books on two metals at once: every Metal::ALL entry gets
+        // a verdict and none panics.
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Metal::Gold, Money::new(100));
+        accounts.mint(b(), Metal::Silver, Money::new(40));
+        accounts.audit();
+    }
+
+    #[test]
+    #[should_panic(expected = "failed for gold, silver")]
+    fn audit_names_every_broken_metal() {
+        // Corrupt gold AND silver: the panic must name both, in Metal::ALL
+        // order — the one case that discriminates a collect-all audit from
+        // one that stops at the first broken metal.
+        let mut accounts = Accounts::new();
+        accounts.mint(a(), Metal::Gold, Money::new(100));
+        accounts.mint(b(), Metal::Silver, Money::new(40));
+        accounts.set_balance_for_test(a(), Metal::Gold, Money::new(1));
+        accounts.set_balance_for_test(b(), Metal::Silver, Money::new(999));
         accounts.audit();
     }
 
