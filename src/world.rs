@@ -306,6 +306,7 @@ impl World {
 mod tests {
     use super::*;
     use crate::goods::Good;
+    use crate::metal::Metal;
     use crate::money::{Money, MoneyError};
     use std::collections::HashMap;
 
@@ -314,8 +315,14 @@ mod tests {
         let mut world = World::new();
         assert_ne!(world.mint_id, world.external_id);
         // plain accounts: readable from day one, zero until money moves
-        assert_eq!(world.accounts.balance_of(world.mint_id), Money::ZERO);
-        assert_eq!(world.accounts.balance_of(world.external_id), Money::ZERO);
+        assert_eq!(
+            world.accounts.balance_of(world.mint_id, Metal::Gold),
+            Money::ZERO
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::ZERO
+        );
         // spawning never reuses a reserved id
         let first = world.spawn_agent("first", None, None);
         assert_ne!(first, world.mint_id);
@@ -350,8 +357,8 @@ mod tests {
         let b = world.spawn_agent("b", None, None);
         world.accounts.mint(a, Money::new(100)); // sanctioned test funding
         world.pay(a, b, Money::new(30)).unwrap();
-        assert_eq!(world.accounts.balance_of(a), Money::new(70));
-        assert_eq!(world.accounts.balance_of(b), Money::new(30));
+        assert_eq!(world.accounts.balance_of(a, Metal::Gold), Money::new(70));
+        assert_eq!(world.accounts.balance_of(b, Metal::Gold), Money::new(30));
         world.accounts.audit();
     }
 
@@ -377,7 +384,7 @@ mod tests {
             Err(WorldError::UnknownAgent(ghost))
         );
         // nothing moved on any Err
-        assert_eq!(world.accounts.total_money(), Money::ZERO);
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::ZERO);
     }
 
     #[test]
@@ -391,8 +398,8 @@ mod tests {
             Err(WorldError::Money(MoneyError::InsufficientFunds))
         );
         // §8.5 atomic — books untouched
-        assert_eq!(world.accounts.balance_of(a), Money::new(10));
-        assert_eq!(world.accounts.balance_of(b), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(a, Metal::Gold), Money::new(10));
+        assert_eq!(world.accounts.balance_of(b, Metal::Gold), Money::ZERO);
     }
 
     #[test]
@@ -402,7 +409,10 @@ mod tests {
         world
             .pay(world.mint_id, world.external_id, Money::new(20))
             .unwrap();
-        assert_eq!(world.accounts.balance_of(world.external_id), Money::new(20));
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(20)
+        );
         world.accounts.audit();
     }
 
@@ -615,8 +625,14 @@ mod tests {
         world.pay(business, worker, Money::new(40)).unwrap();
         // agent → business: the future goods-purchase direction
         world.pay(worker, business, Money::new(10)).unwrap();
-        assert_eq!(world.accounts.balance_of(business), Money::new(70));
-        assert_eq!(world.accounts.balance_of(worker), Money::new(30));
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(70)
+        );
+        assert_eq!(
+            world.accounts.balance_of(worker, Metal::Gold),
+            Money::new(30)
+        );
         // unknown non-business ids are still refused
         let ghost = AgentId(99);
         assert_eq!(

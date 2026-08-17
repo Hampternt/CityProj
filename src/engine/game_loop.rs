@@ -10,6 +10,7 @@ use crate::agent::{Agent, AgentId};
 use crate::business::RoleSlot;
 use crate::goods::Good;
 use crate::housing::HouseId;
+use crate::metal::Metal;
 use crate::money::Money;
 use crate::role::Role;
 use crate::sim;
@@ -129,14 +130,14 @@ fn render(world: &World, tick_count: u64) {
     println!("=== CityProj — tick {tick_count} ===");
     println!(
         "money: total={} minted={} burned={}",
-        world.accounts.total_money(),
-        world.accounts.total_minted(),
-        world.accounts.total_burned(),
+        world.accounts.total_money(Metal::Gold),
+        world.accounts.total_minted(Metal::Gold),
+        world.accounts.total_burned(Metal::Gold),
     );
     println!(
         "reserved: mint balance {} · external balance {}",
-        world.accounts.balance_of(world.mint_id),
-        world.accounts.balance_of(world.external_id),
+        world.accounts.balance_of(world.mint_id, Metal::Gold),
+        world.accounts.balance_of(world.external_id, Metal::Gold),
     );
 
     println!("houses:");
@@ -155,7 +156,7 @@ fn render(world: &World, tick_count: u64) {
                 business.product,
                 business.price,
                 business.stock,
-                world.accounts.balance_of(business.id),
+                world.accounts.balance_of(business.id, Metal::Gold),
                 business.owed_total(),
             );
         }
@@ -166,7 +167,7 @@ fn render(world: &World, tick_count: u64) {
         println!(
             "  {} — balance {} · home {} · {}",
             agent.name,
-            world.accounts.balance_of(agent.id),
+            world.accounts.balance_of(agent.id, Metal::Gold),
             describe_house(world, agent.home),
             describe_inventory(agent),
         );
@@ -250,7 +251,10 @@ fn inspect(world: &World, name: &str) {
     match world.agent_by_name(name) {
         Some(agent) => {
             println!("{}:", agent.name);
-            println!("  balance   {}", world.accounts.balance_of(agent.id));
+            println!(
+                "  balance   {}",
+                world.accounts.balance_of(agent.id, Metal::Gold)
+            );
             println!("  home      {}", describe_house(world, agent.home));
             println!("  workplace {}", describe_house(world, agent.workplace));
             println!("  goods     {}", describe_inventory(agent));

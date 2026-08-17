@@ -6,6 +6,7 @@ use crate::agent::{Agent, AgentId};
 use crate::goods::Good;
 use crate::housing::HouseId;
 use crate::market::{self, Offer};
+use crate::metal::Metal;
 use crate::money::Money;
 use crate::world::World;
 use std::collections::HashMap;
@@ -111,7 +112,10 @@ fn pay_wages(world: &mut World) {
         // so the transfer cannot err — but if it ever does, skip cleanly
         // (§8.5): the ledger keeps the full debt, never settled without
         // its payment.
-        let payable = world.accounts.balance_of(business_id).min(owed);
+        let payable = world
+            .accounts
+            .balance_of(business_id, Metal::Gold)
+            .min(owed);
         if payable == Money::ZERO || world.pay(business_id, worker, payable).is_err() {
             continue;
         }
@@ -156,7 +160,13 @@ fn goods_market(world: &mut World) {
     let intents: Vec<Intent> = world
         .agents
         .iter()
-        .flat_map(|agent| decide_goods(agent, world.accounts.balance_of(agent.id), &offers))
+        .flat_map(|agent| {
+            decide_goods(
+                agent,
+                world.accounts.balance_of(agent.id, Metal::Gold),
+                &offers,
+            )
+        })
         .collect();
 
     // Apply: the ONLY place this phase moves money. Unaffordable intents
@@ -374,7 +384,7 @@ mod tests {
             tick(&mut world);
         }
         // nothing mints yet, so the money supply must still be zero
-        assert_eq!(world.accounts.total_money(), Money::ZERO);
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::ZERO);
     }
 
     #[test]
@@ -402,8 +412,11 @@ mod tests {
         );
         world.accounts.mint(farm, Money::new(50)); // funded
         pay_wages(&mut world);
-        assert_eq!(world.accounts.balance_of(worker), Money::new(35));
-        assert_eq!(world.accounts.balance_of(farm), Money::new(15));
+        assert_eq!(
+            world.accounts.balance_of(worker, Metal::Gold),
+            Money::new(35)
+        );
+        assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::new(15));
         // fully funded: nothing carried
         assert_eq!(owed(&world, farm_house, worker), Money::ZERO);
         world.accounts.audit();
@@ -423,8 +436,11 @@ mod tests {
         world.accounts.mint(farm, Money::new(10)); // less than the wage
         pay_wages(&mut world);
         // partial payment IS a full valid transfer of a smaller amount (§8.5)
-        assert_eq!(world.accounts.balance_of(worker), Money::new(10));
-        assert_eq!(world.accounts.balance_of(farm), Money::ZERO);
+        assert_eq!(
+            world.accounts.balance_of(worker, Metal::Gold),
+            Money::new(10)
+        );
+        assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::ZERO);
         assert_eq!(owed(&world, farm_house, worker), Money::new(25));
         world.accounts.audit();
     }
@@ -442,13 +458,16 @@ mod tests {
         );
         // broke business: the full wage becomes debt, no transfer happens
         pay_wages(&mut world);
-        assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
         assert_eq!(owed(&world, farm_house, worker), Money::new(35));
         // revenue returns: this tick's wage joins the pot and all 70 clears
         world.accounts.mint(farm, Money::new(100));
         pay_wages(&mut world);
-        assert_eq!(world.accounts.balance_of(worker), Money::new(70));
-        assert_eq!(world.accounts.balance_of(farm), Money::new(30));
+        assert_eq!(
+            world.accounts.balance_of(worker, Metal::Gold),
+            Money::new(70)
+        );
+        assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::new(30));
         // paid-off entries leave the map entirely
         assert!(
             world
@@ -480,7 +499,10 @@ mod tests {
             .unwrap();
         world.accounts.mint(business, Money::new(50));
         pay_wages(&mut world);
-        assert_eq!(world.accounts.balance_of(business), Money::new(50));
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(50)
+        );
     }
 
     #[test]
@@ -503,8 +525,11 @@ mod tests {
         // employed_role stays None
         world.accounts.mint(business, Money::new(50));
         pay_wages(&mut world);
-        assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
-        assert_eq!(world.accounts.balance_of(business), Money::new(50));
+        assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(50)
+        );
     }
 
     #[test]
@@ -527,8 +552,11 @@ mod tests {
         world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Engineer);
         world.accounts.mint(business, Money::new(50));
         pay_wages(&mut world);
-        assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
-        assert_eq!(world.accounts.balance_of(business), Money::new(50));
+        assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(50)
+        );
     }
 
     #[test]
@@ -548,8 +576,8 @@ mod tests {
         // 10 coins at price 2 → 5 units, capped well below stock and target
         assert_eq!(held(&world, worker, Good::Food), 5);
         assert_eq!(stock_of(&world, farm_house), 45);
-        assert_eq!(world.accounts.balance_of(worker), Money::ZERO);
-        assert_eq!(world.accounts.balance_of(farm), Money::new(10));
+        assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::new(10));
         world.accounts.audit();
     }
 
@@ -573,7 +601,10 @@ mod tests {
         // agents-order: first drains the shelf, second is capped to zero
         assert_eq!(held(&world, first, Good::Food), 10);
         assert_eq!(held(&world, second, Good::Food), 0);
-        assert_eq!(world.accounts.balance_of(second), Money::new(10)); // unspent
+        assert_eq!(
+            world.accounts.balance_of(second, Metal::Gold),
+            Money::new(10)
+        ); // unspent
         assert_eq!(stock_of(&world, farm_house), 0);
         world.accounts.audit();
     }
@@ -594,7 +625,7 @@ mod tests {
         goods_market(&mut world);
         assert_eq!(held(&world, worker, Good::Food), 0);
         assert_eq!(stock_of(&world, farm_house), 50);
-        assert_eq!(world.accounts.balance_of(farm), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::ZERO);
     }
 
     #[test]
@@ -625,8 +656,8 @@ mod tests {
         world.accounts.mint(farm, Money::new(35)); // worldgen-style seed
         mint_phase(&mut world);
         // the tick-time faucet is closed: nothing beyond the seed, ever
-        assert_eq!(world.accounts.total_minted(), Money::new(35));
-        assert_eq!(world.accounts.total_money(), Money::new(35));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(35));
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(35));
         world.accounts.audit();
     }
 
@@ -658,14 +689,14 @@ mod tests {
         }
         // the worldgen seed (3 × 35) is the ENTIRE money supply, forever
         // — the audit pins it there every tick
-        assert_eq!(world.accounts.total_minted(), Money::new(105));
-        assert_eq!(world.accounts.total_money(), Money::new(105));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(105));
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(105));
         // the worker keeps earning, eating, and holding stock
-        assert!(world.accounts.balance_of(worker) > Money::ZERO);
+        assert!(world.accounts.balance_of(worker, Metal::Gold) > Money::ZERO);
         assert!(held(&world, worker, Good::Food) > 0);
         // the idle agent earned nothing: wallet drained, pantry empty
         // (07-19 spec: nobody saves the unemployed this milestone)
-        assert_eq!(world.accounts.balance_of(idle), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(idle, Metal::Gold), Money::ZERO);
         assert_eq!(held(&world, idle, Good::Food), 0);
         // overproduction piles up on the shelf (40/tick made, ~10 eaten)
         assert!(stock_of(&world, farm_house) > 0);
@@ -687,7 +718,7 @@ mod tests {
         goods_market(&mut world);
         // the whole shelf sold at the OLD price (10 × 2 = 20 coins)…
         assert_eq!(held(&world, worker, Good::Food), 10);
-        assert_eq!(world.accounts.balance_of(farm), Money::new(20));
+        assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::new(20));
         // …and the new price only exists after the phase: 2 + max(1, 2/10)
         assert_eq!(price_of(&world, farm_house), Money::new(3));
         world.accounts.audit();

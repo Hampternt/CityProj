@@ -95,35 +95,37 @@ impl Accounts {
 
     /// Read-only. Unknown id reads as zero — accounts are created implicitly
     /// at first credit.
-    pub fn balance_of(&self, id: AgentId) -> Money {
+    pub fn balance_of(&self, id: AgentId, metal: Metal) -> Money {
         self.balances
-            .get(&(id, Metal::Gold))
+            .get(&(id, metal))
             .copied()
             .unwrap_or(Money::ZERO)
     }
 
-    /// Sum of ALL balances, including External.
-    pub fn total_money(&self) -> Money {
+    /// Sum of ALL of one metal's balances, including External. There is no
+    /// cross-metal total by design: without a market rate it would be a
+    /// meaningless number, so the signature refuses to produce one.
+    pub fn total_money(&self, metal: Metal) -> Money {
         self.balances
             .iter()
-            .filter(|((_, metal), _)| *metal == Metal::Gold)
+            .filter(|((_, entry_metal), _)| *entry_metal == metal)
             .fold(Money::ZERO, |sum, (_, &b)| sum.plus(b))
     }
 
-    /// Lifetime total ever created via [`Accounts::mint`] (§8.4 log). Never
-    /// decreases.
-    pub fn total_minted(&self) -> Money {
+    /// Lifetime total of one metal ever created via [`Accounts::mint`]
+    /// (§8.4 log). Never decreases.
+    pub fn total_minted(&self, metal: Metal) -> Money {
         self.total_minted
-            .get(&Metal::Gold)
+            .get(&metal)
             .copied()
             .unwrap_or(Money::ZERO)
     }
 
-    /// Lifetime total ever destroyed via [`Accounts::burn`] (§8.4 log).
-    /// Never decreases.
-    pub fn total_burned(&self) -> Money {
+    /// Lifetime total of one metal ever destroyed via [`Accounts::burn`]
+    /// (§8.4 log). Never decreases.
+    pub fn total_burned(&self, metal: Metal) -> Money {
         self.total_burned
-            .get(&Metal::Gold)
+            .get(&metal)
             .copied()
             .unwrap_or(Money::ZERO)
     }
@@ -132,10 +134,10 @@ impl Accounts {
     /// [`total_minted`](Accounts::total_minted); cannot fail. Gold-reserve
     /// cap deferred — spec amendment needed when the mint job arrives.
     pub fn mint(&mut self, to: AgentId, amount: Money) {
-        let balance = self.balance_of(to);
+        let balance = self.balance_of(to, Metal::Gold);
         self.balances
             .insert((to, Metal::Gold), balance.plus(amount));
-        let minted = self.total_minted().plus(amount);
+        let minted = self.total_minted(Metal::Gold).plus(amount);
         self.total_minted.insert(Metal::Gold, minted);
     }
 
@@ -149,12 +151,12 @@ impl Accounts {
     /// must not keep running on corrupt books.
     pub fn audit(&self) {
         let expected = self
-            .total_minted()
+            .total_minted(Metal::Gold)
             .0
-            .checked_sub(self.total_burned().0)
+            .checked_sub(self.total_burned(Metal::Gold).0)
             .expect("audit failed: total_burned exceeds total_minted (§8.3)");
         assert_eq!(
-            self.total_money(),
+            self.total_money(Metal::Gold),
             Money(expected),
             "conservation audit failed: circulating money != minted - burned (§8.3)"
         );
@@ -176,7 +178,7 @@ impl Accounts {
         if amount == Money::ZERO {
             return Ok(()); // no-op by contract: creates no account entry
         }
-        let from_balance = self.balance_of(from);
+        let from_balance = self.balance_of(from, Metal::Gold);
         if from_balance < amount {
             return Err(MoneyError::InsufficientFunds); // §8.5 — nothing applied
         }
@@ -185,7 +187,7 @@ impl Accounts {
         }
         self.balances
             .insert((from, Metal::Gold), from_balance.minus(amount));
-        let to_balance = self.balance_of(to);
+        let to_balance = self.balance_of(to, Metal::Gold);
         self.balances
             .insert((to, Metal::Gold), to_balance.plus(amount));
         Ok(())
@@ -204,13 +206,13 @@ impl Accounts {
         if amount == Money::ZERO {
             return Ok(());
         }
-        let balance = self.balance_of(from);
+        let balance = self.balance_of(from, Metal::Gold);
         if balance < amount {
             return Err(MoneyError::InsufficientFunds); // §8.5 — nothing applied
         }
         self.balances
             .insert((from, Metal::Gold), balance.minus(amount));
-        let burned = self.total_burned().plus(amount);
+        let burned = self.total_burned(Metal::Gold).plus(amount);
         self.total_burned.insert(Metal::Gold, burned);
         Ok(())
     }
@@ -239,9 +241,9 @@ mod tests {
     fn mint_credits_and_logs() {
         let mut accounts = Accounts::new();
         accounts.mint(a(), Money::new(100));
-        assert_eq!(accounts.balance_of(a()), Money::new(100));
-        assert_eq!(accounts.total_minted(), Money::new(100));
-        assert_eq!(accounts.total_money(), Money::new(100));
+        assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(100));
+        assert_eq!(accounts.total_minted(Metal::Gold), Money::new(100));
+        assert_eq!(accounts.total_money(Metal::Gold), Money::new(100));
         accounts.audit();
     }
 
@@ -250,9 +252,9 @@ mod tests {
         let mut accounts = Accounts::new();
         accounts.mint(a(), Money::new(100));
         accounts.transfer(a(), b(), Money::new(30)).unwrap();
-        assert_eq!(accounts.balance_of(a()), Money::new(70));
-        assert_eq!(accounts.balance_of(b()), Money::new(30));
-        assert_eq!(accounts.total_money(), Money::new(100));
+        assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(70));
+        assert_eq!(accounts.balance_of(b(), Metal::Gold), Money::new(30));
+        assert_eq!(accounts.total_money(Metal::Gold), Money::new(100));
     }
 
     #[test]
@@ -262,15 +264,15 @@ mod tests {
         let result = accounts.transfer(a(), b(), Money::new(20));
         assert_eq!(result, Err(MoneyError::InsufficientFunds));
         // no partial application — nothing changed
-        assert_eq!(accounts.balance_of(a()), Money::new(10));
-        assert_eq!(accounts.balance_of(b()), Money::ZERO);
+        assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(10));
+        assert_eq!(accounts.balance_of(b(), Metal::Gold), Money::ZERO);
     }
 
     #[test]
     fn transfer_zero_is_noop() {
         let mut accounts = Accounts::new();
         accounts.transfer(a(), b(), Money::ZERO).unwrap();
-        assert_eq!(accounts.total_money(), Money::ZERO);
+        assert_eq!(accounts.total_money(Metal::Gold), Money::ZERO);
         // creates no account entry (tests may touch private fields — same module)
         assert!(accounts.balances.is_empty());
     }
@@ -280,7 +282,7 @@ mod tests {
         let mut accounts = Accounts::new();
         accounts.mint(a(), Money::new(50));
         accounts.transfer(a(), a(), Money::new(20)).unwrap();
-        assert_eq!(accounts.balance_of(a()), Money::new(50));
+        assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(50));
     }
 
     #[test]
@@ -288,8 +290,8 @@ mod tests {
         let mut accounts = Accounts::new();
         accounts.mint(a(), Money::new(100));
         accounts.burn(a(), Money::new(40)).unwrap();
-        assert_eq!(accounts.balance_of(a()), Money::new(60));
-        assert_eq!(accounts.total_burned(), Money::new(40));
+        assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(60));
+        assert_eq!(accounts.total_burned(Metal::Gold), Money::new(40));
         accounts.audit();
     }
 
@@ -301,15 +303,15 @@ mod tests {
             accounts.burn(a(), Money::new(20)),
             Err(MoneyError::InsufficientFunds)
         );
-        assert_eq!(accounts.balance_of(a()), Money::new(10));
-        assert_eq!(accounts.total_burned(), Money::ZERO);
+        assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(10));
+        assert_eq!(accounts.total_burned(Metal::Gold), Money::ZERO);
     }
 
     #[test]
     fn burn_zero_is_noop() {
         let mut accounts = Accounts::new();
         accounts.burn(a(), Money::ZERO).unwrap();
-        assert_eq!(accounts.total_burned(), Money::ZERO);
+        assert_eq!(accounts.total_burned(Metal::Gold), Money::ZERO);
         assert!(accounts.balances.is_empty());
     }
 
@@ -349,7 +351,7 @@ mod tests {
         accounts.mint(a(), Money::new(100));
         accounts.transfer(a(), external, Money::new(60)).unwrap();
         // out of circulation but still counted by the audit
-        assert_eq!(accounts.total_money(), Money::new(100));
+        assert_eq!(accounts.total_money(Metal::Gold), Money::new(100));
         accounts.audit();
     }
 
