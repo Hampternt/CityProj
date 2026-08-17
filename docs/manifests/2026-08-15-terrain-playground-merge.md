@@ -1,6 +1,6 @@
 # Terrain playground — land it on main
 
-**Status:** ACTIVE 2026-08-15 — implemented on a branch, unverified, unmerged
+**Status:** ACTIVE 2026-08-15 — verified in the browser and gated; merge pending
 **Branch:** `worktree-terrain-playground`
 
 Observable: from a clean `main` checkout, opening `tools/map_viewer.html`
@@ -41,7 +41,7 @@ and re-establishes it.
 
 ## Items
 
-- [ ] **1. Verify the playground in a real browser.** Open
+- [x] **1. Verify the playground in a real browser.** Open
   `.claude/worktrees/terrain-playground/tools/map_viewer.html` — the live
   worktree for this branch — and exercise each claim: startup shows a generated
   map, Random and Generate produce different landscapes, the size and octave
@@ -51,7 +51,7 @@ and re-establishes it.
   can make, and drift in it is silent.
   Done: every claim seen to work, and the console shows the parity
   self-check passing with no errors beside it.
-- [ ] **2. Pack gate on the branch.**
+- [x] **2. Pack gate on the branch.**
   Done: `./scripts/verify.sh` prints `VERIFY OK`, with the test count quoted
   and the parity canary among the tests that ran.
 - [ ] **3. Merge to `main` and retire the worktree.** Resolve the CLAUDE.md
@@ -113,3 +113,28 @@ and re-establishes it.
   recorded no `mousedown`, `mouseup` or `click`). So drag-to-rotate,
   wheel-to-zoom, and clicking as a human remain unverified, and nobody has
   actually *looked* at the render. Not merging on measurements alone.
+- **2026-08-15** — **item 1 done.** Pane displayed, page compositing, every
+  remaining claim exercised through real pointer input and seen on screen:
+  - The playground opens on a hillshaded isometric landscape at the default
+    seed — looked at, not inferred.
+  - **Drag rotates** and **wheel zooms**: same landscape from a new angle,
+    then filling more of the view.
+  - **Random** clicked as a human → seed 5528872770560469304, a different
+    landscape, status line following.
+  - **Save** typed and clicked → `saved "gamma"`, the record holding the
+    seed as a string; it survived a reload still listed in the dropdown.
+  - **Delete** clicked → `deleted "beta"`, store back to `{}`, dropdown back
+    to its placeholder. This is the one that had looked broken while input
+    was not landing; with a real click it works.
+  - Nuance worth keeping: **picking an option from the saved-maps dropdown**
+    was driven through the `change` event its handler listens on, not by
+    clicking an option in the native popup — that popup is an OS widget the
+    automation cannot address. Restoring parameters and regenerating from a
+    saved record is proven; the popup itself is not.
+- **2026-08-15** — item 2 done, with a **deviation**: the branch predates
+  `scripts/`, so there is no `./scripts/verify.sh` on it to run. Ran the
+  identical gate by hand in the worktree instead — `cargo fmt --check`
+  clean, `cargo clippy --all-targets -- -D warnings` exit 0 with no
+  warnings, `cargo test` **99 passed, 0 failed**, including
+  `terrain::tests::generate_matches_viewer_canary`. The merge brings the
+  scripts onto the branch's history, so item 3's gate run is the real one.
