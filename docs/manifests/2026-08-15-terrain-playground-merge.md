@@ -148,6 +148,20 @@ and re-establishes it.
   is now a real entry describing in-page generation, saved maps and
   map.json loading, and the section is retitled "Terrain and the map
   playground" — the viewer is not only a viewer any more.
-- **2026-08-15** — housekeeping alongside the fold: `.claude/launch.json`'s
-  `map-viewer` config now serves `tools/` from the repo root rather than the
-  retired worktree, and CLAUDE.md's in-flight note became a landed note.
+- **2026-08-15** — housekeeping alongside the fold: `.claude/launch.json`
+  is tracked deliberately (a dev-server config the repo carries, as
+  planvisualiser does) and its `map-viewer` entry now serves `tools/` from
+  the repo root rather than the retired worktree; CLAUDE.md's in-flight note
+  became a landed note.
+- **2026-08-15** — **claim corrected after review.** The folded inventory
+  entry first said the viewer "opens in any browser with no server" — the
+  opposite of what this session established: every playground claim was
+  proven over `http://localhost:7431`, and a bare `file://` open gave a
+  scriptless snapshot with no localStorage. That snapshot is the in-app
+  preview's rendering, not necessarily Chrome's, and the real browser was
+  not reachable to settle it (`Claude in Chrome` not connected). So the
+  inventory no longer asserts either transport — it says self-contained, no
+  build step, no external requests, all of which *is* established — and the
+  "serve it" instruction lives in CLAUDE.md where operational detail
+  belongs. Whether a direct `file://` open drives the playground in a normal
+  browser is still untested.

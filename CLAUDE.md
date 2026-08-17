@@ -65,7 +65,9 @@ new mechanics into the loop and money:
   alongside; deterministic value-noise `generate`; `to_json` for the
   viewer. No in-sim consumer yet — the shell holds a display terrain and
   the `map` command exports `map.json` for `tools/map_viewer.html`
-  (self-contained, open in a browser), which is also a terrain
+  (self-contained; serve it — `.claude/launch.json`'s `map-viewer` config
+  does, on :7431 — since the in-app preview renders a bare `file://` open
+  as a scriptless snapshot with no localStorage), which is also a terrain
   playground: in-browser generation parity-pinned to `generate` by the
   `generate_matches_viewer_canary` test, parameter knobs, and named maps
   saved to localStorage (parameters only; not wired into the sim).

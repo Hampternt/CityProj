@@ -58,17 +58,17 @@ between the sampled points, not just at them. Travel across it accounts for
 slope — the same distance costs more uphill, at a speed profile that can be
 swapped per traveller.
 
-`tools/map_viewer.html` opens in any browser with no server or build step and
-draws a landscape as a hillshaded isometric surface; drag rotates, the wheel
-zooms. It is also where landscapes are made:
+`tools/map_viewer.html` is a single self-contained page — no build step, no
+external requests — that draws a landscape as a hillshaded isometric surface;
+drag rotates, the wheel zooms. It is also where landscapes are made:
 
 - Generate terrain in the page itself — a seed to type or roll at random,
   the map's size and cell spacing, its maximum elevation, and the three
   octaves that set how rugged or rolling it comes out. Out-of-range entries
   are clamped and written back, so the panel always shows what was used.
 - Save a landscape under a name and pick it back off a list later, kept in
-  the browser between visits. Records store the parameters, not the terrain,
-  so reselecting one regenerates it exactly.
+  the browser's storage for that page between visits. Records store the
+  parameters, not the terrain, so reselecting one regenerates it exactly.
 - Load a `map.json` written by the shell's `map` command to look at the
   landscape the sim is holding. A file that isn't one says so instead of
   breaking.
