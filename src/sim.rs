@@ -395,7 +395,7 @@ mod tests {
         // through tick skipped the audit, this would NOT panic
         world
             .accounts
-            .set_balance_for_test(AgentId(7), Money::new(999));
+            .set_balance_for_test(AgentId(7), Metal::Gold, Money::new(999));
         tick(&mut world);
     }
 

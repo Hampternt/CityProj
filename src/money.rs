@@ -218,8 +218,8 @@ impl Accounts {
     /// The SANCTIONED §8.2 exception: exists solely so tests can force an
     /// imbalance and prove the audit panics. Never compiled into the sim.
     #[cfg(test)]
-    pub fn set_balance_for_test(&mut self, id: AgentId, amount: Money) {
-        self.balances.insert((id, Metal::Gold), amount);
+    pub fn set_balance_for_test(&mut self, id: AgentId, metal: Metal, amount: Money) {
+        self.balances.insert((id, metal), amount);
     }
 }
 
@@ -348,7 +348,7 @@ mod tests {
     fn audit_panics_on_imbalance() {
         let mut accounts = Accounts::new();
         accounts.mint(a(), Metal::Gold, Money::new(100));
-        accounts.set_balance_for_test(a(), Money::new(150));
+        accounts.set_balance_for_test(a(), Metal::Gold, Money::new(150));
         accounts.audit();
     }
 
