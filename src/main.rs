@@ -21,6 +21,8 @@
 //! - [`market`] — the goods market's pure shopping logic (§8.6);
 //!   [`market::plan_purchases`] turns wallet + inventory + offers into a
 //!   purchase plan.
+//! - [`metal`] — [`metal::Metal`], the coinage metals that key every
+//!   balance and conservation total in the money core (07-12 spec).
 //! - [`role`] — [`role::Role`], the closed set of job roles.
 //! - [`world`] — [`world::World`] bundles agents, houses, and accounts, and
 //!   reserves the Mint and External account ids.
@@ -48,6 +50,7 @@ mod engine;
 mod goods;
 mod housing;
 mod market;
+mod metal;
 mod money;
 mod role;
 mod sim;

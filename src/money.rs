@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::agent::AgentId;
+use crate::metal::Metal;
 
 /// An amount of money in the smallest indivisible unit (§8.1 — never a
 /// float). All arithmetic is checked; overflow panics explicitly rather
@@ -80,9 +81,9 @@ pub enum MoneyError {
 /// public mutators are `transfer`, `mint`, and `burn`.
 #[derive(Debug, Default)]
 pub struct Accounts {
-    balances: HashMap<AgentId, Money>,
-    total_minted: Money,
-    total_burned: Money,
+    balances: HashMap<(AgentId, Metal), Money>,
+    total_minted: HashMap<Metal, Money>,
+    total_burned: HashMap<Metal, Money>,
 }
 
 impl Accounts {
@@ -95,26 +96,36 @@ impl Accounts {
     /// Read-only. Unknown id reads as zero — accounts are created implicitly
     /// at first credit.
     pub fn balance_of(&self, id: AgentId) -> Money {
-        self.balances.get(&id).copied().unwrap_or(Money::ZERO)
+        self.balances
+            .get(&(id, Metal::Gold))
+            .copied()
+            .unwrap_or(Money::ZERO)
     }
 
     /// Sum of ALL balances, including External.
     pub fn total_money(&self) -> Money {
         self.balances
-            .values()
-            .fold(Money::ZERO, |sum, &b| sum.plus(b))
+            .iter()
+            .filter(|((_, metal), _)| *metal == Metal::Gold)
+            .fold(Money::ZERO, |sum, (_, &b)| sum.plus(b))
     }
 
     /// Lifetime total ever created via [`Accounts::mint`] (§8.4 log). Never
     /// decreases.
     pub fn total_minted(&self) -> Money {
         self.total_minted
+            .get(&Metal::Gold)
+            .copied()
+            .unwrap_or(Money::ZERO)
     }
 
     /// Lifetime total ever destroyed via [`Accounts::burn`] (§8.4 log).
     /// Never decreases.
     pub fn total_burned(&self) -> Money {
         self.total_burned
+            .get(&Metal::Gold)
+            .copied()
+            .unwrap_or(Money::ZERO)
     }
 
     /// §8.4: the ONLY way money is created. Credits `to` and logs to
@@ -122,8 +133,10 @@ impl Accounts {
     /// cap deferred — spec amendment needed when the mint job arrives.
     pub fn mint(&mut self, to: AgentId, amount: Money) {
         let balance = self.balance_of(to);
-        self.balances.insert(to, balance.plus(amount));
-        self.total_minted = self.total_minted.plus(amount);
+        self.balances
+            .insert((to, Metal::Gold), balance.plus(amount));
+        let minted = self.total_minted().plus(amount);
+        self.total_minted.insert(Metal::Gold, minted);
     }
 
     /// §8.3: asserts conservation. Initial supply is zero (no genesis), so
@@ -136,9 +149,9 @@ impl Accounts {
     /// must not keep running on corrupt books.
     pub fn audit(&self) {
         let expected = self
-            .total_minted
+            .total_minted()
             .0
-            .checked_sub(self.total_burned.0)
+            .checked_sub(self.total_burned().0)
             .expect("audit failed: total_burned exceeds total_minted (§8.3)");
         assert_eq!(
             self.total_money(),
@@ -170,9 +183,11 @@ impl Accounts {
         if from == to {
             return Ok(()); // funds verified; debit + credit would cancel out
         }
-        self.balances.insert(from, from_balance.minus(amount));
+        self.balances
+            .insert((from, Metal::Gold), from_balance.minus(amount));
         let to_balance = self.balance_of(to);
-        self.balances.insert(to, to_balance.plus(amount));
+        self.balances
+            .insert((to, Metal::Gold), to_balance.plus(amount));
         Ok(())
     }
 
@@ -193,8 +208,10 @@ impl Accounts {
         if balance < amount {
             return Err(MoneyError::InsufficientFunds); // §8.5 — nothing applied
         }
-        self.balances.insert(from, balance.minus(amount));
-        self.total_burned = self.total_burned.plus(amount);
+        self.balances
+            .insert((from, Metal::Gold), balance.minus(amount));
+        let burned = self.total_burned().plus(amount);
+        self.total_burned.insert(Metal::Gold, burned);
         Ok(())
     }
 
@@ -202,7 +219,7 @@ impl Accounts {
     /// imbalance and prove the audit panics. Never compiled into the sim.
     #[cfg(test)]
     pub fn set_balance_for_test(&mut self, id: AgentId, amount: Money) {
-        self.balances.insert(id, amount);
+        self.balances.insert((id, Metal::Gold), amount);
     }
 }
 
