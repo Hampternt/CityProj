@@ -1,7 +1,7 @@
 # Multi-metal money (container)
 
-**Status:** PROPOSED 2026-08-15 — the spec's approval gate is unsigned; no
-work starts and no pack manifest is written until it is
+**Status:** PLANNED 2026-08-17 — the spec's approval gate is signed. Pack 1 is
+next and its item manifest is not written yet; nothing is active.
 **Branch:** `main`
 **Origin:** the design spec
 `docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`, written
@@ -77,3 +77,11 @@ every tick.
   It records an intent that already existed in `CLAUDE.md`; the spec's
   approval gate remains unsigned, so the pack sequence is proposed shape
   only and no pack manifest exists.
+
+- **2026-08-17** — gate signed; container moves to PLANNED. Cleared on the
+  grounds that all three open questions belong to the market layer and none
+  blocks this substrate. **One condition on pack 1:** its done-condition must
+  produce the inventory of money call sites, because "every call site
+  migrated" is pack 2's only unbounded phrase and pack 2 should be written
+  against a number rather than a guess. No pack manifest written and no work
+  started — signing the gate authorizes planning, not execution.

@@ -1,6 +1,6 @@
 # Multi-Metal Money Substrate — Design Spec
 
-**Status:** draft — pending approval · **Parent:** 2026-07-02-money-gameloop-skeleton-design.md (parent: 2026-06-20-economy-sim-design.md)
+**Status:** approved 2026-08-17 · **Parent:** 2026-07-02-money-gameloop-skeleton-design.md (parent: 2026-06-20-economy-sim-design.md)
 **Blocks:** 2026-07-12-business-wages-alpha-design.md (on hold until this lands)
 
 ## Design (decisions — approve before reading on)
@@ -67,6 +67,12 @@ Existing 10 money.rs tests ported to take a metal (mechanical). New:
 - `unknown_metal_pair_reads_zero` — untouched `(agent, metal)` reads `Money::ZERO`.
 
 --- APPROVAL GATE — do not write the plan or any code above this line without sign-off ---
+
+**SIGNED 2026-08-17.** The three open questions below are all deferred to the
+market layer and none of them blocks this substrate, which is the condition for
+clearing the gate. Scope stands as written: `Money(u64)` untouched, no exchange
+rates, no seigniorage. Planning may proceed against
+`docs/manifests/2026-08-15-multi-metal-money.md`.
 
 ## Open questions
 
