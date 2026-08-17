@@ -363,10 +363,10 @@ split at each file's `mod tests` line (`world.rs:306`, `sim.rs:273`;
 
 | file | production | test | total (baseline) | forced in pack 1 | post-sweep `Metal::Gold` |
 | --- | --- | --- | --- | --- | --- |
-| `src/world.rs` | 1 | 26 | 27 | 15 | *item 7* |
-| `src/sim.rs` | 5 | 45 | 50 | 40 | *item 7* |
-| `src/engine/game_loop.rs` | 10 | 0 | 10 | 10 | *item 7* |
-| **total** | **16** | **71** | **87** | **65** | *item 7 (predicted 65)* |
+| `src/world.rs` | 1 | 26 | 27 | 15 | 15 |
+| `src/sim.rs` | 5 | 45 | 50 | 40 | 40 |
+| `src/engine/game_loop.rs` | 10 | 0 | 10 | 10 | 10 |
+| **total** | **16** | **71** | **87** | **65** | **65** |
 
 By method: `balance_of` 35, `mint` 19, `audit` 11, `pay` 11, `total_money` 5,
 `total_minted` 3, `total_burned` 1, `transfer` 1, `set_balance_for_test` 1,
@@ -381,8 +381,25 @@ halves partition the 87 with nothing double-counted. The forced 65 splits by
 item: readers 44 (item 2), mutators 20 (item 3), `set_balance_for_test` 1
 (item 4).
 
-These are lines, not distinct call expressions — `game_loop.rs:132–134` is one
-`println!` split across three. Item 7 records both figures.
+**Post-sweep, measured 2026-08-17 after items 2–4 landed.** The migration
+grep prints **67**, not the predicted 65, and the divergence is explained,
+not adopted: **2** of the 67 are in `src/metal.rs` — the `ALL` constant's own
+definition and the `Display` match arm — which are the enum defining itself,
+not call sites choosing a metal. `metal.rs` did not exist when the counting
+rule was written; pack 2 should extend the grep's exclusion to it
+(`grep -v '^src/metal.rs'`), which leaves exactly the predicted **65** in the
+three files above, split 13 production / 52 test as forced.
+
+Lines and distinct call expressions **coincide at 65**: after `cargo fmt`,
+every migrated call expression sits on its own line and none shares a line.
+The statement-level caveat survives one level up: the shell's money summary
+(`game_loop.rs:133–135`) is three call expressions inside **one** `println!`
+statement, so pack 2 rewrites it as a unit, not as three independent sites.
+
+This table **supersedes the spec's Migration impact**
+(`2026-07-12-multi-metal-money-design.md:51–57`), which names 3 sites against
+the measured 87. Pack 2 is written against this table and the regenerating
+grep, not those five bullets.
 
 ## Ledger
 
