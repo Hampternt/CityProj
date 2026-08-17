@@ -100,7 +100,7 @@ fn template_world() -> World {
             .as_ref()
             .expect("just created")
             .wage_bill();
-        world.accounts.mint(business, bill);
+        world.accounts.mint(business, Metal::Gold, bill);
         let worker = world.spawn_agent(worker_name, Some(residence), Some(house));
         world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
     }
@@ -108,7 +108,7 @@ fn template_world() -> World {
 
     let everyone: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
     for id in everyone {
-        world.accounts.mint(id, Money::new(35));
+        world.accounts.mint(id, Metal::Gold, Money::new(35));
         let agent = world.agent_mut(id).expect("listed above");
         for good in Good::ALL {
             agent.inventory.insert(good, good.consumption_rate());

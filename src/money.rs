@@ -8,10 +8,10 @@
 //!
 //! ```ignore
 //! let mut accounts = Accounts::new();
-//! accounts.mint(alice, Money::new(100));               // the only faucet
-//! accounts.transfer(alice, bob, Money::new(30))?;      // errs, never overdrafts
-//! accounts.burn(bob, Money::new(5))?;                  // the only sink
-//! accounts.audit();                                    // 95 == 100 − 5, or panic
+//! accounts.mint(alice, Metal::Gold, Money::new(100));          // the only faucet
+//! accounts.transfer(alice, bob, Metal::Gold, Money::new(30))?; // errs, never overdrafts
+//! accounts.burn(bob, Metal::Gold, Money::new(5))?;             // the only sink
+//! accounts.audit();                                            // 95 == 100 − 5, or panic
 //! ```
 
 use std::collections::HashMap;
@@ -133,12 +133,11 @@ impl Accounts {
     /// §8.4: the ONLY way money is created. Credits `to` and logs to
     /// [`total_minted`](Accounts::total_minted); cannot fail. Gold-reserve
     /// cap deferred — spec amendment needed when the mint job arrives.
-    pub fn mint(&mut self, to: AgentId, amount: Money) {
-        let balance = self.balance_of(to, Metal::Gold);
-        self.balances
-            .insert((to, Metal::Gold), balance.plus(amount));
-        let minted = self.total_minted(Metal::Gold).plus(amount);
-        self.total_minted.insert(Metal::Gold, minted);
+    pub fn mint(&mut self, to: AgentId, metal: Metal, amount: Money) {
+        let balance = self.balance_of(to, metal);
+        self.balances.insert((to, metal), balance.plus(amount));
+        let minted = self.total_minted(metal).plus(amount);
+        self.total_minted.insert(metal, minted);
     }
 
     /// §8.3: asserts conservation. Initial supply is zero (no genesis), so
@@ -173,12 +172,13 @@ impl Accounts {
         &mut self,
         from: AgentId,
         to: AgentId,
+        metal: Metal,
         amount: Money,
     ) -> Result<(), MoneyError> {
         if amount == Money::ZERO {
             return Ok(()); // no-op by contract: creates no account entry
         }
-        let from_balance = self.balance_of(from, Metal::Gold);
+        let from_balance = self.balance_of(from, metal);
         if from_balance < amount {
             return Err(MoneyError::InsufficientFunds); // §8.5 — nothing applied
         }
@@ -186,10 +186,9 @@ impl Accounts {
             return Ok(()); // funds verified; debit + credit would cancel out
         }
         self.balances
-            .insert((from, Metal::Gold), from_balance.minus(amount));
-        let to_balance = self.balance_of(to, Metal::Gold);
-        self.balances
-            .insert((to, Metal::Gold), to_balance.plus(amount));
+            .insert((from, metal), from_balance.minus(amount));
+        let to_balance = self.balance_of(to, metal);
+        self.balances.insert((to, metal), to_balance.plus(amount));
         Ok(())
     }
 
@@ -202,18 +201,17 @@ impl Accounts {
     /// [`MoneyError::InsufficientFunds`] if `from` holds less than `amount`
     /// — nothing applied.
     #[allow(dead_code)] // the sinks phase (7) lands later
-    pub fn burn(&mut self, from: AgentId, amount: Money) -> Result<(), MoneyError> {
+    pub fn burn(&mut self, from: AgentId, metal: Metal, amount: Money) -> Result<(), MoneyError> {
         if amount == Money::ZERO {
             return Ok(());
         }
-        let balance = self.balance_of(from, Metal::Gold);
+        let balance = self.balance_of(from, metal);
         if balance < amount {
             return Err(MoneyError::InsufficientFunds); // §8.5 — nothing applied
         }
-        self.balances
-            .insert((from, Metal::Gold), balance.minus(amount));
-        let burned = self.total_burned(Metal::Gold).plus(amount);
-        self.total_burned.insert(Metal::Gold, burned);
+        self.balances.insert((from, metal), balance.minus(amount));
+        let burned = self.total_burned(metal).plus(amount);
+        self.total_burned.insert(metal, burned);
         Ok(())
     }
 
@@ -240,7 +238,7 @@ mod tests {
     #[test]
     fn mint_credits_and_logs() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(100));
+        accounts.mint(a(), Metal::Gold, Money::new(100));
         assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(100));
         assert_eq!(accounts.total_minted(Metal::Gold), Money::new(100));
         assert_eq!(accounts.total_money(Metal::Gold), Money::new(100));
@@ -250,8 +248,10 @@ mod tests {
     #[test]
     fn transfer_moves_exact_amount() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(100));
-        accounts.transfer(a(), b(), Money::new(30)).unwrap();
+        accounts.mint(a(), Metal::Gold, Money::new(100));
+        accounts
+            .transfer(a(), b(), Metal::Gold, Money::new(30))
+            .unwrap();
         assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(70));
         assert_eq!(accounts.balance_of(b(), Metal::Gold), Money::new(30));
         assert_eq!(accounts.total_money(Metal::Gold), Money::new(100));
@@ -260,8 +260,8 @@ mod tests {
     #[test]
     fn transfer_insufficient_funds_is_atomic() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(10));
-        let result = accounts.transfer(a(), b(), Money::new(20));
+        accounts.mint(a(), Metal::Gold, Money::new(10));
+        let result = accounts.transfer(a(), b(), Metal::Gold, Money::new(20));
         assert_eq!(result, Err(MoneyError::InsufficientFunds));
         // no partial application — nothing changed
         assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(10));
@@ -271,7 +271,9 @@ mod tests {
     #[test]
     fn transfer_zero_is_noop() {
         let mut accounts = Accounts::new();
-        accounts.transfer(a(), b(), Money::ZERO).unwrap();
+        accounts
+            .transfer(a(), b(), Metal::Gold, Money::ZERO)
+            .unwrap();
         assert_eq!(accounts.total_money(Metal::Gold), Money::ZERO);
         // creates no account entry (tests may touch private fields — same module)
         assert!(accounts.balances.is_empty());
@@ -280,16 +282,18 @@ mod tests {
     #[test]
     fn transfer_to_self() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(50));
-        accounts.transfer(a(), a(), Money::new(20)).unwrap();
+        accounts.mint(a(), Metal::Gold, Money::new(50));
+        accounts
+            .transfer(a(), a(), Metal::Gold, Money::new(20))
+            .unwrap();
         assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(50));
     }
 
     #[test]
     fn burn_debits_and_logs() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(100));
-        accounts.burn(a(), Money::new(40)).unwrap();
+        accounts.mint(a(), Metal::Gold, Money::new(100));
+        accounts.burn(a(), Metal::Gold, Money::new(40)).unwrap();
         assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(60));
         assert_eq!(accounts.total_burned(Metal::Gold), Money::new(40));
         accounts.audit();
@@ -298,9 +302,9 @@ mod tests {
     #[test]
     fn burn_insufficient_funds_is_atomic() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(10));
+        accounts.mint(a(), Metal::Gold, Money::new(10));
         assert_eq!(
-            accounts.burn(a(), Money::new(20)),
+            accounts.burn(a(), Metal::Gold, Money::new(20)),
             Err(MoneyError::InsufficientFunds)
         );
         assert_eq!(accounts.balance_of(a(), Metal::Gold), Money::new(10));
@@ -310,7 +314,7 @@ mod tests {
     #[test]
     fn burn_zero_is_noop() {
         let mut accounts = Accounts::new();
-        accounts.burn(a(), Money::ZERO).unwrap();
+        accounts.burn(a(), Metal::Gold, Money::ZERO).unwrap();
         assert_eq!(accounts.total_burned(Metal::Gold), Money::ZERO);
         assert!(accounts.balances.is_empty());
     }
@@ -318,18 +322,24 @@ mod tests {
     #[test]
     fn audit_passes_after_op_sequence() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(100));
+        accounts.mint(a(), Metal::Gold, Money::new(100));
         accounts.audit();
-        accounts.transfer(a(), b(), Money::new(30)).unwrap();
+        accounts
+            .transfer(a(), b(), Metal::Gold, Money::new(30))
+            .unwrap();
         accounts.audit();
         // failed ops must leave the books balanced too
-        assert!(accounts.transfer(b(), a(), Money::new(999)).is_err());
+        assert!(
+            accounts
+                .transfer(b(), a(), Metal::Gold, Money::new(999))
+                .is_err()
+        );
         accounts.audit();
-        accounts.burn(a(), Money::new(20)).unwrap();
+        accounts.burn(a(), Metal::Gold, Money::new(20)).unwrap();
         accounts.audit();
-        assert!(accounts.burn(b(), Money::new(999)).is_err());
+        assert!(accounts.burn(b(), Metal::Gold, Money::new(999)).is_err());
         accounts.audit();
-        accounts.mint(b(), Money::new(5));
+        accounts.mint(b(), Metal::Gold, Money::new(5));
         accounts.audit();
     }
 
@@ -337,7 +347,7 @@ mod tests {
     #[should_panic]
     fn audit_panics_on_imbalance() {
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(100));
+        accounts.mint(a(), Metal::Gold, Money::new(100));
         accounts.set_balance_for_test(a(), Money::new(150));
         accounts.audit();
     }
@@ -348,8 +358,10 @@ mod tests {
         // reserved value (World reserves it properly in Task 2).
         let external = AgentId(1);
         let mut accounts = Accounts::new();
-        accounts.mint(a(), Money::new(100));
-        accounts.transfer(a(), external, Money::new(60)).unwrap();
+        accounts.mint(a(), Metal::Gold, Money::new(100));
+        accounts
+            .transfer(a(), external, Metal::Gold, Money::new(60))
+            .unwrap();
         // out of circulation but still counted by the audit
         assert_eq!(accounts.total_money(Metal::Gold), Money::new(100));
         accounts.audit();

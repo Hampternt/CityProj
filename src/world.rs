@@ -7,6 +7,7 @@ use crate::agent::{Agent, AgentId};
 use crate::business::{Business, RoleSlot};
 use crate::goods::Good;
 use crate::housing::{House, HouseId};
+use crate::metal::Metal;
 use crate::money::{Accounts, Money, MoneyError};
 use crate::role::Role;
 use std::collections::HashMap;
@@ -180,7 +181,7 @@ impl World {
         if !self.is_known_account(to) {
             return Err(WorldError::UnknownAgent(to));
         }
-        self.accounts.transfer(from, to, amount)?;
+        self.accounts.transfer(from, to, Metal::Gold, amount)?;
         Ok(())
     }
 
@@ -355,7 +356,7 @@ mod tests {
         let mut world = World::new();
         let a = world.spawn_agent("a", None, None);
         let b = world.spawn_agent("b", None, None);
-        world.accounts.mint(a, Money::new(100)); // sanctioned test funding
+        world.accounts.mint(a, Metal::Gold, Money::new(100)); // sanctioned test funding
         world.pay(a, b, Money::new(30)).unwrap();
         assert_eq!(world.accounts.balance_of(a, Metal::Gold), Money::new(70));
         assert_eq!(world.accounts.balance_of(b, Metal::Gold), Money::new(30));
@@ -392,7 +393,7 @@ mod tests {
         let mut world = World::new();
         let a = world.spawn_agent("a", None, None);
         let b = world.spawn_agent("b", None, None);
-        world.accounts.mint(a, Money::new(10));
+        world.accounts.mint(a, Metal::Gold, Money::new(10));
         assert_eq!(
             world.pay(a, b, Money::new(20)),
             Err(WorldError::Money(MoneyError::InsufficientFunds))
@@ -405,7 +406,9 @@ mod tests {
     #[test]
     fn pay_allows_reserved_ids_both_ends() {
         let mut world = World::new();
-        world.accounts.mint(world.mint_id, Money::new(50));
+        world
+            .accounts
+            .mint(world.mint_id, Metal::Gold, Money::new(50));
         world
             .pay(world.mint_id, world.external_id, Money::new(20))
             .unwrap();
@@ -620,7 +623,7 @@ mod tests {
         let business = world
             .create_business(house, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
-        world.accounts.mint(business, Money::new(100)); // sanctioned test funding
+        world.accounts.mint(business, Metal::Gold, Money::new(100)); // sanctioned test funding
         // business → agent: the future pay_wages direction
         world.pay(business, worker, Money::new(40)).unwrap();
         // agent → business: the future goods-purchase direction

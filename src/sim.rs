@@ -410,7 +410,7 @@ mod tests {
             Money::new(35),
             "f",
         );
-        world.accounts.mint(farm, Money::new(50)); // funded
+        world.accounts.mint(farm, Metal::Gold, Money::new(50)); // funded
         pay_wages(&mut world);
         assert_eq!(
             world.accounts.balance_of(worker, Metal::Gold),
@@ -433,7 +433,7 @@ mod tests {
             Money::new(35),
             "f",
         );
-        world.accounts.mint(farm, Money::new(10)); // less than the wage
+        world.accounts.mint(farm, Metal::Gold, Money::new(10)); // less than the wage
         pay_wages(&mut world);
         // partial payment IS a full valid transfer of a smaller amount (§8.5)
         assert_eq!(
@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
         assert_eq!(owed(&world, farm_house, worker), Money::new(35));
         // revenue returns: this tick's wage joins the pot and all 70 clears
-        world.accounts.mint(farm, Money::new(100));
+        world.accounts.mint(farm, Metal::Gold, Money::new(100));
         pay_wages(&mut world);
         assert_eq!(
             world.accounts.balance_of(worker, Metal::Gold),
@@ -497,7 +497,7 @@ mod tests {
         let business = world
             .create_business(house, Good::Food, Money::new(1), roles)
             .unwrap();
-        world.accounts.mint(business, Money::new(50));
+        world.accounts.mint(business, Metal::Gold, Money::new(50));
         pay_wages(&mut world);
         assert_eq!(
             world.accounts.balance_of(business, Metal::Gold),
@@ -523,7 +523,7 @@ mod tests {
         // Spawn worker at the workplace but WITHOUT setting employed_role
         let worker = world.spawn_agent("f", None, Some(house));
         // employed_role stays None
-        world.accounts.mint(business, Money::new(50));
+        world.accounts.mint(business, Metal::Gold, Money::new(50));
         pay_wages(&mut world);
         assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
         assert_eq!(
@@ -550,7 +550,7 @@ mod tests {
         // Spawn worker and assign Engineer role, which is NOT in the business's roles
         let worker = world.spawn_agent("e", None, Some(house));
         world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Engineer);
-        world.accounts.mint(business, Money::new(50));
+        world.accounts.mint(business, Metal::Gold, Money::new(50));
         pay_wages(&mut world);
         assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
         assert_eq!(
@@ -571,7 +571,7 @@ mod tests {
             "f",
         );
         set_stock(&mut world, farm_house, 50);
-        world.accounts.mint(worker, Money::new(10));
+        world.accounts.mint(worker, Metal::Gold, Money::new(10));
         goods_market(&mut world);
         // 10 coins at price 2 → 5 units, capped well below stock and target
         assert_eq!(held(&world, worker, Good::Food), 5);
@@ -595,8 +595,8 @@ mod tests {
         let second = world.spawn_agent("b", None, None);
         set_stock(&mut world, farm_house, 10);
         // both plan against the same 10-unit snapshot and could each afford it
-        world.accounts.mint(first, Money::new(10));
-        world.accounts.mint(second, Money::new(10));
+        world.accounts.mint(first, Metal::Gold, Money::new(10));
+        world.accounts.mint(second, Metal::Gold, Money::new(10));
         goods_market(&mut world);
         // agents-order: first drains the shelf, second is capped to zero
         assert_eq!(held(&world, first, Good::Food), 10);
@@ -653,7 +653,7 @@ mod tests {
             Money::new(35),
             "f",
         );
-        world.accounts.mint(farm, Money::new(35)); // worldgen-style seed
+        world.accounts.mint(farm, Metal::Gold, Money::new(35)); // worldgen-style seed
         mint_phase(&mut world);
         // the tick-time faucet is closed: nothing beyond the seed, ever
         assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(35));
@@ -676,9 +676,9 @@ mod tests {
             "f",
         );
         let idle = world.spawn_agent("idle", None, None);
-        world.accounts.mint(farm, Money::new(35)); // one wage bill (tick-1 seed)
+        world.accounts.mint(farm, Metal::Gold, Money::new(35)); // one wage bill (tick-1 seed)
         for id in [worker, idle] {
-            world.accounts.mint(id, Money::new(35));
+            world.accounts.mint(id, Metal::Gold, Money::new(35));
             let agent = world.agent_mut(id).unwrap();
             for good in Good::ALL {
                 agent.inventory.insert(good, good.consumption_rate());
@@ -714,7 +714,7 @@ mod tests {
             "f",
         );
         set_stock(&mut world, farm_house, 10);
-        world.accounts.mint(worker, Money::new(20));
+        world.accounts.mint(worker, Metal::Gold, Money::new(20));
         goods_market(&mut world);
         // the whole shelf sold at the OLD price (10 × 2 = 20 coins)…
         assert_eq!(held(&world, worker, Good::Food), 10);
