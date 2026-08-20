@@ -507,3 +507,21 @@ grep, not those five bullets.
   are zero at runtime by design until pack 2's first decision. The container's
   🚧 pointer in `docs/INVENTORY.md` stays a pointer — its promise becomes true
   after pack 2, per "Not in this pack".
+
+- **2026-08-20** — **the independent review the close recommended has run.**
+  Five parallel independent reviewers over `7555b73..HEAD`, one lens each:
+  CLAUDE.md/§8 compliance, shallow bug scan of the diff, git-history context,
+  recorded-feedback compliance (this ledger, the container's amendment, the
+  spec's), and code-comment compliance. **No findings survived confidence
+  scoring.** The single candidate — the `mint_phase` doc comment at
+  `sim.rs:275–279` still says `total_money()` zero-arg, made stale by item 2
+  but sitting on lines the pack never touched — scored 25/100 (no functional
+  impact, unmodified line) and is handed to pack 2's semantic sweep rather
+  than fixed here. Independent re-verification along the way: `verify.sh`
+  re-run twice — `VERIFY OK — fmt, clippy, build, tests all clean.`, `test
+  result: ok. 103 passed; 0 failed` — the §8.1 mechanical check repeated
+  (`git diff 7555b73 HEAD -- src/money.rs` touches nothing in `impl Money`
+  nor the three arithmetic tests), the audit body re-read against the ⚠
+  criteria (both failure kinds collected, no early exit), and the migration
+  grep re-derived at exactly **65**. The independent-reviewer gap from the
+  close entry above is closed; pack 2 may lean on the audit.

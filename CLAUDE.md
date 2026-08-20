@@ -100,8 +100,9 @@ Pack 1 (the metal-keyed core) landed 2026-08-17: every call site outside
 `money.rs` writes the literal `Metal::Gold`, so runtime behavior is
 unchanged and silver/copper are zero by design. Pack 2 — the semantic
 migration (`World::pay` gains its metal parameter, worldgen chooses seed
-metals, per-metal shell summary) — is next; its manifest is unwritten and
-it has no go. Its migration list regenerates via
+metals, per-metal shell summary) — is next; its manifest is drafted
+(`docs/manifests/2026-08-20-mmm-pack2-sim-on-metals.md`, awaiting
+approval) and it has no go. Its migration list regenerates via
 `grep -rn 'Metal::Gold' --include=*.rs src/ | grep -v '^src/money.rs' | grep -v '^src/metal.rs'`.
 After that: a wage-payment/hiring behavior spec built on
 `World::businesses()`.

@@ -1,7 +1,8 @@
 # Multi-metal money (container)
 
 **Status:** ACTIVE 2026-08-17 — pack 1 is DONE (landed on `main` the same
-day); pack 2 is next and its item manifest is not written yet.
+day, independently reviewed clean 2026-08-20); pack 2's item manifest is
+DRAFTED 2026-08-20 and awaiting approval; no go.
 **Branch:** `main`
 **Origin:** the design spec
 `docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`, written
@@ -70,6 +71,9 @@ and burning gold leaves silver's balance and totals untouched, an untouched
 pair reads zero, and corrupting only silver still panics naming silver.
 
 ### Pack 2 — the sim runs on metals
+
+Item manifest: `docs/manifests/2026-08-20-mmm-pack2-sim-on-metals.md`
+(DRAFT 2026-08-20 — item list and decisions D1–D3 awaiting approval; no go).
 
 The **semantic** migration, which is what this pack always described: `World::pay`
 gains its metal parameter, worldgen decides which metals a world is seeded with,
@@ -153,3 +157,24 @@ every tick.
   which the session's permission board denied; an independent review over
   `7555b73..HEAD` is recommended before pack 2 leans on the audit. Pack 2
   remains proposed shape only; its manifest is unwritten and it has no go.
+
+- **2026-08-20** — **the recommended independent review has run** over
+  `7555b73..HEAD`: five parallel reviewers (CLAUDE.md/§8 compliance, bug
+  scan, git-history, recorded-feedback compliance, code-comment compliance),
+  no findings surviving confidence scoring; the one candidate — a stale
+  `mint_phase` doc comment at `sim.rs:275–279`, on lines pack 1 never
+  touched — is handed to pack 2's sweep. `verify.sh` independently re-run
+  green (`VERIFY OK`, 103 passed); the migration grep re-derived at exactly
+  65. Full record in pack 1's ledger. The caveat above is discharged; pack 2
+  may lean on the audit.
+
+  **Pack 2's item manifest drafted the same day**
+  (`2026-08-20-mmm-pack2-sim-on-metals.md`): five items — `pay` gains its
+  metal (spec:57, in `transfer`'s argument order), worldgen seed metals,
+  the per-metal shell summary, the site-by-site affirmation sweep, and
+  walkthrough + pack gate + this container's close (🚧 fold included). Two
+  new tests take the suite 103 → 105. Three strawman decisions need the
+  user: D1 seed metals (recommended: inert silver/copper household
+  holdings), D2 summary layout (one line per metal), D3 balance display
+  (compact `g/s/c`, zeros shown). Drafting only — the item list awaits
+  approval and no go exists.
