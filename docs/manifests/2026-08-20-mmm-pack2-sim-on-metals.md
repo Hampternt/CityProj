@@ -1,10 +1,10 @@
 # Multi-metal money — Pack 2: the sim runs on metals
 
-**Status:** DRAFT 2026-08-20 — item list awaiting approval; no go. Three
-decisions below (D1–D3) need the user before or with that approval.
+**Status:** ACTIVE 2026-08-20 — item list and D1–D3 approved by the user,
+strawmen taken on all three; go given the same day.
 **Container:** `2026-08-15-multi-metal-money.md`
-**Branch:** to be cut at go time (pack 1 ran on `main`; this pack is
-behavior-visible, so a branch + merge is the safer default — override freely).
+**Branch:** `claude/multimetal-plan-project-f85924` (the session's worktree
+branch, already cut from `main` at `6346526`).
 
 Observable (container's sentence, reused verbatim): the seeded town runs ticks
 as before, with the header showing gold, silver and copper separately instead
@@ -79,7 +79,7 @@ Boxes unticked; nothing starts without a go. Items 1–2 are independent; 3
 needs 2 (it renders what worldgen seeds); 4 sweeps after 1–3 stop moving the
 grep; 5 closes.
 
-- [ ] **1. `World::pay` gains its metal.** The signature becomes
+- [x] **1. `World::pay` gains its metal.** The signature becomes
   `pay(&mut self, from: AgentId, to: AgentId, metal: Metal, amount: Money)
   -> Result<(), WorldError>` — the parameter the spec fixes (`spec:57`), in
   `transfer`'s argument order, forwarding `metal` and deleting the literal at
