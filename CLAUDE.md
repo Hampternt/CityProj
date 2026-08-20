@@ -95,20 +95,17 @@ faucet is closed: worldgen's seed is the entire money supply and the
 audit pins it there. Worldgen seeds the farm/theater/jeweler scenario.
 If you change structure, update this section.
 
-In flight: multi-metal money
+Multi-metal money is DONE
 ([`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md),
 spec
-[`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)).
-Pack 1 (the metal-keyed core) landed 2026-08-17: every call site outside
-`money.rs` writes the literal `Metal::Gold`, so runtime behavior is
-unchanged and silver/copper are zero by design. Pack 2 — the semantic
-migration (`World::pay` gains its metal parameter, worldgen chooses seed
-metals, per-metal shell summary) — is next; its manifest is drafted
-(`docs/manifests/2026-08-20-mmm-pack2-sim-on-metals.md`, awaiting
-approval) and it has no go. Its migration list regenerates via
-`grep -rn 'Metal::Gold' --include=*.rs src/ | grep -v '^src/money.rs' | grep -v '^src/metal.rs'`.
-After that: a wage-payment/hiring behavior spec built on
-`World::businesses()`.
+[`docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`](docs/superpowers/specs/2026-07-12-multi-metal-money-design.md)):
+pack 1 (the metal-keyed core) landed 2026-08-17, pack 2 (the sim runs on
+metals) 2026-08-20. Every balance and conservation total is per metal;
+gold is the only *trading* metal — every wage and price is an explicit
+`Metal::Gold` choice — and worldgen seeds inert silver/copper savings,
+until the market layer can price non-gold metals (reference currency and
+exchange rates stay open questions there). Next body of work: a
+wage-payment/hiring behavior spec built on `World::businesses()`.
 
 The terrain playground landed on 2026-08-15 —
 [`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)

@@ -1,7 +1,8 @@
 # Multi-metal money — Pack 2: the sim runs on metals
 
-**Status:** ACTIVE 2026-08-20 — item list and D1–D3 approved by the user,
-strawmen taken on all three; go given the same day.
+**Status:** DONE 2026-08-20 — all five items landed the day of the go; pack
+gate green: `VERIFY OK — fmt, clippy, build, tests all clean.`, **105
+passed**; walkthrough and review recorded in the Ledger; merged to `main`.
 **Container:** `2026-08-15-multi-metal-money.md`
 **Branch:** `claude/multimetal-plan-project-f85924` (the session's worktree
 branch, already cut from `main` at `6346526`).
@@ -124,7 +125,7 @@ grep; 5 closes.
   explained; `grep -n 'total_money()' src/` returns nothing;
   `./scripts/check.sh` prints `CHECK OK`.
   Touches: `src/sim.rs` · `docs/manifests/2026-08-20-mmm-pack2-sim-on-metals.md` · `CLAUDE.md` · `docs/INVENTORY.md`
-- [ ] **5. Walkthrough, pack gate, container close.** The terminal
+- [x] **5. Walkthrough, pack gate, container close.** The terminal
   walkthrough (this repo's "real browser" — the shell *is* the feature):
   `cargo run` over at least 3 ticks in a real terminal, header showing the
   three metals separately, audit green every tick; the captured output goes
@@ -204,3 +205,44 @@ appear outside the core too, all deliberate: worldgen's two seed mints,
   Suite measured green at 103; grep measured at exactly 65. Nothing
   implemented, no branch cut, no box ticked. Awaiting approval of the item
   list and D1–D3, then a go.
+
+- **2026-08-20** — **approved and executed the same day.** The user took the
+  strawmen on all three decisions and gave the go; items 1–5 landed in order
+  on `claude/multimetal-plan-project-f85924`, gates quoted per commit
+  (`2f3f679` item 1, `36751c7` item 2, `c2caf6b` item 3, `5c13fe3` item 4,
+  plus the close). Suite arithmetic held exactly as predicted: 103 → 104
+  (item 1) → 105 (item 2).
+
+  **Pack gate:** `./scripts/verify.sh` → `VERIFY OK — fmt, clippy, build,
+  tests all clean.`, `test result: ok. 105 passed; 0 failed`.
+
+  **Walkthrough (the Observable, measured):** 3 ticks piped through
+  `cargo run` in a terminal. Every frame's header shows the three metals
+  separately and their totals never move — `gold total=245 minted=245
+  burned=0 · silver total=40 minted=40 burned=0 · copper total=80 minted=80
+  burned=0` at ticks 0 through 3 — while gold visibly circulates (wages
+  paid, goods bought, prices adjusting: farm @1→@4, theater @2→@2 via @3,
+  arrears appearing at the jeweler) and every agent's `s:10 c:20` sits
+  inert. The audit ran green every tick (no panic across all frames), and
+  inspecting `alice` shows the D3 compact balance. This is the terminal
+  walkthrough the workflow's browser-check rule maps to for a shell app.
+
+  **Pack review pass:** three parallel independent reviewers over
+  `6346526..HEAD` — invariants/manifest/spec compliance, diff bug scan
+  (seed arithmetic re-derived by hand, metal routing checked site by site),
+  and comment/history drift. Code findings: none; the trusted core is
+  untouched by the whole range, `pay` matches `spec:57` character for
+  character, and the appendix's 75-count was independently re-derived. One
+  documentation finding, fixed in this close commit: `CLAUDE.md`'s "In
+  flight" paragraph still said pack 2 "is next … no go" after item 4
+  updated the module bullets beside it — exactly the staleness item 5 owns,
+  now rewritten to the landed state.
+
+  **Deviation from the item as written:** none in substance; the 🚧 fold
+  wording in `docs/INVENTORY.md` states the gold-only trading reality
+  rather than the container pointer's original "wages denominated per
+  metal" promise, which overreached — wages are *paid in a named metal*
+  now, but `RoleSlot.wage` stays `Money` by the carried Decision.
+
+  Container closed in `2026-08-15-multi-metal-money.md` the same day;
+  merged to `main`.
