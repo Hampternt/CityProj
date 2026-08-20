@@ -103,7 +103,7 @@ grep; 5 closes.
   Done: `./scripts/check.sh` prints `CHECK OK`; suite **105 passed**; the new
   test names each metal's expected total explicitly.
   Touches: `src/engine/game_loop.rs`
-- [ ] **3. The shell reports per metal.** The money summary — one `println!`
+- [x] **3. The shell reports per metal.** The money summary — one `println!`
   across `game_loop.rs:133–135`, one statement, rewritten as a unit per pack
   1's appendix caveat — becomes D2's per-metal lines; mint/external reserve
   lines and every agent/business balance line become D3's form. This is the

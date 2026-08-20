@@ -135,16 +135,22 @@ fn clear_screen() {
 /// Draws one stable frame: the money summary, then houses, then agents.
 fn render(world: &World, tick_count: u64) {
     println!("=== CityProj — tick {tick_count} ===");
+    // D2 (pack 2): one line per metal, `Metal::ALL` order. A cross-metal
+    // total does not exist — the core refuses to compute one.
+    println!("money:");
+    for metal in Metal::ALL {
+        println!(
+            "  {:<6} total={} minted={} burned={}",
+            metal.to_string(),
+            world.accounts.total_money(metal),
+            world.accounts.total_minted(metal),
+            world.accounts.total_burned(metal),
+        );
+    }
     println!(
-        "money: total={} minted={} burned={}",
-        world.accounts.total_money(Metal::Gold),
-        world.accounts.total_minted(Metal::Gold),
-        world.accounts.total_burned(Metal::Gold),
-    );
-    println!(
-        "reserved: mint balance {} · external balance {}",
-        world.accounts.balance_of(world.mint_id, Metal::Gold),
-        world.accounts.balance_of(world.external_id, Metal::Gold),
+        "reserved: mint {} · external {}",
+        compact_balances(world, world.mint_id),
+        compact_balances(world, world.external_id),
     );
 
     println!("houses:");
@@ -163,7 +169,7 @@ fn render(world: &World, tick_count: u64) {
                 business.product,
                 business.price,
                 business.stock,
-                world.accounts.balance_of(business.id, Metal::Gold),
+                compact_balances(world, business.id),
                 business.owed_total(),
             );
         }
@@ -174,11 +180,37 @@ fn render(world: &World, tick_count: u64) {
         println!(
             "  {} — balance {} · home {} · {}",
             agent.name,
-            world.accounts.balance_of(agent.id, Metal::Gold),
+            compact_balances(world, agent.id),
             describe_house(world, agent.home),
             describe_inventory(agent),
         );
     }
+}
+
+/// One-letter tag for the compact balance form (D3). A match, so a new
+/// metal fails compilation here instead of silently missing a column.
+fn metal_tag(metal: Metal) -> &'static str {
+    match metal {
+        Metal::Gold => "g",
+        Metal::Silver => "s",
+        Metal::Copper => "c",
+    }
+}
+
+/// D3 (pack 2): one account's balances, every metal always shown, compact:
+/// `g:35 s:10 c:20` — visible zeros beat columns that come and go.
+fn compact_balances(world: &World, id: AgentId) -> String {
+    Metal::ALL
+        .iter()
+        .map(|&metal| {
+            format!(
+                "{}:{}",
+                metal_tag(metal),
+                world.accounts.balance_of(id, metal)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Resolves a list of agent ids to their names (unknown ids are skipped).
@@ -258,10 +290,7 @@ fn inspect(world: &World, name: &str) {
     match world.agent_by_name(name) {
         Some(agent) => {
             println!("{}:", agent.name);
-            println!(
-                "  balance   {}",
-                world.accounts.balance_of(agent.id, Metal::Gold)
-            );
+            println!("  balance   {}", compact_balances(world, agent.id));
             println!("  home      {}", describe_house(world, agent.home));
             println!("  workplace {}", describe_house(world, agent.workplace));
             println!("  goods     {}", describe_inventory(agent));
