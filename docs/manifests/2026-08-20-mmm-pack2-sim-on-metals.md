@@ -94,7 +94,7 @@ grep; 5 closes.
   `cargo test world::`, `cargo test sim::` green; suite **104 passed**; the
   `pay` signature matches this item character for character.
   Touches: `src/world.rs` · `src/sim.rs` · `src/engine/game_loop.rs`
-- [ ] **2. Worldgen chooses the seed metals.** `template_world` seeds per D1,
+- [x] **2. Worldgen chooses the seed metals.** `template_world` seeds per D1,
   each seed mint naming its metal as a real choice; the worldgen comments say
   what is seeded and why the non-gold holdings are inert. Plus
   `template_world_seeds_the_decided_metals`: build the template world and

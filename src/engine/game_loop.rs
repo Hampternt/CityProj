@@ -68,7 +68,10 @@ pub fn run() {
 /// faucet; the seed is the entire money supply and tick 1's wages are paid
 /// before any business revenue exists — and every agent with a small wallet
 /// plus one day's goods. All seeding goes through `mint`, so the audit
-/// counts it (§8.4).
+/// counts it (§8.4). The economy trades in gold only; each agent also
+/// holds small silver and copper savings (pack 2, D1) that stay inert
+/// until the market layer can price non-gold metals — they exist so every
+/// metal's ledger and conservation total is live in production.
 fn template_world() -> World {
     let mut world = World::new();
     let residence = world.add_house("1 Mill Lane", vec![]);
@@ -109,6 +112,10 @@ fn template_world() -> World {
     let everyone: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
     for id in everyone {
         world.accounts.mint(id, Metal::Gold, Money::new(35));
+        // Inert savings (D1): nothing spends non-gold until markets can
+        // price it, so these only exercise the per-metal books.
+        world.accounts.mint(id, Metal::Silver, Money::new(10));
+        world.accounts.mint(id, Metal::Copper, Money::new(20));
         let agent = world.agent_mut(id).expect("listed above");
         for good in Good::ALL {
             agent.inventory.insert(good, good.consumption_rate());
@@ -265,4 +272,24 @@ fn inspect(world: &World, name: &str) {
     let _ = io::stdout().flush();
     let mut line = String::new();
     let _ = io::stdin().read_line(&mut line);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D1 (pack 2 manifest): gold funds the whole economy — 3 wage bills of
+    /// 35 plus 4 wallets of 35 — and every agent holds inert silver 10 /
+    /// copper 20 savings, so all three ledgers are live from tick 0.
+    #[test]
+    fn template_world_seeds_the_decided_metals() {
+        let world = template_world();
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(245));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(245));
+        assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(40));
+        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(40));
+        assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(80));
+        assert_eq!(world.accounts.total_minted(Metal::Copper), Money::new(80));
+        world.accounts.audit();
+    }
 }
