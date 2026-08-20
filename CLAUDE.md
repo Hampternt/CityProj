@@ -62,7 +62,8 @@ new mechanics into the loop and money:
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
   to the §8.2 chokepoint; `create_business` allocates account-only business
   ids from the agent counter; `businesses()` is the shared phase query;
-  `pay` recognizes business ids (refactor Am. 14).
+  `pay` recognizes business ids (refactor Am. 14) and, since pack 2, names
+  its metal (`pay(from, to, metal, amount)`).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last; `goods_market` holds the worked decide→apply template; `Intent` is
   the enum mechanics extend — `Intent::Buy` is its first variant.
@@ -81,7 +82,9 @@ new mechanics into the loop and money:
 - `src/engine/game_loop.rs` — interactive shell (Enter advances a tick, an
   agent name inspects it, `map` exports map.json, q quits) plus
   `template_world`, the worldgen that seeds the 07-19 farm/theater/jeweler
-  scenario; no per-tick simulation behavior.
+  scenario — in gold, plus inert silver/copper savings per agent (pack 2,
+  D1); no per-tick simulation behavior. The money summary prints one line
+  per metal and every balance renders as compact `g/s/c` (pack 2, D2/D3).
 
 The 07-19 loops run: phases 2 (produce), 3 (wages from business coffers,
 shortfalls carried as `owed_to` arrears and repaid when revenue returns),

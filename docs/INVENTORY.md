@@ -90,5 +90,6 @@ written are the map exports. Quality gates: `scripts/check.sh` (item) and
 ---
 
 *In transit: multi-metal money — pack 1 (the metal-keyed core) landed
-2026-08-17, no user-visible change by design; pack 2 (the sim runs on
-metals) is next (`docs/manifests/2026-08-15-multi-metal-money.md`).*
+2026-08-17; pack 2 (the sim runs on metals) is executing on branch
+`claude/multimetal-plan-project-f85924`
+(`docs/manifests/2026-08-20-mmm-pack2-sim-on-metals.md`).*

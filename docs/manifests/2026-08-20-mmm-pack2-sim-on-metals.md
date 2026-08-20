@@ -112,7 +112,7 @@ grep; 5 closes.
   Done: `./scripts/check.sh` prints `CHECK OK`; suite still **105**; a manual
   `cargo run` over one tick shows the D2 header and D3 balances.
   Touches: `src/engine/game_loop.rs`
-- [ ] **4. The semantic sweep, affirmed site by site.** Regenerate the grep;
+- [x] **4. The semantic sweep, affirmed site by site.** Regenerate the grep;
   walk every remaining `Metal::Gold` and either change it (none expected —
   say so if true) or affirm it as a real choice; record the closing count and
   the per-file split in the appendix beside pack 1's 65. Fix the stale
@@ -163,6 +163,36 @@ grep; 5 closes.
   lives beside `template_world` — implementer's call, named here so it is
   not invented silently).
 - `src/world.rs:181–186` — `pay`'s body, the one signature this pack changes.
+
+## Appendix — the sweep's closing count (item 4, measured 2026-08-20)
+
+Counting rule inherited from pack 1's appendix: the regenerating grep with
+the `metal.rs` exclusion. The sweep visited every remaining `Metal::Gold`
+and **changed none — all 75 are affirmed**, which the Decisions predicted
+("mostly affirmation"):
+
+| file | handover (pack 1) | closing | production | test |
+| --- | --- | --- | --- | --- |
+| `src/world.rs` | 15 | 28 | 0 | 28 |
+| `src/sim.rs` | 40 | 42 | 4 | 38 |
+| `src/engine/game_loop.rs` | 10 | 5 | 3 | 2 |
+| **total** | **65** | **75** | **7** | **68** |
+
+The 65 → 75 movement is this pack's own arithmetic, not drift: item 1
+deleted the one literal in `pay`'s body and wrote eleven at the `.pay(`
+sites (net +10); item 3 deleted eight of `game_loop.rs`'s ten render
+literals into `Metal::ALL` loops and added `metal_tag`'s one match arm;
+items 1–2 added seven test literals (the two new tests' gold assertions).
+
+The seven production sites, affirmed by name: worldgen's two gold seeds
+(`game_loop.rs:106,114` — D1's decided economy metal), `metal_tag`'s gold
+arm (`:194`, definitional display code), and sim.rs's four — the wage
+coffer read and wage `pay` (`:117,:121`), the buyer wallet read and goods
+`pay` (`:170,:244`) — all gold by the fixed Decision that wages and prices
+trade in gold until a reference currency exists. The 68 test literals
+affirm gold as the metal under test. `Metal::Silver`/`Metal::Copper` now
+appear outside the core too, all deliberate: worldgen's two seed mints,
+`metal_tag`'s two arms, and the two new tests' assertions.
 
 ## Ledger
 

@@ -281,9 +281,9 @@ fn sinks(_world: &mut World) {
 
 /// Phase 8: new money from reserve. Money ops allowed: mint only.
 /// Inert since the 07-19 pricing spec closed the tick-time faucet:
-/// worldgen's seed is the entire supply and the §8.3 audit pins
-/// `total_money()` there forever. TODO: the literal staffed Mint
-/// business (parent doc §2.1, gold goods → coins) lands here.
+/// worldgen's seed is the entire supply and the §8.3 audit pins each
+/// metal's `total_money(metal)` there forever. TODO: the literal staffed
+/// Mint business (parent doc §2.1, metal goods → coins) lands here.
 fn mint_phase(_world: &mut World) {}
 
 #[cfg(test)]
