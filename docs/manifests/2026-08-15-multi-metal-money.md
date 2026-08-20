@@ -1,7 +1,9 @@
 # Multi-metal money (container)
 
-**Status:** ACTIVE 2026-08-17 — pack 1 is DONE (landed on `main` the same
-day); pack 2 is next and its item manifest is not written yet.
+**Status:** DONE 2026-08-20 — both packs landed and merged to `main`; the
+🚧 pointer in `docs/INVENTORY.md` is folded and the goal below is the
+shipped state (gold-only trading, inert silver/copper, per the pack-2
+decisions).
 **Branch:** `main`
 **Origin:** the design spec
 `docs/superpowers/specs/2026-07-12-multi-metal-money-design.md`, written
@@ -70,6 +72,10 @@ and burning gold leaves silver's balance and totals untouched, an untouched
 pair reads zero, and corrupting only silver still panics naming silver.
 
 ### Pack 2 — the sim runs on metals
+
+Item manifest: `docs/manifests/2026-08-20-mmm-pack2-sim-on-metals.md`
+(DONE 2026-08-20 — approved, executed and closed the same day; suite
+103 → 105).
 
 The **semantic** migration, which is what this pack always described: `World::pay`
 gains its metal parameter, worldgen decides which metals a world is seeded with,
@@ -153,3 +159,42 @@ every tick.
   which the session's permission board denied; an independent review over
   `7555b73..HEAD` is recommended before pack 2 leans on the audit. Pack 2
   remains proposed shape only; its manifest is unwritten and it has no go.
+
+- **2026-08-20** — **the recommended independent review has run** over
+  `7555b73..HEAD`: five parallel reviewers (CLAUDE.md/§8 compliance, bug
+  scan, git-history, recorded-feedback compliance, code-comment compliance),
+  no findings surviving confidence scoring; the one candidate — a stale
+  `mint_phase` doc comment at `sim.rs:275–279`, on lines pack 1 never
+  touched — is handed to pack 2's sweep. `verify.sh` independently re-run
+  green (`VERIFY OK`, 103 passed); the migration grep re-derived at exactly
+  65. Full record in pack 1's ledger. The caveat above is discharged; pack 2
+  may lean on the audit.
+
+  **Pack 2's item manifest drafted the same day**
+  (`2026-08-20-mmm-pack2-sim-on-metals.md`): five items — `pay` gains its
+  metal (spec:57, in `transfer`'s argument order), worldgen seed metals,
+  the per-metal shell summary, the site-by-site affirmation sweep, and
+  walkthrough + pack gate + this container's close (🚧 fold included). Two
+  new tests take the suite 103 → 105. Three strawman decisions need the
+  user: D1 seed metals (recommended: inert silver/copper household
+  holdings), D2 summary layout (one line per metal), D3 balance display
+  (compact `g/s/c`, zeros shown). Drafting only — the item list awaits
+  approval and no go exists.
+
+- **2026-08-20** — **pack 2 approved (strawmen taken on D1–D3), executed,
+  and closed the same day; the container is DONE.** All five items landed
+  on `claude/multimetal-plan-project-f85924` and merged to `main`. Pack
+  gate: `VERIFY OK — fmt, clippy, build, tests all clean.`, **105 passed**.
+  The Observable was measured, not asserted: 3 ticks in the terminal with
+  per-metal header totals pinned (gold 245 / silver 40 / copper 80,
+  unchanged every tick), gold circulating, silver/copper inert, audit green
+  throughout. Pack review: three independent reviewers over the pack range,
+  zero code findings, one doc-staleness finding fixed in the close. What
+  shipped against this container's own sentences: every balance, wage
+  payment and conservation guarantee is scoped to a metal; the core still
+  cannot sum across metals; `World::pay` names its metal; worldgen seeds
+  gold as the whole trading economy plus inert silver/copper savings; the
+  shell reports the three metals separately. The open questions (reference
+  currency, seigniorage, wage bundle) pass unanswered to the market-layer
+  specs, as scoped. Next per `CLAUDE.md`: the wage-payment/hiring behavior
+  spec.

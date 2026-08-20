@@ -68,7 +68,10 @@ pub fn run() {
 /// faucet; the seed is the entire money supply and tick 1's wages are paid
 /// before any business revenue exists — and every agent with a small wallet
 /// plus one day's goods. All seeding goes through `mint`, so the audit
-/// counts it (§8.4).
+/// counts it (§8.4). The economy trades in gold only; each agent also
+/// holds small silver and copper savings (pack 2, D1) that stay inert
+/// until the market layer can price non-gold metals — they exist so every
+/// metal's ledger and conservation total is live in production.
 fn template_world() -> World {
     let mut world = World::new();
     let residence = world.add_house("1 Mill Lane", vec![]);
@@ -109,6 +112,10 @@ fn template_world() -> World {
     let everyone: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
     for id in everyone {
         world.accounts.mint(id, Metal::Gold, Money::new(35));
+        // Inert savings (D1): nothing spends non-gold until markets can
+        // price it, so these only exercise the per-metal books.
+        world.accounts.mint(id, Metal::Silver, Money::new(10));
+        world.accounts.mint(id, Metal::Copper, Money::new(20));
         let agent = world.agent_mut(id).expect("listed above");
         for good in Good::ALL {
             agent.inventory.insert(good, good.consumption_rate());
@@ -128,16 +135,22 @@ fn clear_screen() {
 /// Draws one stable frame: the money summary, then houses, then agents.
 fn render(world: &World, tick_count: u64) {
     println!("=== CityProj — tick {tick_count} ===");
+    // D2 (pack 2): one line per metal, `Metal::ALL` order. A cross-metal
+    // total does not exist — the core refuses to compute one.
+    println!("money:");
+    for metal in Metal::ALL {
+        println!(
+            "  {:<6} total={} minted={} burned={}",
+            metal.to_string(),
+            world.accounts.total_money(metal),
+            world.accounts.total_minted(metal),
+            world.accounts.total_burned(metal),
+        );
+    }
     println!(
-        "money: total={} minted={} burned={}",
-        world.accounts.total_money(Metal::Gold),
-        world.accounts.total_minted(Metal::Gold),
-        world.accounts.total_burned(Metal::Gold),
-    );
-    println!(
-        "reserved: mint balance {} · external balance {}",
-        world.accounts.balance_of(world.mint_id, Metal::Gold),
-        world.accounts.balance_of(world.external_id, Metal::Gold),
+        "reserved: mint {} · external {}",
+        compact_balances(world, world.mint_id),
+        compact_balances(world, world.external_id),
     );
 
     println!("houses:");
@@ -156,7 +169,7 @@ fn render(world: &World, tick_count: u64) {
                 business.product,
                 business.price,
                 business.stock,
-                world.accounts.balance_of(business.id, Metal::Gold),
+                compact_balances(world, business.id),
                 business.owed_total(),
             );
         }
@@ -167,11 +180,37 @@ fn render(world: &World, tick_count: u64) {
         println!(
             "  {} — balance {} · home {} · {}",
             agent.name,
-            world.accounts.balance_of(agent.id, Metal::Gold),
+            compact_balances(world, agent.id),
             describe_house(world, agent.home),
             describe_inventory(agent),
         );
     }
+}
+
+/// One-letter tag for the compact balance form (D3). A match, so a new
+/// metal fails compilation here instead of silently missing a column.
+fn metal_tag(metal: Metal) -> &'static str {
+    match metal {
+        Metal::Gold => "g",
+        Metal::Silver => "s",
+        Metal::Copper => "c",
+    }
+}
+
+/// D3 (pack 2): one account's balances, every metal always shown, compact:
+/// `g:35 s:10 c:20` — visible zeros beat columns that come and go.
+fn compact_balances(world: &World, id: AgentId) -> String {
+    Metal::ALL
+        .iter()
+        .map(|&metal| {
+            format!(
+                "{}:{}",
+                metal_tag(metal),
+                world.accounts.balance_of(id, metal)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Resolves a list of agent ids to their names (unknown ids are skipped).
@@ -251,10 +290,7 @@ fn inspect(world: &World, name: &str) {
     match world.agent_by_name(name) {
         Some(agent) => {
             println!("{}:", agent.name);
-            println!(
-                "  balance   {}",
-                world.accounts.balance_of(agent.id, Metal::Gold)
-            );
+            println!("  balance   {}", compact_balances(world, agent.id));
             println!("  home      {}", describe_house(world, agent.home));
             println!("  workplace {}", describe_house(world, agent.workplace));
             println!("  goods     {}", describe_inventory(agent));
@@ -265,4 +301,24 @@ fn inspect(world: &World, name: &str) {
     let _ = io::stdout().flush();
     let mut line = String::new();
     let _ = io::stdin().read_line(&mut line);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D1 (pack 2 manifest): gold funds the whole economy — 3 wage bills of
+    /// 35 plus 4 wallets of 35 — and every agent holds inert silver 10 /
+    /// copper 20 savings, so all three ledgers are live from tick 0.
+    #[test]
+    fn template_world_seeds_the_decided_metals() {
+        let world = template_world();
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(245));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(245));
+        assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(40));
+        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(40));
+        assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(80));
+        assert_eq!(world.accounts.total_minted(Metal::Copper), Money::new(80));
+        world.accounts.audit();
+    }
 }

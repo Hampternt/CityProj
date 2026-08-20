@@ -41,14 +41,18 @@ The behaviors you can watch play out over successive ticks:
   and its correction are visible a tick apart.
 - **Goods are consumed**, which is what creates next tick's need.
 
-Money is strictly conserved: the town's total is fixed at whatever the world
-was seeded with, and the sim halts rather than continue if a tick ever fails
-to balance. Labor allocation, investment, degradation sinks and coin minting
+Money is strictly conserved: each metal's total is fixed at whatever the
+world was seeded with, and the sim halts rather than continue if a tick ever
+fails to balance. Labor allocation, investment, degradation sinks and coin minting
 are not simulated yet — those ticks pass through untouched.
 
-- 🚧 Coins of several metals rather than one abstract unit — balances and
-  wages denominated per metal, and the conservation guarantee holding metal
-  by metal. Container: `docs/manifests/2026-08-15-multi-metal-money.md`
+- **Coins of three metals** rather than one abstract unit: every balance is
+  held per metal (the shell shows them as `g:.. s:.. c:..`) and the
+  conservation guarantee holds metal by metal — the sim halts naming every
+  metal whose books broke, and a total across metals deliberately does not
+  exist. The town trades entirely in gold for now; agents also hold small
+  silver and copper savings that sit inert until a future market can price
+  them.
 
 ## Terrain and the map playground — `map` · `tools/map_viewer.html`
 
@@ -89,6 +93,5 @@ written are the map exports. Quality gates: `scripts/check.sh` (item) and
 
 ---
 
-*In transit: multi-metal money — pack 1 (the metal-keyed core) landed
-2026-08-17, no user-visible change by design; pack 2 (the sim runs on
-metals) is next (`docs/manifests/2026-08-15-multi-metal-money.md`).*
+*Nothing in transit — multi-metal money closed 2026-08-20
+(`docs/manifests/2026-08-15-multi-metal-money.md`).*

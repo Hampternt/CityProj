@@ -116,7 +116,11 @@ fn pay_wages(world: &mut World) {
             .accounts
             .balance_of(business_id, Metal::Gold)
             .min(owed);
-        if payable == Money::ZERO || world.pay(business_id, worker, payable).is_err() {
+        if payable == Money::ZERO
+            || world
+                .pay(business_id, worker, Metal::Gold, payable)
+                .is_err()
+        {
             continue;
         }
         let business = world
@@ -236,7 +240,10 @@ fn apply_goods_intent(world: &mut World, intent: Intent, sold: &mut HashMap<Agen
             if units == 0 {
                 return;
             }
-            if world.pay(buyer, business, price.times(units)).is_err() {
+            if world
+                .pay(buyer, business, Metal::Gold, price.times(units))
+                .is_err()
+            {
                 return; // §8.5: skip cleanly, stock untouched
             }
             let house = world.house_mut(house_id).expect("found above");
@@ -274,9 +281,9 @@ fn sinks(_world: &mut World) {
 
 /// Phase 8: new money from reserve. Money ops allowed: mint only.
 /// Inert since the 07-19 pricing spec closed the tick-time faucet:
-/// worldgen's seed is the entire supply and the §8.3 audit pins
-/// `total_money()` there forever. TODO: the literal staffed Mint
-/// business (parent doc §2.1, gold goods → coins) lands here.
+/// worldgen's seed is the entire supply and the §8.3 audit pins each
+/// metal's `total_money(metal)` there forever. TODO: the literal staffed
+/// Mint business (parent doc §2.1, metal goods → coins) lands here.
 fn mint_phase(_world: &mut World) {}
 
 #[cfg(test)]
