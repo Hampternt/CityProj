@@ -56,7 +56,12 @@ new mechanics into the loop and money:
 - `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
   sim.rs builds `Offer`s from `businesses()` and applies via `pay`;
   `adjust_price`: per-business tâtonnement (sold out → raise, didn't
-  sell → lower) with its tuning constants alongside.
+  sell → lower) with its tuning constants alongside. Since pack 3
+  (town-colony) the wage market mirrors those shapes: `JobOffer`/
+  `plan_application` (highest wage, skip arrears-owing employers, ties
+  ascending business id then `Role::ALL` order) and `adjust_wage` +
+  `stepped_wage` (raise on unfilled-and-affordable — affordability is
+  net of arrears — lower on a stale applicant queue, floor 1).
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
@@ -65,8 +70,13 @@ new mechanics into the loop and money:
   `pay` recognizes business ids (refactor Am. 14) and, since pack 2, names
   its metal (`pay(from, to, metal, amount)`).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
-  last; `goods_market` holds the worked decide→apply template; `Intent` is
-  the enum mechanics extend — `Intent::Buy` is its first variant.
+  last, returning a `TickReport` of typed `Event`s (pure observation,
+  Amendment 15); `goods_market` holds the worked decide→apply template;
+  `Intent` is the enum mechanics extend — `Buy`, and since pack 3
+  `TakeJob`/`Quit` (phase 1's `labor_market`: JobOffer snapshot →
+  quits-then-applications decide → live-re-check apply → wage
+  write-back; quit fires when arrears exceed `QUIT_ARREARS_BILLS` ×
+  slot wage; no money moves in phase 1).
 - `src/terrain.rs` — world coordinates (`Point3`, 1 unit = 0.1 m) and the
   triangulated integer heightmap (`Terrain`, `elevation_at`); pure movement
   math (`grade`, `travel_time` + `SpeedProfile`) with its tuning constants
@@ -79,21 +89,31 @@ new mechanics into the loop and money:
   playground: in-browser generation parity-pinned to `generate` by the
   `generate_matches_viewer_canary` test, parameter knobs, and named maps
   saved to localStorage (parameters only; not wired into the sim).
-- `src/engine/game_loop.rs` — interactive shell (Enter advances a tick, an
-  agent name inspects it, `map` exports map.json, q quits) plus
-  `template_world`, the worldgen that seeds the 07-19 farm/theater/jeweler
-  scenario — in gold, plus inert silver/copper savings per agent (pack 2,
-  D1); no per-tick simulation behavior. The money summary prints one line
-  per metal and every balance renders as compact `g/s/c` (pack 2, D2/D3).
+- `src/engine/worldgen.rs` — hand-seeded scenarios (split from game_loop
+  in town-colony pack 2): `town_world`, the shipped 30-agent town (12
+  houses, 6 multi-worker businesses, 16 seeded employed + open headcount
+  for the labor market, soak-tuned frozen constants, per-metal totals
+  pinned), and `template_world`, the small `#[cfg(test)]` fixture
+  (07-19 farm/theater/jeweler). Both soak tests live here — the
+  100-tick pinned-criteria soak (zero quits asserted) and the 50-tick
+  employment soak (`NEAR_FULL` = 21 of 30, the measured ceiling — see
+  the pack-3 manifest's deviation record).
+- `src/engine/game_loop.rs` — interactive shell only (Enter advances a
+  tick, `roster` lists agents, a name or business address inspects,
+  `map` exports map.json, q quits): town header, aggregated per-tick
+  event feed, last-3-events per agent; no per-tick simulation behavior.
+  The money summary prints one line per metal and every balance renders
+  as compact `g/s/c` (pack 2, D2/D3).
 
-The 07-19 loops run: phases 2 (produce), 3 (wages from business coffers,
-shortfalls carried as `owed_to` arrears and repaid when revenue returns),
-4 (goods market via `Intent::Buy`, then per-business `adjust_price`
-write-back — new prices take effect next tick), and 5 (consume) have
-behavior; phases 1, 6, 7, and 8 are TODO stubs. The tick-time mint
-faucet is closed: worldgen's seed is the entire money supply and the
-audit pins it there. Worldgen seeds the farm/theater/jeweler scenario.
-If you change structure, update this section.
+The loops run: phases 1 (labor market — hiring, arrears quits, wage
+tâtonnement; town-colony pack 3), 2 (produce, scaled by staff), 3 (wages
+from business coffers, shortfalls carried as `owed_to` arrears and
+repaid when revenue returns), 4 (goods market via `Intent::Buy`, then
+per-business `adjust_price` write-back — new prices take effect next
+tick), and 5 (consume) have behavior; phases 6, 7, and 8 are TODO
+stubs. The tick-time mint faucet is closed: worldgen's seed is the
+entire money supply and the audit pins it there. The shipped scenario
+is `town_world`. If you change structure, update this section.
 
 Multi-metal money is DONE
 ([`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md),
@@ -104,8 +124,9 @@ metals) 2026-08-20. Every balance and conservation total is per metal;
 gold is the only *trading* metal — every wage and price is an explicit
 `Metal::Gold` choice — and worldgen seeds inert silver/copper savings,
 until the market layer can price non-gold metals (reference currency and
-exchange rates stay open questions there). Next body of work: a
-wage-payment/hiring behavior spec built on `World::businesses()`.
+exchange rates stay open questions there). The wage-payment/hiring work
+CLAUDE.md previously named as next landed as town-colony pack 3
+([`docs/manifests/2026-08-21-tcs-pack3-labor-clears.md`](docs/manifests/2026-08-21-tcs-pack3-labor-clears.md)).
 
 The terrain playground landed on 2026-08-15 —
 [`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)

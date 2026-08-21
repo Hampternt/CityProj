@@ -88,16 +88,26 @@ unemployed agents flagged in `roster`, 100-tick soak green.
 
 ### Pack 3 — Labor clears
 
-Proposed shape only. The phase-1 stub gains the wage market:
-`JobOffer`/`plan_application`/`adjust_wage` (pure mirrors of the goods
-shapes), `Intent::TakeJob`/`Quit` on the decide→apply template with live
-headcount re-checks, arrears-driven quitting, the dead-code workplace
-commands waking with the role param. No money moves in this pack.
+Item manifest: [2026-08-21-tcs-pack3-labor-clears.md](2026-08-21-tcs-pack3-labor-clears.md)
+(DONE 2026-08-21; 119 → 136 tests; one measured deviation recorded there
+and flagged to the owner: near-full employment frozen at 21/30, the
+07-19 demand-composition ceiling — plus three spec Errata, owner-ack via
+PR).
 
-Observable: the seeded unemployed get hired within a few ticks, wages drift
-up on unfilled slots and down under applicant surplus, a payroll-shorted
-worker quits and re-enters the pool; 50-tick soak reaches near-full
-employment with no wage rising monotonically.
+The phase-1 stub gained the wage market: `JobOffer`/`plan_application`/
+`adjust_wage` + `stepped_wage` (pure mirrors of the goods shapes),
+`Intent::TakeJob`/`Quit` on the decide→apply template with live headcount
+re-checks, arrears-driven quitting with the deadbeat-employer exclusion,
+the workplace commands woken with the role param writing both fields.
+No money moves in this pack.
+
+Observable: the seeded unemployed are hired within a few ticks (all open
+slots filled by tick 4), wages drift up on unfilled slots and down under
+applicant surplus — the cascade visibly leapfrogs venue wages in the
+feed; a payroll-shorted worker quits and re-enters the pool (pinned in
+tests; the *tuned* town is deliberately quit-free — a quitting town is an
+insolvent town); the 50-tick soak reaches and holds the measured full
+employment of 21/30 with no wage rising unboundedly.
 
 ### Pack 4 — The town breathes
 
