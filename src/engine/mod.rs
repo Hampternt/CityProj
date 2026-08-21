@@ -2,3 +2,4 @@
 //! modules (`sim`, `world`, `money`, …) — this layer only presents it.
 
 pub mod game_loop;
+pub mod worldgen;

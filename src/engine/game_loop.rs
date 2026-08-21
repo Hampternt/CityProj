@@ -6,13 +6,11 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 
+use super::worldgen::town_world;
 use crate::agent::{Agent, AgentId};
-use crate::business::RoleSlot;
 use crate::goods::Good;
 use crate::housing::HouseId;
 use crate::metal::Metal;
-use crate::money::Money;
-use crate::role::Role;
 use crate::sim::{self, Event, TickReport};
 use crate::terrain::Terrain;
 use crate::world::World;
@@ -41,9 +39,10 @@ enum Command {
 }
 
 /// Runs the shell until quit: draw a frame, read a command, act on it.
-/// Starts from the hand-seeded [`template_world`].
+/// Starts from the hand-seeded [`town_world`]
+/// (`worldgen::template_world` stays the small test fixture).
 pub fn run() {
-    let mut world = template_world();
+    let mut world = town_world();
     let terrain = Terrain::generate(MAP_SEED, MAP_VERTICES, MAP_VERTICES, MAP_CELL_SIZE);
     let mut tick_count: u64 = 0;
     let mut last_report = TickReport::default();
@@ -89,69 +88,6 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
             lines.push(render_event(world, event));
         }
     }
-}
-
-/// The 07-19 minimal-needs scenario: farm, theater, and jeweler (one
-/// Labourer slot each at wage 35), three employed agents, one unemployed,
-/// all housed at the residence. Worldgen seeds every business with one
-/// wage bill — tick 1 must be pre-funded because there is no per-tick mint
-/// faucet; the seed is the entire money supply and tick 1's wages are paid
-/// before any business revenue exists — and every agent with a small wallet
-/// plus one day's goods. All seeding goes through `mint`, so the audit
-/// counts it (§8.4). The economy trades in gold only; each agent also
-/// holds small silver and copper savings (pack 2, D1) that stay inert
-/// until the market layer can price non-gold metals — they exist so every
-/// metal's ledger and conservation total is live in production.
-fn template_world() -> World {
-    let mut world = World::new();
-    let residence = world.add_house("1 Mill Lane", vec![]);
-
-    let farm = world.add_house("Greenrow Farm", vec![]);
-    let theater = world.add_house("Gilt Curtain Theater", vec![]);
-    let jeweler = world.add_house("Karat & Co", vec![]);
-    let scenario = [
-        (farm, Good::Food, Money::new(1), "alice"),
-        (theater, Good::Entertainment, Money::new(2), "bob"),
-        (jeweler, Good::Luxury, Money::new(5), "carol"),
-    ];
-    for (house, product, price, worker_name) in scenario {
-        let mut roles = HashMap::new();
-        roles.insert(
-            Role::Labourer,
-            RoleSlot {
-                wage: Money::new(35),
-                headcount: 1,
-            },
-        );
-        let business = world
-            .create_business(house, product, price, roles)
-            .expect("fresh house");
-        let bill = world
-            .house(house)
-            .expect("just added")
-            .business
-            .as_ref()
-            .expect("just created")
-            .wage_bill();
-        world.accounts.mint(business, Metal::Gold, bill);
-        let worker = world.spawn_agent(worker_name, Some(residence), Some(house));
-        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
-    }
-    world.spawn_agent("dave", Some(residence), None); // unemployed, housed
-
-    let everyone: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
-    for id in everyone {
-        world.accounts.mint(id, Metal::Gold, Money::new(35));
-        // Inert savings (D1): nothing spends non-gold until markets can
-        // price it, so these only exercise the per-metal books.
-        world.accounts.mint(id, Metal::Silver, Money::new(10));
-        world.accounts.mint(id, Metal::Copper, Money::new(20));
-        let agent = world.agent_mut(id).expect("listed above");
-        for good in Good::ALL {
-            agent.inventory.insert(good, good.consumption_rate());
-        }
-    }
-    world
 }
 
 /// Clears the terminal and parks the cursor at the top-left, so each frame
@@ -491,24 +427,4 @@ fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
         println!("no agent or business named '{name}'");
     }
     wait_for_enter();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// D1 (pack 2 manifest): gold funds the whole economy — 3 wage bills of
-    /// 35 plus 4 wallets of 35 — and every agent holds inert silver 10 /
-    /// copper 20 savings, so all three ledgers are live from tick 0.
-    #[test]
-    fn template_world_seeds_the_decided_metals() {
-        let world = template_world();
-        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(245));
-        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(245));
-        assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(40));
-        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(40));
-        assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(80));
-        assert_eq!(world.accounts.total_minted(Metal::Copper), Money::new(80));
-        world.accounts.audit();
-    }
 }
