@@ -30,6 +30,11 @@ pub struct World {
     /// Reserved account: the out-of-node seam for imports/exports (and
     /// future node-to-node trade). Plain account, no struct.
     pub external_id: AgentId,
+    /// How many immigrants have ever arrived — the deterministic
+    /// name-table counter (town-colony pack 4). Written only by
+    /// [`immigrate`](World::immigrate); never decremented, so names
+    /// stay unique across departures.
+    pub arrivals: u32,
     next_agent_id: u32,
     next_house_id: u32,
 }
@@ -44,6 +49,7 @@ impl World {
             accounts: Accounts::new(),
             mint_id: AgentId(0),
             external_id: AgentId(1),
+            arrivals: 0,
             next_agent_id: 2, // 0 and 1 are reserved forever
             next_house_id: 0,
         }
@@ -145,6 +151,10 @@ pub enum WorldError {
     UnknownHouse(HouseId),
     /// The house already hosts a business — at most one per house (v1).
     BusinessAlreadyExists(HouseId),
+    /// Not a vacant residence: it has occupants or hosts a business —
+    /// v1's entire vacancy rule (ownership plays no part). Refused by
+    /// `immigrate`.
+    HouseNotVacant(HouseId),
     /// The money core refused; wrapped unchanged.
     Money(MoneyError),
 }
@@ -383,6 +393,35 @@ impl World {
         }
         self.agents.retain(|person| person.id != agent);
         Ok(())
+    }
+
+    /// The migration-gated arrival command (town-colony pack 4) — a
+    /// distinct name, NOT a change to `spawn_agent` (07-13's "do not
+    /// widen the constructor" stands; Rust has no overloading, a trap
+    /// the multi-metal ledger already recorded). Validates the house
+    /// exists and is a vacant residence — zero occupants AND hosts no
+    /// business, v1's entire vacancy rule — then builds on the untouched
+    /// constructor: next id, housed at `home`, unemployed, empty
+    /// inventory, zero balances, hunger 0. Moves no money (07-03's
+    /// refusal of free-money wrappers stands — the grubstake is a
+    /// separate, capped `pay` in the Arrive apply, so a failed stake
+    /// leaves a penniless-but-valid newcomer). Bumps `arrivals`, the
+    /// immigrant-name counter. `Err` means nothing changed.
+    #[allow(dead_code)] // no caller until phase 1's Arrive lands (item 4)
+    pub fn immigrate(&mut self, name: String, home: HouseId) -> Result<AgentId, WorldError> {
+        match self.house(home) {
+            None => return Err(WorldError::UnknownHouse(home)),
+            Some(house) if house.business.is_some() => {
+                return Err(WorldError::HouseNotVacant(home));
+            }
+            Some(_) if !self.occupants_of(home).is_empty() => {
+                return Err(WorldError::HouseNotVacant(home));
+            }
+            Some(_) => {}
+        }
+        let id = self.spawn_agent(&name, Some(home), None);
+        self.arrivals += 1;
+        Ok(id)
     }
 }
 
@@ -967,6 +1006,55 @@ mod tests {
         // occupancy and staffing are derived, so removal IS the update
         assert!(world.occupants_of(home).is_empty());
         assert!(world.employees_of(shop).is_empty());
+    }
+
+    #[test]
+    fn immigrate_is_money_free_and_wraps_the_constructor() {
+        let mut world = World::new();
+        let home = world.add_house("5 Weir Cottage", vec![]);
+        let newcomer = world.immigrate("Mara".to_string(), home).unwrap();
+        let agent = world.agent(newcomer).unwrap();
+        assert_eq!(agent.name, "Mara");
+        assert_eq!(agent.home, Some(home));
+        assert_eq!(agent.workplace, None);
+        assert_eq!(agent.employed_role, None);
+        assert_eq!(agent.hunger, 0);
+        assert!(agent.inventory.is_empty());
+        // money-free: zero on every metal, nothing minted anywhere
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(newcomer, metal), Money::ZERO);
+            assert_eq!(world.accounts.total_money(metal), Money::ZERO);
+        }
+        assert_eq!(world.arrivals, 1);
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn immigrate_rejects_non_vacant_and_unknown_houses() {
+        let mut world = World::new();
+        let occupied = world.add_house("1 Mill Lane", vec![]);
+        world.spawn_agent("resident", Some(occupied), None);
+        let shop = world.add_house("Shop", vec![]);
+        world
+            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let ghost = HouseId(99);
+        let before = world.agents.len();
+        assert_eq!(
+            world.immigrate("Mara".to_string(), occupied),
+            Err(WorldError::HouseNotVacant(occupied))
+        );
+        assert_eq!(
+            world.immigrate("Mara".to_string(), shop),
+            Err(WorldError::HouseNotVacant(shop))
+        );
+        assert_eq!(
+            world.immigrate("Mara".to_string(), ghost),
+            Err(WorldError::UnknownHouse(ghost))
+        );
+        // nothing changed on any Err
+        assert_eq!(world.agents.len(), before);
+        assert_eq!(world.arrivals, 0);
     }
 
     #[test]
