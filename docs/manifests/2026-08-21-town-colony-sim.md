@@ -1,7 +1,7 @@
 # Town colony sim (container)
 
-**Status:** PLANNED — gate signed 2026-08-21 with all three open questions
-ruled; pack 1 in progress (go given 2026-08-21).
+**Status:** IN PROGRESS — gate signed 2026-08-21; pack 1 DONE 2026-08-21,
+packs 2–4 proposed shape only.
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-21-town-colony-sim-design.md](../superpowers/specs/2026-08-21-town-colony-sim-design.md)
 (approved 2026-08-21; drafted from a judged three-proposal synthesis, then
@@ -57,7 +57,7 @@ new Goods, everything in `docs/ideas.md`.
 ### Pack 1 — Town console
 
 Item manifest: [2026-08-21-tcs-pack1-town-console.md](2026-08-21-tcs-pack1-town-console.md)
-(drafted 2026-08-21; in progress).
+(DONE 2026-08-21; 105 → 114 tests).
 
 `Event` + `TickReport` (Amendment 15 executed), emissions from the live
 phases, and the shell reworked into a town console: header, per-tick event
@@ -135,3 +135,9 @@ rates, seigniorage — 07-12) stay open where they live and block none of this.
   (Amendment 17 ACTIVE); hunger stopgap → approved as throwaway. Owner's
   "start pack 1" is the go on pack 1's items — execution authorized for
   pack 1 only.
+- **2026-08-21** — **pack 1 closes** (five commits, 06c4ed3..cbbe724):
+  Amendment 15 executed, six event variants narrated, town console live
+  (header, feed, `roster`, business + last-3-events inspect). 3-lens
+  review: zero blockers, three nits applied. Close gate quoted in the pack
+  manifest: `VERIFY OK` 114 passed. Next: pack 2 item manifest, on your
+  go.

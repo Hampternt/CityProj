@@ -1,8 +1,8 @@
 # Town colony sim — Pack 1: Town console
 
-**Status:** IN PROGRESS — drafted 2026-08-21, go given same day ("start
-pack 1"). Baseline on arrival: `VERIFY OK — fmt, clippy, build, tests all
-clean.` 105 passed.
+**Status:** DONE 2026-08-21 — all items landed and reviewed; close gate:
+`VERIFY OK — fmt, clippy, build, tests all clean.` 114 passed (105 on
+arrival, +9).
 **Container:** [2026-08-21-town-colony-sim.md](2026-08-21-town-colony-sim.md)
 **Spec contracts executed here:** `sim::tick` (modified), `Event`/`TickReport`
 (new), Amendment 15.
@@ -55,32 +55,32 @@ inspecting a name shows its last 3 events.
 
 ## Items
 
-- [ ] **1. `Event` + `TickReport`; `tick` returns the report (Amendment
+- [x] **1. `Event` + `TickReport`; `tick` returns the report (Amendment
   15).** New types in sim.rs; `pub fn tick(world: &mut World) ->
   TickReport`; live phases take `&mut TickReport` (emitting nothing yet);
   audit stays unconditionally last and emits nothing; shell caller updated.
   Done: `./scripts/check.sh` clean; `cargo test sim::` green including
   `tick_runs_audit_last` unchanged. Touches: src/sim.rs,
   src/engine/game_loop.rs.
-- [ ] **2. Emissions from the live phases + their tests.** produce →
+- [x] **2. Emissions from the live phases + their tests.** produce →
   `Produced`; pay_wages → `WagePaid`/`PayrollShort`; goods apply → `Sold`;
   price write-back → `PriceMoved` (only on change); consume → `WentHungry`.
   Unit tests per phase on fixture worlds + `tick_report_is_pure_observation`
   (identical fixtures, report dropped on one, state digests equal). Done:
   `./scripts/check.sh` clean; `cargo test sim::` and `cargo test market::`
   green (tick-order/market-adjacent item rule). Touches: src/sim.rs.
-- [ ] **3. Shell frame rework: header + feed.** Header line gains
+- [x] **3. Shell frame rework: header + feed.** Header line gains
   population and employed/unemployed counts; the last tick's rendered feed
   prints above the ledger view; tick 0 shows a quiet placeholder. Done:
   `./scripts/check.sh` clean; behavior confirmed by eye in `cargo run`
   (presentation — no unit tests, per the shell's existing convention).
   Touches: src/engine/game_loop.rs.
-- [ ] **4. `roster` + inspect extensions.** `roster` command (one line per
+- [x] **4. `roster` + inspect extensions.** `roster` command (one line per
   agent: job, employer, gold, pantry); inspect resolves businesses by house
   address; agent inspect shows the last 3 events from the shell buffer.
   Done: `./scripts/check.sh` clean; confirmed by eye in `cargo run`.
   Touches: src/engine/game_loop.rs.
-- [ ] **5. Pack close.** `./scripts/verify.sh` green; ledger entry quoting
+- [x] **5. Pack close.** `./scripts/verify.sh` green; ledger entry quoting
   real output and the new test count; container manifest pack entry updated.
   Done: `VERIFY OK — fmt, clippy, build, tests all clean.` quoted with
   count. Touches: docs/manifests/*.
@@ -101,3 +101,20 @@ inspecting a name shows its last 3 events.
 
 - **2026-08-21** — **drafted and started.** Go given with the gate signing
   ("start pack 1"). Items 1–5 as above; baseline 105 tests green.
+- **2026-08-21** — **items 1+2 landed in one commit (06c4ed3).** Deviation
+  recorded: item 1's types alone are dead code under clippy `-D warnings`,
+  so the item gate forces the emissions in with them. sim:: 26 / market::
+  12 / money:: 18 green.
+- **2026-08-21** — **items 3 (5d8ebe1) and 4 (5cb4bee) landed.** CHECK OK
+  each; feed, roster, and both inspect paths confirmed by eye on the
+  shipped scenario (Karat & Co's partial wage + arrears narrated
+  correctly; dave goes hungry from tick 2).
+- **2026-08-21** — **3-lens review (contract / invariants / quality): no
+  blockers, three nits, all applied (cbbe724):** PayrollShort guarded on a
+  real debt + `zero_wage_slot_emits_nothing`; pure-observation test doc
+  states what it pins (cross-instance determinism); minimal-economy
+  seeding deduplicated into `seeded_minimal_economy`. Reviewers confirmed:
+  emission-only diff w.r.t. §8, byte-identical money paths, both shell
+  `Event` matches exhaustive.
+- **2026-08-21** — **pack closes.** `VERIFY OK — fmt, clippy, build, tests
+  all clean.` 114 passed, 0 failed.
