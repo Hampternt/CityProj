@@ -49,8 +49,9 @@ green over 200-tick soaks.
 - **Invariants:** §8.1 (every new amount is `Money`); §8.2 (grubstake and
   emigration sweep move only via `World::pay` / `Accounts::transfer` — no new
   movers, no grant/take wrappers); §8.3 (per-metal audit unconditionally last
-  across every arrival and departure, plus a deliberately-broken-sweep panic
-  test); §8.5 (grubstake capped by External's live balance — no overdraft);
+  across every arrival and departure; sweep completeness is proven by
+  per-account no-orphan assertions, not the audit — a conservation-legal
+  sweep bug parks money on a dead id and cannot trip a totals-only check); §8.5 (grubstake capped by External's live balance — no overdraft);
   §8.6 (all wage logic in `market.rs`). §8.4 untouched — no mint or burn
   anywhere in this container.
 - **Out of scope (YAGNI):** firm founding/closure/ownership (phase 6 — next
@@ -67,21 +68,33 @@ green over 200-tick soaks.
 
 ### Amendments to the running series
 *(continues 07-02's 1–3, wage spec's 4–6, multi-metal's 7–9, refactor's
-10–14. Both amend the 07-02 ⟨REF⟩ sections, which require it: "new phases
-require amending this table" — these don't add phases, they widen the tick
-signature and one money-op row.)*
+10–14. 15 amends 07-02's `Unit: sim::tick` contract and the ⟨REF⟩
+phase-table preamble; 16 amends a ⟨REF⟩ table row, which requires it: "new
+phases require amending this table" — no phase is added, one money-op row
+widens. 17 is conditional on open question 2.)*
 
-15. ⟨REF⟩ tick contract: `pub fn tick(world: &mut World) -> TickReport`.
-    Live phases append typed `Event`s to the report; the report is pure
-    observation — dropping it changes no state. Audit stays unconditionally
-    last, emits nothing, still panics on imbalance. No early-return path.
+15. 07-02 `Unit: sim::tick`: `pub fn tick(world: &mut World) -> TickReport`,
+    and the ⟨REF⟩ phase-table preamble's "Each phase is a plain
+    `fn(&mut World)`" — live phases thread the report and append typed
+    `Event`s. The report is pure observation — dropping it changes no
+    state. Audit stays unconditionally last, emits nothing, still panics on
+    imbalance. No early-return path.
 16. ⟨REF⟩ phase table, row 1 (`labor_market`), money-ops column: "none" →
     "`transfer` External→agent, immigration grubstake only". Everything else
     phase 1 does (matching, wage adjustment, hiring, quitting) stays
     money-free; emigration needs no amendment — its sweep rides phase 7's
     existing `transfer`→External allowance.
+17. *(conditional — activates iff open question 2 resolves to settlement,
+    otherwise void)* ⟨REF⟩ phase table, row 7 (`sinks`), money-ops column
+    gains "`transfer` business→departing agent, arrears settlement only,
+    immediately preceding that agent's sweep to External".
 
 ### Proposed pack sequence (the container manifest is written from this)
+
+Signing the gate approves this sequence as direction; the cut itself stays
+re-cuttable at manifest level without spec re-approval, per the multi-metal
+ledger practice (a measured pack-boundary move is a manifest amendment, not
+a spec reopen).
 
 **Pack 1 — Town console.** `Event` + `TickReport` (Amendment 15), emissions
 from the live phases (produced, wages paid / payroll short, sold, price
@@ -114,7 +127,7 @@ re-enters the applicant pool; a 50-tick soak reaches near-full employment.
 **Pack 4 — The town breathes.** Population varies for the first time:
 `Agent.hunger` (single writer: consume), `Intent::Depart` push rule in phase
 7 with `World::remove_agent`'s full per-metal sweep to External,
-`Intent::Arrive` pull rule in phase 1 with `World::spawn_agent` + the capped
+`Intent::Arrive` pull rule in phase 1 with `World::immigrate` + the capped
 External→agent grubstake (Amendment 16). Conservation proven at every step;
 container DONE folds the 🚧 pointer in `docs/INVENTORY.md`. *Observable:*
 "petra left town (took 12g 3s 5c)", "Mara arrived seeking work"; the
@@ -140,7 +153,9 @@ Data-only — no behavior on either type. Each pack adds its own variants
 (pack 1: produced / wages-paid / payroll-shortfall / sold / price-moved /
 went-hungry; pack 3: hired / quit / wage-moved; pack 4: arrived / departed);
 the shell matches `Event` exhaustively so a new variant forces the renderer
-at compile time. Exact variant fields plan-owned.
+at compile time. Event order is deterministic: phase order, then each
+phase's pinned iteration order (agents in `world.agents` order, roles in
+`Role::ALL` order). Exact variant fields plan-owned.
 Refs: @src/sim.rs (owner) → @src/engine/game_loop.rs (consumer); no §8
 invariant in play — read-only observation of phases whose money-op rows are
 unchanged.
@@ -152,8 +167,9 @@ Every agent whose `workplace == house`, in ascending `AgentId` order — the
 deterministic-order contract all contended decide passes inherit. Derived by
 scan, never stored (07-02 link rule); unknown house yields empty; no error —
 it is a query, id validation stays on commands. Read by produce, pay_wages,
-and the pack-3 `JobOffer` snapshot. `employee_of` (@src/world.rs:304) is
-deleted, not kept alongside.
+and the pack-3 `JobOffer` snapshot — produce scales stock gain by staff
+count, pay_wages accrues every employee's slot wage. `employee_of`
+(@src/world.rs:304) is deleted, not kept alongside.
 Refs: @src/world.rs:304, 07-02 ⟨REF⟩ link rule; feeds the phase-2/3 money
 paths but is itself §8.2-neutral (reads only).
 
@@ -174,11 +190,16 @@ pins the seed), §8.4 (no tick-time mint — worldgen is the only source).
 
 ### market::adjust_wage  (market.rs, new)
 
-`pub fn adjust_wage(wage: Money, open_slots: u32, applicants: u32) -> Money`
+`pub fn adjust_wage(wage: Money, open_slots: u32, applicants: u32, affordable: bool) -> Money`
 Pure tâtonnement mirroring `adjust_price`: unfilled openings → raise one
-step; surplus applicants with nothing unfilled → lower one step; neither →
-unchanged; floor `Money(1)`; step and thresholds are constants alongside
-(values plan-owned, integer arithmetic only). Wages stay an explicit
+step *only when `affordable`* — the write-back passes coffer ≥ one tick's
+full-staffing bill at the stepped wage (the `wage_bill` precedent). Posting
+a wage is otherwise costless to an insolvent business, and an ungated raise
+compounds unboundedly on any chronically unfillable slot — including the
+designed immigration-stall end state. Surplus applicants with nothing
+unfilled → lower one step; neither → unchanged; floor `Money(1)`; step and
+thresholds are constants alongside (values plan-owned, integer arithmetic
+only). Wages stay an explicit
 `Metal::Gold` choice per the multi-metal pack-2 decision — single-metal, the
 bundle question stays open where 07-12 left it. Write-back per business/role
 after matching, effective next tick only — decide never sees this tick's
@@ -190,13 +211,20 @@ CLAUDE.md roadmap "adjust_price pattern applied to RoleSlot.wage in phase 1".
 
 `pub struct JobOffer { pub business: AgentId, pub role: Role, pub wage: Money, pub open_slots: u32 }`
 `pub struct Application { pub business: AgentId, pub role: Role }`
-`pub fn plan_application(offers: &[JobOffer]) -> Option<Application>`
+`pub fn plan_application(offers: &[JobOffer], owed_by: &[AgentId]) -> Option<Application>`
 Pure mirror of `Offer`/`plan_purchases`, evaluated for one unemployed agent
 against the phase-1 snapshot (`open_slots = headcount −
-employees_of().len()`): picks the highest-wage offer with `open_slots > 0`;
-ties break ascending business `AgentId`, then `Role` declaration order;
-`None` when nothing is open. No role eligibility in v1 —
-`Agent.specialization` stays dead code.
+employees_of().len()`): picks the highest-wage offer with `open_slots > 0`,
+skipping businesses in `owed_by` — the employers still owing this agent
+arrears. They have proven they don't pay, and without the exclusion the
+quit-on-arrears rule composes with highest-wage matching into a hire/quit
+livelock: the deadbeat's reopened slot raises its posted wage, wins the
+argmax, and re-captures the quitter every tick. Ties break ascending
+business `AgentId`, then `Role` declaration order; `None` when nothing is
+open. No role eligibility in v1 — `Agent.specialization` stays dead code.
+The snapshot, the write-back, and the emissions enumerate a business's
+roles in `Role::ALL` order, never `HashMap` iteration — `Business.roles` is
+a `HashMap` and the no-RNG guarantee is only as good as pinned iteration.
 Refs: @src/market.rs:16–30 (`Offer`/`Purchase` shapes mirrored), §8.6
 (job-search ranking is market logic, so it lives here).
 
@@ -212,11 +240,17 @@ ticks + a zero-occupant residence + External covers the stake); Depart by
 phase 7's push rule (hunger ≥ H and gold below the cheapest Food offer).
 H/K/N and the grubstake size are constants alongside, plan-owned. Apply
 re-checks live state, mirroring the goods apply: TakeJob caps against live
-open headcount and forwards through `World::assign_workplace` — stale
-intents die cleanly; Quit forwards through `vacate_workplace`, the `owed_to`
-entry persists (subject to open question 2 for leavers); Arrive =
-`spawn_agent` then the capped External→agent gold grubstake via `World::pay`
-(arrivals join the applicant pool next tick); Depart = `remove_agent`. A
+open headcount and forwards through `World::assign_workplace`, widened with
+the role param (the extension @src/agent.rs:39–43 reserves for it) so
+`workplace` and `employed_role` are written together — pay_wages pays on
+`employed_role` (@src/sim.rs:92), so a hire that set only `workplace` would
+fill the slot yet never earn; stale intents die cleanly. Quit forwards
+through `vacate_workplace`, which now clears both fields (the
+employed_role-implies-workplace invariant survives quitting); the `owed_to`
+entry persists (subject to open question 2 for leavers). Arrive =
+`World::immigrate` then the capped External→agent gold grubstake via
+`World::pay` (arrivals join the applicant pool next tick); Depart =
+`remove_agent`. A
 failed World call drops that intent cleanly — nothing partially applied,
 books unchanged on `Err`. Every match on `Intent` stays exhaustive.
 Refs: @src/sim.rs:18, the goods_market decide→apply template; §8.2 (all
@@ -230,30 +264,43 @@ balance); Amendment 16 grants phase 1's transfer, Depart's sweep rides phase
 Given a real agent id — not the reserved Mint/External ids, not a business
 id. Validates first, then sweeps every `Metal::ALL` balance to External
 through the chokepoint (inert silver and copper included — no orphan
-balances survive), vacates home and workplace (derived occupancy simply
-updates), and removes the `Agent`. `owed_to` entries naming the leaver are
-handled per the gate ruling on open question 2. Atomic at the command layer:
-`Err(WorldError::UnknownAgent)` means nothing changed.
+balances survive), vacates home and workplace (clearing `employed_role`
+with it; derived occupancy simply updates), strips the leaver's id from
+every `House.owners` (no dangling ids — though ownership plays no part in
+the v1 vacancy rule either way), and removes the `Agent`. `owed_to` entries
+naming the leaver are handled per the gate ruling on open question 2.
+Atomic at the command layer: `Err(WorldError::UnknownAgent)` means nothing
+changed. Sweep completeness is proven by the per-account no-orphan
+acceptance assertions, not the audit: a skipped metal leaves a
+conservation-legal balance parked on the dead id, and the §8.3 check is
+totals-only (@src/money.rs:156–177) — it detects chokepoint bypass, never
+orphans.
 Refs: @src/world.rs command layer (07-03 validate-then-forward; `WorldError`
 at :138), §8.2 (sweep moves only via the chokepoint), §8.3 (audit green
-across every departure — proven additionally by the `#[cfg(test)]`
-broken-sweep panic test), phase 7's existing transfer→External allowance.
+across every departure), phase 7's existing transfer→External allowance.
 
-### World::spawn_agent  (world.rs, new)
+### World::immigrate  (world.rs, new)
 
-`pub fn spawn_agent(&mut self, name: String, home: HouseId) -> Result<AgentId, WorldError>`
-Given a residence with zero occupants that hosts no business — v1's entire
-vacancy rule. Allocates the next `AgentId` from the agent counter, creates
-the agent housed at `home` — unemployed, empty inventory, zero balances.
-Moves no money itself (07-03's deliberate refusal of free-money wrappers
-stands); the grubstake is a separate, capped External→agent `World::pay` in
-the Arrive apply, so a failed stake leaves a penniless-but-valid newcomer,
-never a conservation break. `Err` means nothing changed.
+`pub fn immigrate(&mut self, name: String, home: HouseId) -> Result<AgentId, WorldError>`
+The migration-gated arrival command — a distinct name, NOT a change to the
+existing 3-arg `spawn_agent` constructor (@src/world.rs:55, pinned to its
+shape by 07-13's "do not widen the constructor"; worldgen and its test call
+sites keep it untouched, and Rust has no overloading — a trap the
+multi-metal ledger already recorded). Given a residence with zero occupants
+that hosts no business — v1's entire vacancy rule; ownership plays no part
+in it. Validates, then builds on the untouched constructor: allocates the
+next `AgentId`, creates the agent housed at `home` — unemployed, empty
+inventory, zero balances. Moves no money itself (07-03's deliberate refusal
+of free-money wrappers stands); the grubstake is a separate, capped
+External→agent `World::pay` in the Arrive apply, so a failed stake leaves a
+penniless-but-valid newcomer, never a conservation break. `Err` means
+nothing changed.
 Error: `WorldError::UnknownHouse`; a non-vacant or business-bearing house is
 rejected (exact variant plan-owned — lift back here if it grows beyond one
 case).
-Refs: @src/world.rs (`create_business` id-allocation precedent at :258),
-§8.2 (spawn is money-free; the stake rides the chokepoint via `pay`).
+Refs: @src/world.rs:55 (`spawn_agent`, wrapped untouched), :258
+(`create_business` id-allocation precedent), §8.2 (arrival is money-free;
+the stake rides the chokepoint via `pay`).
 
 ### Agent.hunger + consume rule  (agent.rs + sim.rs, new field)
 
@@ -293,6 +340,13 @@ headless soak harnesses.
   filter @src/sim.rs:63, pay_wages @src/sim.rs:91, its own tests) move to
   `employees_of`. Multi-worker semantics land in the same pack so produce and
   payroll scale by staff count rather than assuming one worker.
+- `src/world.rs` — `assign_workplace`/`vacate_workplace` change shape in
+  pack 3: assign gains the role param (agent.rs's reserved extension) and
+  writes `employed_role` with `workplace`; vacate clears both. Their only
+  callers are their own tests (@src/world.rs:513–549) — worldgen sets the
+  fields directly and keeps doing so. `spawn_agent` is NOT touched:
+  `immigrate` is a new name wrapping it, so worldgen and every test call
+  site stay valid, and 07-13's "do not widen the constructor" note stands.
 - `src/engine/game_loop.rs` — shell frame reworked around header + feed
   (pack 1); shipped binary switches to `town_world` (pack 2). Behavior-visible,
   layout plan-owned.
@@ -318,13 +372,21 @@ headless soak harnesses.
   mirror of the `adjust_price` suite.
 - `stale_takejob_dies_on_live_headcount` — two hires race one slot; exactly
   one lands, books untouched by the loser.
-- `quit_on_arrears_fires_at_N_and_preserves_owed_to`.
-- `remove_agent_sweeps_every_metal_no_orphans` — inert silver/copper leave
-  with the emigrant; per-metal totals identical before/after.
-- `broken_sweep_panics_the_audit` — `#[cfg(test)]` deliberately skips one
-  metal; audit must panic naming it (§8.3 proven, not assumed).
-- `spawn_is_money_free_and_stake_is_capped` — failed stake ⇒ penniless valid
-  newcomer; External never overdrafts (§8.5).
+- `hire_earns_role_wage_next_pay_wages` — a pack-3 hire accrues and
+  receives the slot wage on the following tick. Pins the `employed_role`
+  write: a workplace-only hire earns nothing today
+  (`roleless_worker_earns_nothing` @src/sim.rs:516).
+- `quit_on_arrears_fires_at_N_preserves_owed_to_and_clears_role` — plus:
+  `plan_application` never returns the quitter to a business still in
+  their `owed_by`.
+- `remove_agent_sweeps_every_metal_no_orphans` — after removal,
+  `balance_of(leaver, m) == Money::ZERO` for every `Metal::ALL` entry and
+  External credited by exactly the pre-sweep per-metal balances. The
+  assertion must be per-account: totals-identical is vacuously true even
+  for a broken sweep (transfers never change totals), and the audit cannot
+  see a conservation-legal orphan.
+- `immigrate_is_money_free_and_stake_is_capped` — failed stake ⇒ penniless
+  valid newcomer; External never overdrafts (§8.5).
 - `immigration_halts_on_drained_external_and_on_zero_vacancy` — the designed
   bounds, asserted as behavior.
 - Soaks: 100-tick (pack 2) and 200-tick (pack 4) headless runs — audit green
@@ -333,10 +395,18 @@ headless soak harnesses.
 
 ### Pinned soak exit criteria (pack 2 tunes against these, not taste)
 
-Over a 50-tick `town_world` soak: every agent keeps purchasing Food; no
-Good's price sits pinned at floor `Money(1)` for the whole soak nor rises
-monotonically; at least one price moves in both directions. Constants are
-iterated inside the pack until these hold, then frozen.
+Over pack 2's 100-tick `town_world` soak, evaluated from tick 10 (warm-up
+excluded): every agent completes at least one Food purchase in every
+rolling 5-tick window; per Good — deliberately not per seller — the
+cheapest posted price neither sits at floor `Money(1)` for the whole
+evaluated span nor rises monotonically; at least one price moves in both
+directions. Per-seller expectations are absent on purpose:
+`plan_purchases` routes same-good demand to the strictly cheapest offer,
+so two Food sellers leapfrogging around the demand pile-on is the expected
+texture, not a failure. Pack 3 adds: near-full employment by tick 50 of
+its soak, and no posted wage rises monotonically for the whole soak (the
+affordability gate is the mechanism; this criterion pins it). Constants
+are iterated inside the pack until these hold, then frozen.
 
 --- APPROVAL GATE — do not write the plan or any code above this line without sign-off ---
 
@@ -355,7 +425,9 @@ iterated inside the pack until these hold, then frozen.
    stay clean), preserve the dangling entry against a removed `AgentId`, or
    write the debt off as a business windfall? Bookkeeping only — the audit
    is blind to `owed_to` either way — but it changes business solvency
-   texture and what the arrears ledger means. Blocks pack 4's
+   texture and what the arrears ledger means. If settlement wins, the
+   pre-written conditional Amendment 17 activates (the settlement transfer
+   is a phase-7 money op the table must name). Blocks pack 4's
    `remove_agent` detail only.
 3. **The hunger stopgap.** `Agent.hunger` as a minimal consume-written
    counter front-runs the future needs model (House traits are recorded as
