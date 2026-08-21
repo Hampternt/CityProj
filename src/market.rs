@@ -1,14 +1,16 @@
-//! The goods market's shopping logic (§8.6: pricing/purchasing logic
-//! lives HERE, never on agents or money). `plan_purchases` is pure —
-//! wallet + inventory + posted offers in, purchase plan out; no world
-//! access, fully deterministic. sim.rs builds `Offer`s from
-//! `World::businesses()` and applies plans through `World::pay`.
+//! The market logic (§8.6: pricing, purchasing, and wage logic live
+//! HERE, never on agents or money). `plan_purchases` and
+//! `plan_application` are pure — snapshot in, plan out; no world access,
+//! fully deterministic. sim.rs builds `Offer`s/`JobOffer`s from
+//! `World::businesses()`, applies purchase plans through `World::pay`,
+//! and applies hires through `World::assign_workplace`.
 
 use std::collections::HashMap;
 
 use crate::agent::AgentId;
 use crate::goods::Good;
 use crate::money::Money;
+use crate::role::Role;
 
 /// One business's posted sale, snapshotted at phase start. Every agent
 /// plans against the same snapshot; apply-time caps handle staleness.
@@ -138,6 +140,115 @@ fn best_buy(
         }
     }
     best.map(|(index, _, _)| index)
+}
+
+// ---------------------------------------------------------------------
+// The wage market (town-colony pack 3): job-search ranking and wage
+// tâtonnement, pure mirrors of the goods shapes above.
+
+/// One business's open role, snapshotted at phase-1 start (`open_slots`
+/// = the role's headcount minus its live staff). Every unemployed agent
+/// plans against the same snapshot; apply-time re-checks handle
+/// staleness, exactly like `Offer`.
+#[derive(Debug, Clone)]
+pub struct JobOffer {
+    pub business: AgentId,
+    pub role: Role,
+    pub wage: Money,
+    pub open_slots: u32,
+}
+
+/// One unemployed agent's chosen application — at most one per agent per
+/// tick.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Application {
+    pub business: AgentId,
+    pub role: Role,
+}
+
+/// Job search for one unemployed agent (§8.6: the ranking is market
+/// logic): the highest-wage offer with `open_slots > 0`, skipping the
+/// businesses in `owed_by` — employers still owing this agent arrears
+/// have proven they don't pay, and without the exclusion the
+/// quit-on-arrears rule composes with highest-wage matching into a
+/// hire/quit livelock (town-colony spec). Ties break ascending business
+/// id, then `Role::ALL` declaration order — iteration-order-free by
+/// construction: the winner is the same whatever order `offers` arrives
+/// in. `None` when nothing qualifies. No role eligibility in v1.
+pub fn plan_application(offers: &[JobOffer], owed_by: &[AgentId]) -> Option<Application> {
+    let mut best: Option<&JobOffer> = None;
+    for offer in offers {
+        if offer.open_slots == 0 || owed_by.contains(&offer.business) {
+            continue;
+        }
+        let wins = match best {
+            None => true,
+            Some(current) => {
+                offer.wage > current.wage
+                    || (offer.wage == current.wage
+                        && (offer.business.0 < current.business.0
+                            || (offer.business == current.business
+                                && role_rank(offer.role) < role_rank(current.role))))
+            }
+        };
+        if wins {
+            best = Some(offer);
+        }
+    }
+    best.map(|offer| Application {
+        business: offer.business,
+        role: offer.role,
+    })
+}
+
+/// Position in `Role::ALL` — the declaration-order tie-break.
+fn role_rank(role: Role) -> usize {
+    Role::ALL
+        .iter()
+        .position(|&entry| entry == role)
+        .expect("Role::ALL lists every variant")
+}
+
+/// Wage tuning constants (town-colony spec, `adjust_wage` contract) —
+/// gameplay knobs like the price constants above, change freely.
+/// One step is `max(1, wage / WAGE_STEP_DIVISOR)` — proportional,
+/// integer-safe, same shape as the price step.
+const WAGE_STEP_DIVISOR: u64 = 10;
+/// Wages never fall below this, so they can always recover upward.
+const WAGE_FLOOR: Money = Money::new(1);
+
+/// One raise step up from `wage`. Exported so phase 1 can build
+/// `adjust_wage`'s `affordable` input (coffer ≥ one tick's full-staffing
+/// bill at the stepped wage) without re-deriving the step outside
+/// market.rs (§8.6).
+pub fn stepped_wage(wage: Money) -> Money {
+    wage.plus(Money::new(1).max(wage.divided_by(WAGE_STEP_DIVISOR)))
+}
+
+/// Per-role wage tâtonnement mirroring `adjust_price`: an unfilled
+/// opening raises one step — but only when `affordable`, else posting is
+/// costless to an insolvent business and the raise compounds unboundedly
+/// on any chronically unfillable slot; a queue of surplus applicants
+/// with nothing unfilled lowers one step, saturating at `WAGE_FLOOR`;
+/// neither holds. `applicants` is the STALE queue — applications for
+/// this (business, role) that did not land this tick. Post-matching,
+/// `open_slots > 0` implies the queue is empty (an application only dies
+/// when the slot fills), so the arms never overlap. Pure and total;
+/// integer arithmetic only (§8.1).
+pub fn adjust_wage(wage: Money, open_slots: u32, applicants: u32, affordable: bool) -> Money {
+    if open_slots > 0 {
+        if affordable { stepped_wage(wage) } else { wage }
+    } else if applicants > 0 {
+        let step = Money::new(1).max(wage.divided_by(WAGE_STEP_DIVISOR));
+        // step would land below the floor — clamp, same as the price arm
+        if wage > step.plus(WAGE_FLOOR) {
+            wage.minus(step)
+        } else {
+            WAGE_FLOOR
+        }
+    } else {
+        wage
+    }
 }
 
 /// Cheapest affordable offer of `good` with stock left; price ties keep
@@ -356,5 +467,108 @@ mod tests {
         // 5/10: exactly 1/2 is not < 1/2; 8/10 is below the raise threshold
         assert_eq!(adjust_price(Money::new(10), 10, 5), Money::new(10));
         assert_eq!(adjust_price(Money::new(10), 10, 8), Money::new(10));
+    }
+
+    // --- The wage market (pack 3) ---
+
+    fn job(business: u32, role: Role, wage: u64, open_slots: u32) -> JobOffer {
+        JobOffer {
+            business: AgentId(business),
+            role,
+            wage: Money::new(wage),
+            open_slots,
+        }
+    }
+
+    #[test]
+    fn plan_application_prefers_wage_then_ties_break_ascending() {
+        // highest wage wins outright
+        let offers = vec![
+            job(10, Role::Labourer, 35, 1),
+            job(11, Role::Labourer, 40, 1),
+        ];
+        let pick = plan_application(&offers, &[]).unwrap();
+        assert_eq!(pick.business, AgentId(11));
+        // wage tie: ascending business id — asserted iteration-order-free
+        // by feeding both input orders
+        let tied = vec![
+            job(21, Role::Labourer, 40, 1),
+            job(20, Role::Labourer, 40, 1),
+        ];
+        let mut reversed = tied.clone();
+        reversed.reverse();
+        for input in [&tied, &reversed] {
+            assert_eq!(plan_application(input, &[]).unwrap().business, AgentId(20));
+        }
+        // same business, same wage, two roles: Role::ALL declaration
+        // order (Engineer before Labourer)
+        let roles = vec![
+            job(30, Role::Labourer, 40, 1),
+            job(30, Role::Engineer, 40, 1),
+        ];
+        let mut roles_reversed = roles.clone();
+        roles_reversed.reverse();
+        for input in [&roles, &roles_reversed] {
+            assert_eq!(plan_application(input, &[]).unwrap().role, Role::Engineer);
+        }
+    }
+
+    #[test]
+    fn plan_application_skips_full_slots_and_deadbeat_employers() {
+        // open_slots 0 is not an offer
+        let full = vec![job(10, Role::Labourer, 40, 0)];
+        assert_eq!(plan_application(&full, &[]), None);
+        // a business still owing this agent arrears is excluded even at
+        // the best wage — the anti-livelock rule
+        let offers = vec![
+            job(10, Role::Labourer, 40, 1),
+            job(11, Role::Labourer, 30, 1),
+        ];
+        let pick = plan_application(&offers, &[AgentId(10)]).unwrap();
+        assert_eq!(pick.business, AgentId(11));
+        // everything excluded → None (not a panic, not a bad fallback)
+        assert_eq!(plan_application(&offers, &[AgentId(10), AgentId(11)]), None);
+        assert_eq!(plan_application(&[], &[]), None);
+    }
+
+    #[test]
+    fn adjust_wage_raises_on_vacancy_only_when_affordable() {
+        // step = max(1, 35/10) = 3
+        assert_eq!(adjust_wage(Money::new(35), 1, 0, true), Money::new(38));
+        // the affordability gate: an insolvent business posts no raise
+        assert_eq!(adjust_wage(Money::new(35), 1, 0, false), Money::new(35));
+        // proportional step: 100/10 = 10
+        assert_eq!(adjust_wage(Money::new(100), 2, 0, true), Money::new(110));
+    }
+
+    #[test]
+    fn adjust_wage_lowers_on_surplus_queue_saturating_at_floor() {
+        // filled slots + a stale queue → one step down (100/10 = 10)
+        assert_eq!(adjust_wage(Money::new(100), 0, 3, true), Money::new(90));
+        // affordability plays no part in lowering
+        assert_eq!(adjust_wage(Money::new(100), 0, 3, false), Money::new(90));
+        // 2 − max(1, 2/10) lands exactly on the floor
+        assert_eq!(adjust_wage(Money::new(2), 0, 1, true), Money::new(1));
+        // a floor-wage slot with a queue stays at the floor
+        assert_eq!(adjust_wage(Money::new(1), 0, 5, true), Money::new(1));
+    }
+
+    #[test]
+    fn adjust_wage_holds_when_the_market_cleared() {
+        // no opening, no queue: exactly-met demand is not surplus
+        assert_eq!(adjust_wage(Money::new(35), 0, 0, true), Money::new(35));
+        assert_eq!(adjust_wage(Money::new(35), 0, 0, false), Money::new(35));
+    }
+
+    #[test]
+    fn stepped_wage_is_the_raise_arm() {
+        // the exported helper and the raise arm are the same formula, so
+        // the caller's affordability check prices the raise exactly
+        for wage in [1, 2, 9, 10, 35, 100] {
+            assert_eq!(
+                stepped_wage(Money::new(wage)),
+                adjust_wage(Money::new(wage), 1, 0, true)
+            );
+        }
     }
 }

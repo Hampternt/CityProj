@@ -76,10 +76,11 @@ pub fn run() {
 fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, report: &TickReport) {
     for event in &report.events {
         let starring = match event {
+            Event::Hired { agent, .. } | Event::Quit { agent, .. } => Some(*agent),
             Event::WagePaid { worker, .. } | Event::PayrollShort { worker, .. } => Some(*worker),
             Event::Sold { buyer, .. } => Some(*buyer),
             Event::WentHungry { agent } => Some(*agent),
-            Event::Produced { .. } | Event::PriceMoved { .. } => None,
+            Event::Produced { .. } | Event::PriceMoved { .. } | Event::WageMoved { .. } => None,
         };
         if let Some(id) = starring {
             let lines = history.entry(id).or_default();
@@ -181,12 +182,18 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     let mut wages: Vec<(AgentId, u32, Money)> = Vec::new();
     // (business, good, snapshot price, units, buyers)
     let mut sales: Vec<(AgentId, Good, Money, u32, u32)> = Vec::new();
+    // Labor events stay individual — each is notable — and arrive
+    // already in phase-internal order (quits, hires, wage moves).
+    let mut labor = Vec::new();
     let mut produced = Vec::new();
     let mut shorts = Vec::new();
     let mut moves = Vec::new();
     let mut hungry = Vec::new();
     for event in &report.events {
         match event {
+            Event::Hired { .. } | Event::Quit { .. } | Event::WageMoved { .. } => {
+                labor.push(render_event(world, event))
+            }
             Event::Produced { .. } => produced.push(render_event(world, event)),
             Event::WagePaid {
                 business, amount, ..
@@ -220,7 +227,8 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
             Event::WentHungry { .. } => hungry.push(render_event(world, event)),
         }
     }
-    let mut lines = produced;
+    let mut lines = labor;
+    lines.extend(produced);
     for (business, workers, total) in wages {
         lines.push(format!(
             "{} paid {workers} worker{} {total}g",
@@ -246,6 +254,37 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
 /// from the feed. All feed amounts are gold this milestone, rendered `35g`.
 fn render_event(world: &World, event: &Event) -> String {
     match event {
+        Event::Quit {
+            agent,
+            business,
+            owed,
+        } => format!(
+            "{} quit {} (still owed {owed}g)",
+            agent_name(world, *agent),
+            business_address(world, *business),
+        ),
+        Event::Hired {
+            agent,
+            business,
+            role,
+            wage,
+        } => format!(
+            "{} hired at {} as {role} @ {wage}g",
+            agent_name(world, *agent),
+            business_address(world, *business),
+        ),
+        Event::WageMoved {
+            business,
+            role,
+            from,
+            to,
+        } => {
+            let verb = if to > from { "raised" } else { "lowered" };
+            format!(
+                "{} {verb} {role} wages to {to}g",
+                business_address(world, *business)
+            )
+        }
         Event::Produced {
             business,
             good,

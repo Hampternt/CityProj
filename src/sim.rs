@@ -5,9 +5,10 @@
 use crate::agent::{Agent, AgentId};
 use crate::goods::Good;
 use crate::housing::HouseId;
-use crate::market::{self, Offer};
+use crate::market::{self, JobOffer, Offer};
 use crate::metal::Metal;
 use crate::money::Money;
+use crate::role::Role;
 use crate::world::World;
 use std::collections::HashMap;
 
@@ -25,6 +26,19 @@ pub enum Intent {
         good: Good,
         units: u32,
     },
+    /// Take `role` at `business` (phase 1). Planned against the
+    /// tick-start snapshot; apply re-checks the live headcount so racing
+    /// hires die cleanly, like stale Buys.
+    TakeJob {
+        agent: AgentId,
+        business: AgentId,
+        role: Role,
+    },
+    /// Walk out of the current job over unpaid wages (phase 1). Apply
+    /// clears `workplace` and `employed_role` together; the `owed_to`
+    /// entry persists (settlement only at emigration — Amendment 17,
+    /// pack 4).
+    Quit { agent: AgentId },
 }
 
 /// One observable thing a phase did this tick, for the shell to narrate.
@@ -34,6 +48,31 @@ pub enum Intent {
 /// time.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
+    /// Phase 1 apply: a worker walked out over unpaid wages. `owed` is
+    /// the arrears entry they leave behind — it persists on the ledger
+    /// (settlement only at emigration, Amendment 17 / pack 4).
+    Quit {
+        agent: AgentId,
+        business: AgentId,
+        owed: Money,
+    },
+    /// Phase 1 apply: an unemployed agent took an open role, at the wage
+    /// posted when they applied (the write-back may move it before
+    /// payday).
+    Hired {
+        agent: AgentId,
+        business: AgentId,
+        role: Role,
+        wage: Money,
+    },
+    /// Phase 1 write-back: the posted wage changed for the next tick's
+    /// matching. A held wage is not an event.
+    WageMoved {
+        business: AgentId,
+        role: Role,
+        from: Money,
+        to: Money,
+    },
     /// Phase 2: a staffed business added `units` of its product to stock.
     Produced {
         business: AgentId,
@@ -97,7 +136,7 @@ pub struct TickReport {
 /// §8.2 chokepoint.
 pub fn tick(world: &mut World) -> TickReport {
     let mut report = TickReport::default();
-    labor_market(world);
+    labor_market(world, &mut report);
     produce(world, &mut report);
     pay_wages(world, &mut report);
     goods_market(world, &mut report);
@@ -110,9 +149,260 @@ pub fn tick(world: &mut World) -> TickReport {
     report
 }
 
-/// Phase 1: match hires, adjust wage offers. Money ops allowed: none.
-fn labor_market(_world: &mut World) {
-    // TODO: firms + labor market land here.
+/// How many ticks' worth of unpaid wages a worker tolerates: quit when
+/// `owed_to[worker] > QUIT_ARREARS_BILLS × their slot's wage` (strictly
+/// greater — exactly N bills is endured). Tuning constant beside its fn,
+/// like the market constants; soak-tuned with worldgen's, then frozen.
+const QUIT_ARREARS_BILLS: u32 = 3;
+
+/// Phase 1: match hires, adjust wage offers. Money ops allowed: none —
+/// hiring and quitting move no coin (the immigration grubstake is
+/// Amendment 16, pack 4). The goods template applied to labor (pack 3):
+/// snapshot → pure decide (quits, then applications) → apply with live
+/// re-checks → wage write-back, which steers the NEXT tick's matching
+/// (this tick's decide only ever saw the snapshot; this tick's payroll
+/// reads the live wage the way produce reads live staffing).
+fn labor_market(world: &mut World, report: &mut TickReport) {
+    // Snapshot (pure): every open role, businesses in houses order ×
+    // `Role::ALL` order — never HashMap iteration (the no-RNG guarantee
+    // is only as good as pinned iteration) — and each worker's creditor
+    // employers (order-free membership set, so the ledger's HashMap
+    // iteration is harmless here).
+    let snapshot: &World = world;
+    let offers: Vec<JobOffer> = snapshot
+        .businesses()
+        .flat_map(|(house, business)| {
+            Role::ALL.iter().filter_map(move |&role| {
+                let slot = business.roles.get(&role)?;
+                let staffed = staff_in_role(snapshot, house.id, role);
+                Some(JobOffer {
+                    business: business.id,
+                    role,
+                    wage: slot.wage,
+                    open_slots: slot.headcount.saturating_sub(staffed),
+                })
+            })
+        })
+        .collect();
+    let mut owed_by: HashMap<AgentId, Vec<AgentId>> = HashMap::new();
+    for (_, business) in snapshot.businesses() {
+        for (&worker, &amount) in &business.owed_to {
+            if amount > Money::ZERO {
+                owed_by.entry(worker).or_default().push(business.id);
+            }
+        }
+    }
+
+    // Decide (pure), quits first: employed agents in `world.agents`
+    // order walk out when arrears pass the threshold. A same-tick
+    // quitter does not also apply — they were employed at snapshot and
+    // re-enter the pool next tick.
+    let mut intents: Vec<Intent> = Vec::new();
+    for agent in &snapshot.agents {
+        let Some(workplace) = agent.workplace else {
+            continue;
+        };
+        let Some(role) = agent.employed_role else {
+            continue;
+        };
+        let Some(business) = snapshot.house(workplace).and_then(|h| h.business.as_ref()) else {
+            continue;
+        };
+        let Some(slot) = business.roles.get(&role) else {
+            continue; // unslotted role accrues nothing, so never quits
+        };
+        let owed = business
+            .owed_to
+            .get(&agent.id)
+            .copied()
+            .unwrap_or(Money::ZERO);
+        if owed > slot.wage.times(QUIT_ARREARS_BILLS) {
+            intents.push(Intent::Quit { agent: agent.id });
+        }
+    }
+    // Then applications: unemployed agents in `world.agents` order —
+    // ascending AgentId by construction, the contended-pass tie-break.
+    let empty: Vec<AgentId> = Vec::new();
+    for agent in &snapshot.agents {
+        if agent.workplace.is_some() {
+            continue;
+        }
+        let creditors = owed_by.get(&agent.id).unwrap_or(&empty);
+        if let Some(application) = market::plan_application(&offers, creditors) {
+            intents.push(Intent::TakeJob {
+                agent: agent.id,
+                business: application.business,
+                role: application.role,
+            });
+        }
+    }
+
+    // Apply: re-check live state, mirroring the goods apply — stale
+    // intents die cleanly, nothing partially applied. Applications are
+    // tallied per (business, role) so the write-back can see the stale
+    // queue (applied − landed).
+    let mut applied: HashMap<(AgentId, Role), u32> = HashMap::new();
+    let mut landed: HashMap<(AgentId, Role), u32> = HashMap::new();
+    for intent in intents {
+        apply_labor_intent(world, intent, &mut applied, &mut landed, report);
+    }
+
+    // Wage write-back (logic in market.rs, §8.6): unfilled-and-affordable
+    // raises one step, a stale queue lowers one step. New wages steer the
+    // next tick's matching.
+    let slots: Vec<(HouseId, AgentId, Role, Money, u32)> = world
+        .businesses()
+        .flat_map(|(house, business)| {
+            Role::ALL.iter().filter_map(move |&role| {
+                let slot = business.roles.get(&role)?;
+                Some((house.id, business.id, role, slot.wage, slot.headcount))
+            })
+        })
+        .collect();
+    for (house_id, business_id, role, wage, headcount) in slots {
+        let open_slots = headcount.saturating_sub(staff_in_role(world, house_id, role));
+        let total_applied = applied.get(&(business_id, role)).copied().unwrap_or(0);
+        let total_landed = landed.get(&(business_id, role)).copied().unwrap_or(0);
+        let queue = total_applied - total_landed;
+        // Affordable = the coffer covers one tick's full-staffing bill
+        // with THIS role's wage stepped (the wage_bill precedent) — the
+        // gate that keeps an insolvent business from posting raises.
+        let stepped = market::stepped_wage(wage);
+        let business = world
+            .house(house_id)
+            .expect("collected from businesses()")
+            .business
+            .as_ref()
+            .expect("collected from businesses()");
+        let bill = Role::ALL
+            .iter()
+            .filter_map(|&r| {
+                business.roles.get(&r).map(|slot| {
+                    let per = if r == role { stepped } else { slot.wage };
+                    per.times(slot.headcount)
+                })
+            })
+            .fold(Money::ZERO, |sum, part| sum.plus(part));
+        // Net of arrears: a business still owing back wages is not
+        // solvent enough to post a raise, whatever sits in the coffer
+        // this instant (measured: the per-tick-coffer test passes for a
+        // venue with four figures of wage debt, and its raises feed the
+        // very churn the gate exists to stop).
+        let owed = world
+            .house(house_id)
+            .expect("collected from businesses()")
+            .business
+            .as_ref()
+            .expect("collected from businesses()")
+            .owed_total();
+        let affordable = world.accounts.balance_of(business_id, Metal::Gold) >= bill.plus(owed);
+        let adjusted = market::adjust_wage(wage, open_slots, queue, affordable);
+        if adjusted != wage {
+            report.events.push(Event::WageMoved {
+                business: business_id,
+                role,
+                from: wage,
+                to: adjusted,
+            });
+        }
+        world
+            .house_mut(house_id)
+            .expect("collected from businesses()")
+            .business
+            .as_mut()
+            .expect("collected from businesses()")
+            .roles
+            .get_mut(&role)
+            .expect("collected from this business's roles")
+            .wage = adjusted;
+    }
+}
+
+/// Live staff filling `role` at `house` — the per-role headcount check
+/// (open slots are counted per role; for v1's single-role businesses
+/// this equals the spec's `employees_of().len()` formula).
+fn staff_in_role(world: &World, house: HouseId, role: Role) -> u32 {
+    world
+        .employees_of(house)
+        .into_iter()
+        .filter(|&worker| {
+            world
+                .agent(worker)
+                .is_some_and(|a| a.employed_role == Some(role))
+        })
+        .count() as u32
+}
+
+fn apply_labor_intent(
+    world: &mut World,
+    intent: Intent,
+    applied: &mut HashMap<(AgentId, Role), u32>,
+    landed: &mut HashMap<(AgentId, Role), u32>,
+    report: &mut TickReport,
+) {
+    match intent {
+        Intent::Quit { agent } => {
+            // Resolve the live workplace for the event — and so a quit
+            // whose facts vanished dies cleanly.
+            let Some(business) = world
+                .agent(agent)
+                .and_then(|person| person.workplace)
+                .and_then(|workplace| world.house(workplace))
+                .and_then(|house| house.business.as_ref())
+            else {
+                return;
+            };
+            let business_id = business.id;
+            let owed = business.owed_to.get(&agent).copied().unwrap_or(Money::ZERO);
+            if world.vacate_workplace(agent).is_err() {
+                return;
+            }
+            report.events.push(Event::Quit {
+                agent,
+                business: business_id,
+                owed,
+            });
+        }
+        Intent::TakeJob {
+            agent,
+            business,
+            role,
+        } => {
+            *applied.entry((business, role)).or_insert(0) += 1;
+            let Some((house_id, headcount, wage)) = world
+                .businesses()
+                .find(|(_, b)| b.id == business)
+                .and_then(|(house, b)| {
+                    b.roles
+                        .get(&role)
+                        .map(|slot| (house.id, slot.headcount, slot.wage))
+                })
+            else {
+                return; // business or slot vanished — intents don't outlive facts
+            };
+            // Re-check live state: an earlier hire this phase may have
+            // filled the slot, and the agent must still be unemployed.
+            let still_unemployed = world
+                .agent(agent)
+                .is_some_and(|person| person.workplace.is_none());
+            if !still_unemployed || staff_in_role(world, house_id, role) >= headcount {
+                return;
+            }
+            if world.assign_workplace(agent, house_id, role).is_err() {
+                return;
+            }
+            *landed.entry((business, role)).or_insert(0) += 1;
+            report.events.push(Event::Hired {
+                agent,
+                business,
+                role,
+                wage,
+            });
+        }
+        Intent::Buy { .. } => {
+            unreachable!("the labor apply only receives phase-1 intents")
+        }
+    }
 }
 
 /// Phase 2: labor + inputs → goods. Money ops allowed: none. Output
@@ -371,6 +661,9 @@ fn apply_goods_intent(
                 units,
                 price,
             });
+        }
+        Intent::TakeJob { .. } | Intent::Quit { .. } => {
+            unreachable!("the goods apply only receives phase-4 intents")
         }
     }
 }
@@ -1229,6 +1522,259 @@ mod tests {
         let mut report = TickReport::default();
         pay_wages(&mut world, &mut report);
         // nothing is owed, so there is no shortfall to narrate
+        assert_eq!(report.events, vec![]);
+    }
+
+    // --- Pack-3 labor-market tests: phase 1 hires, quits, and floats wages ---
+
+    /// A business with one open Labourer slot at `wage` and no workers —
+    /// the labor market's raw material. Returns (house, business account).
+    fn open_slot_business(
+        world: &mut World,
+        address: &str,
+        product: Good,
+        wage: Money,
+    ) -> (HouseId, AgentId) {
+        let house = world.add_house(address, vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(Role::Labourer, RoleSlot { wage, headcount: 1 });
+        let business = world
+            .create_business(house, product, Money::new(1), roles)
+            .expect("fresh house");
+        (house, business)
+    }
+
+    #[test]
+    fn hiring_fills_the_slot_and_moves_no_money() {
+        let mut world = World::new();
+        let (house, farm) = open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        let unemployed = world.spawn_agent("u", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Hired {
+                agent: unemployed,
+                business: farm,
+                role: Role::Labourer,
+                wage: Money::new(35),
+            }]
+        );
+        let agent = world.agent(unemployed).unwrap();
+        assert_eq!(agent.workplace, Some(house));
+        assert_eq!(agent.employed_role, Some(Role::Labourer));
+        // phase 1's money-op row is "none": nothing entered the books
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::ZERO);
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn unfilled_slot_raises_the_wage_only_when_affordable() {
+        // nobody to hire — the vacancy is the raise signal
+        let mut world = World::new();
+        let (farm_house, farm) = open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        // one coin short of the stepped bill (38 × headcount 1): held
+        world.accounts.mint(farm, Metal::Gold, Money::new(37));
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+        // exactly the stepped bill: the raise posts, effective next tick
+        world.accounts.mint(farm, Metal::Gold, Money::new(1));
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::WageMoved {
+                business: farm,
+                role: Role::Labourer,
+                from: Money::new(35),
+                to: Money::new(38),
+            }]
+        );
+        let wage = world
+            .house(farm_house)
+            .unwrap()
+            .business
+            .as_ref()
+            .unwrap()
+            .roles[&Role::Labourer]
+            .wage;
+        assert_eq!(wage, Money::new(38));
+    }
+
+    #[test]
+    fn stale_takejob_dies_on_live_headcount() {
+        let mut world = World::new();
+        let (farm_house, farm) = open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        let first = world.spawn_agent("a", None, None);
+        let second = world.spawn_agent("b", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        // both raced the one slot off the same snapshot; ascending id wins,
+        // the loser's stale intent dies on the live headcount re-check —
+        // and becomes the queue that lowers the wage for next tick
+        assert_eq!(
+            report.events,
+            vec![
+                Event::Hired {
+                    agent: first,
+                    business: farm,
+                    role: Role::Labourer,
+                    wage: Money::new(35),
+                },
+                Event::WageMoved {
+                    business: farm,
+                    role: Role::Labourer,
+                    from: Money::new(35),
+                    to: Money::new(32),
+                },
+            ]
+        );
+        assert_eq!(world.agent(first).unwrap().workplace, Some(farm_house));
+        // nothing about the loser changed
+        let loser = world.agent(second).unwrap();
+        assert_eq!(loser.workplace, None);
+        assert_eq!(loser.employed_role, None);
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::ZERO);
+    }
+
+    #[test]
+    fn hire_earns_role_wage_next_pay_wages() {
+        let mut world = World::new();
+        let (_, farm) = open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        world.accounts.mint(farm, Metal::Gold, Money::new(50));
+        let unemployed = world.spawn_agent("u", None, None);
+        let report = tick(&mut world);
+        // hired in phase 1, paid in phase 3 — the same tick's payroll
+        // sees the employed_role write (a workplace-only hire would
+        // never earn: `roleless_worker_earns_nothing`)
+        assert!(report.events.contains(&Event::Hired {
+            agent: unemployed,
+            business: farm,
+            role: Role::Labourer,
+            wage: Money::new(35),
+        }));
+        assert!(report.events.contains(&Event::WagePaid {
+            business: farm,
+            worker: unemployed,
+            amount: Money::new(35),
+        }));
+    }
+
+    #[test]
+    fn quit_on_arrears_fires_at_n_preserves_owed_to_and_clears_role() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        // a broke farm: every payroll accrues the full wage as arrears
+        for _ in 0..QUIT_ARREARS_BILLS {
+            pay_wages(&mut world, &mut TickReport::default());
+        }
+        // exactly N bills owed (105) is endured — strictly-greater rule
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+        assert_eq!(world.agent(worker).unwrap().workplace, Some(farm_house));
+        // one more unpaid tick crosses the threshold
+        pay_wages(&mut world, &mut TickReport::default());
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Quit {
+                agent: worker,
+                business: farm,
+                owed: Money::new(140),
+            }]
+        );
+        let quitter = world.agent(worker).unwrap();
+        assert_eq!(quitter.workplace, None);
+        assert_eq!(quitter.employed_role, None);
+        // the debt survives the walkout (settlement is pack 4's)
+        assert_eq!(owed(&world, farm_house, worker), Money::new(140));
+        // and the deadbeat exclusion holds: the only open slot belongs to
+        // the employer still owing them, so the quitter stays out
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+        assert_eq!(world.agent(worker).unwrap().workplace, None);
+    }
+
+    #[test]
+    fn wage_writeback_steers_only_the_next_matching() {
+        let mut world = World::new();
+        let house = world.add_house("Farm", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 2,
+            },
+        );
+        let farm = world
+            .create_business(house, Good::Food, Money::new(1), roles)
+            .unwrap();
+        world.accounts.mint(farm, Metal::Gold, Money::new(200));
+        let first = world.spawn_agent("a", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        // hired at the snapshot wage; the still-open second slot raises
+        // AFTER matching (38 × 2 = 76 ≤ 200, affordable)
+        assert_eq!(
+            report.events,
+            vec![
+                Event::Hired {
+                    agent: first,
+                    business: farm,
+                    role: Role::Labourer,
+                    wage: Money::new(35),
+                },
+                Event::WageMoved {
+                    business: farm,
+                    role: Role::Labourer,
+                    from: Money::new(35),
+                    to: Money::new(38),
+                },
+            ]
+        );
+        // the raise is only visible to the NEXT decide
+        let second = world.spawn_agent("b", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Hired {
+                agent: second,
+                business: farm,
+                role: Role::Labourer,
+                wage: Money::new(38),
+            }]
+        );
+    }
+
+    #[test]
+    fn settled_labor_market_emits_nothing() {
+        // fully staffed, funded, nobody unemployed, no arrears: phase 1
+        // is silent — no held-wage or no-op events
+        let mut world = World::new();
+        let (_, farm, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        world.accounts.mint(farm, Metal::Gold, Money::new(100));
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
         assert_eq!(report.events, vec![]);
     }
 

@@ -225,7 +225,6 @@ impl World {
     /// shape as [`assign_home`](World::assign_home); no firm-side checks
     /// in v1 — any existing house qualifies, and headcount capping is
     /// the labor-market apply's job, not this command's.
-    #[allow(dead_code)] // no caller until the labor market lands (item 3)
     pub fn assign_workplace(
         &mut self,
         agent: AgentId,
@@ -247,7 +246,6 @@ impl World {
     /// Clears `agent`'s workplace AND `employed_role` together (the
     /// employed_role-implies-workplace invariant survives quitting);
     /// already-unemployed is an Ok no-op.
-    #[allow(dead_code)] // no caller until the labor market lands (item 3)
     pub fn vacate_workplace(&mut self, agent: AgentId) -> Result<(), WorldError> {
         match self.agent_mut(agent) {
             Some(person) => {

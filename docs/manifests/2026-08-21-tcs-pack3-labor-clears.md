@@ -25,7 +25,8 @@ near-full employment with no wage rising monotonically.
 | Open slots in `town_world` | **zero** — all 6 businesses seeded staffed to headcount (16 = Σ headcount); the 14 unemployed have nothing to apply to until worldgen opens slots |
 | Workplace commands | `assign_workplace(agent, house)` / `vacate_workplace(agent)` dead code (`#[allow]`), callers = own tests; neither touches `employed_role` |
 | `Role::ALL` / `Role::Engineer` | `#[allow(dead_code)]` — "no caller until the labor market lands" |
-| Structural job ceiling under the frozen 07-19 goods table | **~22 of 30**: Food must run surplus (8 staff × 40 ≥ 300 demand — more farm staff floors prices), ent/lux must run scarcity (supply < demand ⇒ ent staff ≤ 7 at rate 20 vs 150, lux staff ≤ 7 at rate 8 vs 60) — both regimes measured in pack 2, not taste. 8 + 7 + 7 = 22. Near-full (27) is reachable only by cutting ent/lux production rates — a goods-table deviation the spec sanctions when the soak cannot pass without it |
+| Structural job ceiling under the frozen 07-19 goods table | **~22 of 30**: Food must run surplus (8 staff × 40 ≥ 300 demand — more farm staff floors prices), ent/lux must run scarcity (supply < demand ⇒ ent staff ≤ 7 at rate 20 vs 150, lux staff ≤ 7 at rate 8 vs 60) — both regimes measured in pack 2, not taste. 8 + 7 + 7 = 22. Near-full (27) is reachable only by cutting ent/lux production rates — a 07-19 goods-table change under that table's own recorded status (free gameplay knob, change-spec-first) and the pack-2 flagged-deviation precedent. **Flagged up front: item 5's outcome is a choice between that cut and freezing at the measured maximum — the owner rules either way via the PR** |
+| Lux venue solvency (measured at item 2+3, quits disabled) | **Structurally insolvent at seed wages**: Karat & Co / Silverthread arrears grow unboundedly, 1320g total by t100 (~2× 40g payroll vs ~73g/tick revenue at market-clearing lux prices). No finite quit threshold N avoids quits in the 100-tick soak — the resolution is solvent seed wages (item 4), not N |
 
 ## Decisions (this pack's, within the spec's contracts)
 
@@ -46,10 +47,13 @@ near-full employment with no wage rising monotonically.
   a refinement recorded here.
 - **Quit rule**: quit when `owed_to[worker] > N × their slot's live wage`
   (N = `QUIT_ARREARS_BILLS`, first guess 3, soak-tuned). A worker whose
-  role isn't slotted accrues nothing and never quits this way; a zero-wage
-  slot likewise. N must clear the tuned economy's transient arrears — the
-  pack-2 100-tick soak must not fire spurious quits (tuning constraint,
-  item 5).
+  role isn't slotted accrues nothing and never quits this way; a fresh
+  zero-wage worker (owed = 0) likewise — though a zero-wage slot with
+  pre-existing arrears would quit immediately (0 threshold), unreachable
+  in shipped worlds since the wage floor is `Money(1)`. *(Measured after
+  drafting: no N clears the pack-2 economy — its lux venues are
+  structurally insolvent and arrears grow without bound, see the arrival
+  table. Item 4 owns the fix: solvent seed wages.)*
 - **`adjust_wage`'s `applicants` param is the stale queue** — applications
   for that (business, role) that did NOT land this tick ("queue of
   applicants → lower", CLAUDE.md roadmap). Post-matching, `open_slots > 0`
@@ -58,21 +62,27 @@ near-full employment with no wage rising monotonically.
   one step; open == 0 && queue > 0 → lower one step (floor `Money(1)`);
   else hold. Step mirrors `adjust_price`: `max(1, wage / 10)`,
   constants alongside. `market::stepped_wage` (small pure helper) is
-  exported so the caller can build `affordable` (coffer ≥ one tick's
-  full-staffing bill at the stepped wage) without duplicating the step
-  formula outside market.rs (§8.6).
+  exported so the caller can build `affordable` without duplicating the
+  step formula outside market.rs (§8.6) — a cross-boundary helper, so it
+  is lifted into the spec (Errata) rather than living only here.
+  **`affordable` is net of arrears** — coffer ≥ stepped full-staffing
+  bill + `owed_total()` (spec Errata, measured: the coffer-only gate
+  passes for a venue with 1320g of wage debt and its raises feed the
+  churn; net of arrears, churned wages ratchet down 40→36→33→30 toward
+  real revenue).
 - **Write-back timing**: end of phase 1, same as price write-back ends
   phase 4. "Effective next tick" binds the *matching decide* (it only ever
   sees the snapshot); phase 3 payroll reads the live slot wage the way
   produce reads live staffing — so a raise lands in the same tick's
   payroll. `Event::Hired` carries the snapshot wage the agent was hired
   at; the market may move it before payday (display-level, documented).
+  Recorded as a spec Erratum (with the hire-paid-same-tick reading), not
+  a manifest-only note — the next plan-writer must not re-discover it.
 - **`hire_earns_role_wage_next_pay_wages` pins phase order**: a tick-T
   hire is paid at tick T's `pay_wages` — phase 1 precedes phase 3 inside
-  one tick. (The spec's acceptance list says "the following tick" in
-  passing; the test name and the Intent contract's rationale — the
-  `employed_role` write is what makes payroll see the hire — pin the
-  phase-order truth. Recorded, not silently absorbed.)
+  one tick. (The spec's acceptance list said "the following tick"; the
+  Erratum corrects it to "at that tick's `pay_wages`". The test keeps
+  the spec's name.)
 - **Event variants (plan-owned fields)**:
   `Hired { agent, business, role, wage }`,
   `Quit { agent, business, owed }` (owed = the preserved arrears at
@@ -100,19 +110,33 @@ near-full employment with no wage rising monotonically.
   re-pin is this item's own deliberate close, quoting `money::`/`market::`
   output (pack-2 precedent).
 - **Near-full = ≥ 27 of 30 (90%) at tick 50**, plus ≥ 1 `Hired` by
-  tick 3 ("within a few ticks"), plus per-(business, role) the posted
-  wage series — sampled in force, before each tick — is never
-  (nondecreasing ∧ rose) over the soak (the affordability gate's pin,
-  same form as the price criterion). The pack-2 100-tick soak must stay
-  green with phase 1 live: tuning satisfies the UNION of both soaks.
+  tick 3 ("within a few ticks"), plus the wage-monotone criterion,
+  refined so the designed end state can pass it: per (business, role)
+  the posted wage series — sampled in force, before each tick — is
+  never strictly increasing across the evaluated span, and any series
+  that rose without ever falling must be constant over its final 10
+  ticks (proof the affordability gate engaged and plateaued the rise —
+  a chronically unfillable slot raising-then-plateauing is the spec's
+  own designed behavior, not a failure; an ungated unbounded rise is).
+  The pack-2 100-tick soak must stay green with phase 1 live: tuning
+  satisfies the UNION of both soaks.
+- **The cascade ratchet is measured, not assumed**: `plan_application`
+  sends the whole pool to the single argmax offer, so businesses fill
+  one at a time and every other open business raises one step per tick
+  while it waits (traced pre-tuning: a last-filling venue ratchets
+  several steps above seed before its turn). Item 5 measures the
+  post-cascade in-force wage per business and seeds wages/coffer depth
+  so the settled payroll stays under sustainable revenue.
 - **Authorized tuning levers, in order**: worldgen constants (headcounts,
   seeded wages, wallets, shelves, coffer depth, N); then the 07-19
-  goods table (production-rate cuts for ent/lux — spec-sanctioned "only
-  as a recorded deviation", 07-19 spec table updated first, its pinned
-  test after). The arrival arithmetic says 27 needs the second lever
-  (e.g. ent 20→12, lux 8→5 ⇒ 8+10+10 = 28 jobs). If even that cannot
-  hold the union, freeze at the measured maximum and record the
-  deviation, flagged to the owner (pack-2 precedent).
+  goods table (production-rate cuts for ent/lux — that table's own
+  recorded status is a free gameplay knob with a change-spec-first
+  procedure, and pack 2 set the flagged-deviation precedent; the 07-19
+  spec table is updated first, its pinned test after). The arrival
+  arithmetic says 27 needs the second lever (e.g. ent 20→12, lux 8→5 ⇒
+  8+10+10 = 28 jobs). If even that cannot hold the union, freeze at the
+  measured maximum and record the deviation, flagged to the owner
+  (pack-2 precedent).
 
 ## Items
 
@@ -197,3 +221,45 @@ near-full employment with no wage rising monotonically.
 - **2026-08-21** — **drafted and started.** Go given ("start pack 3").
   Items 1–6 as above; baseline re-measured on arrival at a94fdaf:
   `VERIFY OK — fmt, clippy, build, tests all clean.` 119 passed, 0 failed.
+- **2026-08-21** — **manifest adversarially verified before
+  implementation** (3 lenses: contract fidelity / mechanics / test
+  design). No blockers. Applied: the same-tick write-back and
+  hire-paid-same-tick readings plus `stepped_wage` and the
+  net-of-arrears gate lifted into the spec as dated Errata (owner ack
+  via PR) instead of manifest-only notes; the "spec sanctions
+  goods-table cuts" mis-attribution corrected to the 07-19 table's own
+  free-knob status + pack-2 precedent, with the 27-needs-the-cut choice
+  flagged up front; the wage-monotone soak criterion refined so the
+  designed raise-then-plateau end state passes (strictly-increasing
+  forbidden; rose-without-falling must plateau its final 10 ticks); the
+  cascade ratchet (non-argmax open venues raise every tick while
+  queued) named as a measured tuning input; zero-wage quit wording made
+  exact; `Role::Engineer`'s stale allow added to the drop list.
+- **2026-08-21** — **item 1 landed (7bd4e2e).** `assign_workplace`
+  takes the role and writes `workplace` + `employed_role` together;
+  `vacate_workplace` clears both; Err changes neither. `CHECK OK`;
+  `world::` 24 passed, 0 failed.
+- **2026-08-21** — **items 2+3 landed (one commit by design — the
+  recorded dead-code forcing), and the union constraint they were
+  predicted to hit, measured:**
+  - The pure wage market (`JobOffer`/`Application`/`plan_application`,
+    `adjust_wage` + `stepped_wage`) with the full mirror test suite;
+    phase 1 wakes on the goods template (snapshot → quits then
+    applications → live-re-check apply → wage write-back);
+    `Event::{Quit, Hired, WageMoved}` narrated and starred in the
+    shell; dead-code allows dropped (workplace commands, `Role::ALL`,
+    `Role::Engineer`).
+  - **Measured: the pack-2 100-tick soak fails with phase 1 live**
+    (otto starves t66–70). Traced: the lux venues are structurally
+    insolvent at seed wages (arrears grow unboundedly, 1320g total by
+    t100 with quits disabled — ~80g payroll vs ~73g/tick market-bearing
+    revenue), so no finite `QUIT_ARREARS_BILLS` avoids quits; churned
+    workers accumulate creditor-exclusions at both lux venues and
+    starve wallet-empty. Under the coffer-only affordability gate the
+    churn *degenerates* (vacancy raises 40→44 against a four-figure
+    debt); net of arrears (Erratum) it *converges* — wages ratchet
+    40→36→33→30 with lengthening cycles toward real revenue — but the
+    frozen seeds still starve petra by t54. Resolution is item 4's:
+    solvent seed wages. `sim::` 36 / `market::` 18 / `world::` 24 /
+    `money::` 18 all green; the worldgen soak stays red until item 4 —
+    recorded here, not pushed red.

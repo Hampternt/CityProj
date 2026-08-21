@@ -89,6 +89,35 @@ widens. 17 is conditional on open question 2.)*
     gains "`transfer` business→departing agent, arrears settlement only,
     immediately preceding that agent's sweep to External".
 
+### Errata (recorded during pack 3, 2026-08-21 — flagged in PR #2 for owner ack)
+
+Three contract sentences below diverged from what the shipped phase order
+and the pack-3 measurements make true. Recorded here rather than silently
+diverged from (CLAUDE.md reconcile rule); the pack-3 ledger carries the
+traces.
+
+- **`adjust_wage` "effective next tick only"** binds the *matching
+  decide* — it only ever sees the phase-start snapshot. Phase-3 payroll
+  reads the live slot wage, the way produce reads live staffing, so a
+  write-back move lands in that same tick's payroll. Likewise the
+  acceptance line "receives the slot wage on the following tick" reads
+  "at that tick's `pay_wages`" — phase 1 precedes phase 3 inside one
+  tick (the test keeps the spec's name:
+  `hire_earns_role_wage_next_pay_wages`).
+- **`market::stepped_wage(wage: Money) -> Money`** joins the
+  `adjust_wage` contract: the exported raise-step formula
+  (`wage + max(1, wage/10)`) the caller uses to build `affordable` —
+  the affordability check cannot be computed without pricing the step,
+  and §8.6 keeps the formula in market.rs.
+- **`affordable` is net of arrears**: coffer ≥ one tick's full-staffing
+  bill at the stepped wage *plus the business's outstanding
+  `owed_total()`*. Measured: the coffer-only form passes for a venue
+  carrying four figures of wage debt (lux arrears reach 1320 by t100 in
+  the pack-2 economy), and its vacancy raises then feed the very churn
+  the gate exists to stop; net of arrears, churned wages ratchet *down*
+  toward the venue's real revenue (traced 40→36→33→30 with lengthening
+  cycles) — the gate's stated purpose, restored.
+
 ### Proposed pack sequence (the container manifest is written from this)
 
 Signing the gate approves this sequence as direction; the cut itself stays
