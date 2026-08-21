@@ -1,7 +1,7 @@
 //! The interactive shell: clear, render, read a command, tick. All
 //! simulation behavior lives in `sim::tick` — this file only draws frames
-//! and reads input. Loop mechanics are unchanged: Enter advances, q quits;
-//! typing an agent's name inspects it.
+//! and reads input. Enter advances, q quits; `roster` lists every agent;
+//! typing an agent's name (or a business's house address) inspects it.
 
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -33,7 +33,10 @@ enum Command {
     Quit,
     /// `map` (any case): export the terrain to map.json.
     Map,
-    /// Anything else is taken as an agent name to inspect.
+    /// `roster` (any case): list every agent on one line each.
+    Roster,
+    /// Anything else is taken as an agent name (or business address) to
+    /// inspect.
     Inspect(String),
 }
 
@@ -44,6 +47,9 @@ pub fn run() {
     let terrain = Terrain::generate(MAP_SEED, MAP_VERTICES, MAP_VERTICES, MAP_CELL_SIZE);
     let mut tick_count: u64 = 0;
     let mut last_report = TickReport::default();
+    // Shell-side memory of the feed: the last 3 lines each agent starred
+    // in (manifest decision — presentation state, never world state).
+    let mut history: HashMap<AgentId, Vec<String>> = HashMap::new();
 
     loop {
         // Redraw the frame in place so the display doesn't scroll downward.
@@ -53,11 +59,34 @@ pub fn run() {
         match read_command(tick_count) {
             Command::Quit => break,
             Command::Advance => {
-                last_report = sim::tick(&mut world);
+                let report = sim::tick(&mut world);
+                update_history(&mut history, &world, &report);
+                last_report = report;
                 tick_count += 1;
             }
-            Command::Inspect(name) => inspect(&world, &name),
+            Command::Roster => roster(&world),
+            Command::Inspect(name) => inspect(&world, &history, &name),
             Command::Map => export_map(&terrain),
+        }
+    }
+}
+
+/// Folds one tick's events into each starring agent's last-3 buffer.
+/// Business-only events (production, price moves) star nobody.
+fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, report: &TickReport) {
+    for event in &report.events {
+        let starring = match event {
+            Event::WagePaid { worker, .. } | Event::PayrollShort { worker, .. } => Some(*worker),
+            Event::Sold { buyer, .. } => Some(*buyer),
+            Event::WentHungry { agent } => Some(*agent),
+            Event::Produced { .. } | Event::PriceMoved { .. } => None,
+        };
+        if let Some(id) = starring {
+            let lines = history.entry(id).or_default();
+            if lines.len() == 3 {
+                lines.remove(0);
+            }
+            lines.push(render_event(world, event));
         }
     }
 }
@@ -351,7 +380,7 @@ fn describe_inventory(agent: &Agent) -> String {
 /// errors quit cleanly, same as before.
 fn read_command(tick_count: u64) -> Command {
     print!(
-        "[tick {tick_count}] Enter = advance · <agent name> = inspect · map = export map.json · q = quit > "
+        "[tick {tick_count}] Enter = advance · roster · <name> = inspect · map = export map.json · q = quit > "
     );
     // stdout is line-buffered; flush so the prompt shows before we block.
     let _ = io::stdout().flush();
@@ -362,9 +391,10 @@ fn read_command(tick_count: u64) -> Command {
         Ok(_) => match line.trim() {
             "" => Command::Advance,
             quit if quit.eq_ignore_ascii_case("q") => Command::Quit,
-            // Shadows any agent literally named "map" — acceptable for a
-            // debug command.
+            // Keywords shadow any agent literally so named — acceptable
+            // for shell commands.
             map if map.eq_ignore_ascii_case("map") => Command::Map,
+            roster if roster.eq_ignore_ascii_case("roster") => Command::Roster,
             name => Command::Inspect(name.to_string()),
         },
     }
@@ -378,29 +408,92 @@ fn export_map(terrain: &Terrain) {
         Ok(()) => println!("wrote map.json — open tools/map_viewer.html and load it"),
         Err(error) => println!("could not write map.json: {error}"),
     }
+    wait_for_enter();
+}
+
+/// Parks the output until Enter so the next clear-screen doesn't wipe it
+/// before it can be read.
+fn wait_for_enter() {
     print!("press Enter to continue... ");
     let _ = io::stdout().flush();
     let mut line = String::new();
     let _ = io::stdin().read_line(&mut line);
 }
 
-/// Prints one agent's details, then waits for Enter so the next clear-screen
-/// doesn't wipe them before they're read.
-fn inspect(world: &World, name: &str) {
-    match world.agent_by_name(name) {
-        Some(agent) => {
-            println!("{}:", agent.name);
-            println!("  balance   {}", compact_balances(world, agent.id));
-            println!("  home      {}", describe_house(world, agent.home));
-            println!("  workplace {}", describe_house(world, agent.workplace));
-            println!("  goods     {}", describe_inventory(agent));
-        }
-        None => println!("no agent named '{name}'"),
+/// One line per agent: job, employer, gold, pantry.
+fn roster(world: &World) {
+    println!("roster:");
+    for agent in &world.agents {
+        let job = match (agent.employed_role, agent.workplace) {
+            (Some(role), workplace @ Some(_)) => {
+                format!("{role} at {}", describe_house(world, workplace))
+            }
+            (None, workplace @ Some(_)) => {
+                format!("at {} (no role)", describe_house(world, workplace))
+            }
+            _ => "unemployed".to_string(),
+        };
+        println!(
+            "  {} — {job} · gold {} · {}",
+            agent.name,
+            world.accounts.balance_of(agent.id, Metal::Gold),
+            describe_inventory(agent),
+        );
     }
-    print!("press Enter to continue... ");
-    let _ = io::stdout().flush();
-    let mut line = String::new();
-    let _ = io::stdin().read_line(&mut line);
+    wait_for_enter();
+}
+
+/// Prints one agent's details (with their last 3 feed lines) or, when the
+/// name matches no agent, a business by its house address; then waits for
+/// Enter so the next clear-screen doesn't wipe it before it's read.
+fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
+    if let Some(agent) = world.agent_by_name(name) {
+        println!("{}:", agent.name);
+        println!("  balance   {}", compact_balances(world, agent.id));
+        println!("  home      {}", describe_house(world, agent.home));
+        println!("  workplace {}", describe_house(world, agent.workplace));
+        println!("  goods     {}", describe_inventory(agent));
+        println!("  recent:");
+        match history.get(&agent.id) {
+            Some(lines) if !lines.is_empty() => {
+                for line in lines {
+                    println!("    {line}");
+                }
+            }
+            _ => println!("    (nothing yet)"),
+        }
+    } else if let Some((house_id, business_id)) = world
+        .businesses()
+        .find(|(house, _)| house.address.eq_ignore_ascii_case(name))
+        .map(|(house, business)| (house.id, business.id))
+    {
+        let house = world.house(house_id).expect("found above");
+        let business = house.business.as_ref().expect("found above");
+        println!("{} (business):", house.address);
+        println!("  sells   {} @{}g", business.product, business.price);
+        println!("  stock   {}", business.stock);
+        println!("  coffers {}", compact_balances(world, business_id));
+        if business.owed_to.is_empty() {
+            println!("  owes    (nothing)");
+        } else {
+            // owed_to is a HashMap — sort the lines for a stable display.
+            let mut debts: Vec<String> = business
+                .owed_to
+                .iter()
+                .map(|(worker, amount)| format!("{} {amount}g", agent_name(world, *worker)))
+                .collect();
+            debts.sort();
+            println!("  owes    {}", debts.join(" · "));
+        }
+        let worker = world
+            .employee_of(house_id)
+            .map(|id| agent_name(world, id))
+            .unwrap_or_else(|| "(none)".to_string());
+        println!("  workers {worker}");
+    } else {
+        println!("no agent or business named '{name}'");
+    }
+    wait_for_enter();
 }
 
 #[cfg(test)]
