@@ -321,6 +321,69 @@ impl World {
             .map(|agent| agent.id)
             .collect()
     }
+
+    /// Removes `agent` from the world — the emigration command
+    /// (town-colony pack 4; Amendment 17). Validates first: only a real
+    /// spawned agent qualifies — reserved and business ids refuse — and
+    /// `Err(WorldError::UnknownAgent)` means nothing changed. Then, in
+    /// order: every business still owing the leaver settles
+    /// `min(gold coffer, owed)` into their wallet and the remainder is
+    /// written off (gate ruling 2 — the ledger entry goes either way);
+    /// every `Metal::ALL` balance sweeps to External through the §8.2
+    /// chokepoint, settlement included, inert silver/copper included —
+    /// no orphan balance survives, proven per-account by tests (the
+    /// totals-only audit cannot see a conservation-legal orphan); the
+    /// leaver's id is stripped from every `House.owners`; the `Agent` is
+    /// removed, which clears home/workplace/employed_role with it since
+    /// occupancy and staffing are derived, never stored. After
+    /// validation no internal transfer can fail — every amount is
+    /// min-bounded by a live balance and both ids are known — so the
+    /// command is atomic by construction.
+    #[allow(dead_code)] // no caller until phase 7's Depart lands (item 4)
+    pub fn remove_agent(&mut self, agent: AgentId) -> Result<(), WorldError> {
+        if self.agent(agent).is_none() {
+            return Err(WorldError::UnknownAgent(agent));
+        }
+        // Settlement (Amendment 17): businesses in houses order.
+        let debts: Vec<(HouseId, AgentId, Money)> = self
+            .businesses()
+            .filter_map(|(house, business)| {
+                business
+                    .owed_to
+                    .get(&agent)
+                    .copied()
+                    .filter(|&owed| owed > Money::ZERO)
+                    .map(|owed| (house.id, business.id, owed))
+            })
+            .collect();
+        for (house_id, business_id, owed) in debts {
+            let settlement = self.accounts.balance_of(business_id, Metal::Gold).min(owed);
+            if settlement > Money::ZERO {
+                self.pay(business_id, agent, Metal::Gold, settlement)
+                    .expect("min-bounded by the live coffer, both ids validated");
+            }
+            self.house_mut(house_id)
+                .expect("collected from businesses()")
+                .business
+                .as_mut()
+                .expect("collected from businesses()")
+                .owed_to
+                .remove(&agent); // remainder written off
+        }
+        // The per-metal sweep: everything they hold goes to External.
+        for metal in Metal::ALL {
+            let balance = self.accounts.balance_of(agent, metal);
+            if balance > Money::ZERO {
+                self.pay(agent, self.external_id, metal, balance)
+                    .expect("min-bounded by the live balance, both ids validated");
+            }
+        }
+        for house in &mut self.houses {
+            house.owners.retain(|&owner| owner != agent);
+        }
+        self.agents.retain(|person| person.id != agent);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -717,6 +780,193 @@ mod tests {
         let mut world = World::new();
         let a = world.spawn_agent("a", None, None);
         assert!(world.agent(a).unwrap().inventory.is_empty());
+    }
+
+    // --- Pack-4 emigration command ---
+
+    #[test]
+    fn remove_agent_sweeps_every_metal_no_orphans() {
+        let mut world = World::new();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world.accounts.mint(leaver, Metal::Gold, Money::new(12));
+        world.accounts.mint(leaver, Metal::Silver, Money::new(3));
+        world.accounts.mint(leaver, Metal::Copper, Money::new(5));
+        world.remove_agent(leaver).unwrap();
+        // per-account, per-metal — the spec insists totals-identical is
+        // vacuously true and the audit cannot see an orphan
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(leaver, metal), Money::ZERO);
+        }
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(12)
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Silver),
+            Money::new(3)
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Copper),
+            Money::new(5)
+        );
+        assert!(world.agent(leaver).is_none());
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn remove_agent_settles_min_coffer_owed_then_writes_off() {
+        // coffer covers the debt: full settlement rides to External with
+        // the sweep
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        let business = world
+            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world.accounts.mint(business, Metal::Gold, Money::new(100));
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::new(30));
+        world.remove_agent(leaver).unwrap();
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(70)
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(30)
+        );
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+        world.accounts.audit();
+
+        // coffer short of the debt: partial settlement, remainder written
+        // off — the entry leaves the ledger regardless
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        let business = world
+            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world.accounts.mint(business, Metal::Gold, Money::new(20));
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::new(50));
+        world.remove_agent(leaver).unwrap();
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::ZERO
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(20)
+        );
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+
+        // an empty coffer settles nothing but still writes the debt off
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        world
+            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::new(50));
+        world.remove_agent(leaver).unwrap();
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::ZERO
+        );
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn remove_agent_rejects_non_agents_with_nothing_changed() {
+        let mut world = World::new();
+        let house = world.add_house("Shop", vec![]);
+        let business = world
+            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        world.accounts.mint(business, Metal::Gold, Money::new(50));
+        let ghost = AgentId(99);
+        for refused in [ghost, world.mint_id, world.external_id, business] {
+            assert_eq!(
+                world.remove_agent(refused),
+                Err(WorldError::UnknownAgent(refused))
+            );
+        }
+        // nothing changed: the business account still stands untouched
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(50)
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn remove_agent_strips_ownership_and_derived_links() {
+        let mut world = World::new();
+        let leaver = world.spawn_agent("leaver", None, None);
+        let other = world.spawn_agent("other", None, None);
+        let home = world.add_house("1 Mill Lane", vec![leaver, other]);
+        let shop = world.add_house("Shop", vec![leaver]);
+        world
+            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        world.assign_home(leaver, home).unwrap();
+        world
+            .assign_workplace(leaver, shop, Role::Labourer)
+            .unwrap();
+        world.remove_agent(leaver).unwrap();
+        // ownership is stored, so the strip is explicit — no dangling ids
+        assert_eq!(world.house(home).unwrap().owners, vec![other]);
+        assert!(world.house(shop).unwrap().owners.is_empty());
+        // occupancy and staffing are derived, so removal IS the update
+        assert!(world.occupants_of(home).is_empty());
+        assert!(world.employees_of(shop).is_empty());
     }
 
     #[test]
