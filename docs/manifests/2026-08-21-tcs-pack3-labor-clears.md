@@ -101,14 +101,19 @@ near-full employment with no wage rising monotonically.
   (collect house ids, `house_mut`) — the spec's conditional stays unmet.
 - **Worldgen opens slots without touching seeded staffing**: the
   businesses table gains `seeded_staff` separate from `headcount`
-  (16 seeded employed stays exactly pack 2's 4/4/2/2/2/2); headcounts
-  rise to the structural ceiling first (farms hold at 4 — Food's mild
-  surplus is load-bearing; ent 3+4, lux 3+4 ⇒ 22 jobs). Shelves seed
-  `2 × rate × seeded_staff` (not headcount — shelves match the staff that
-  actually produce); coffers stay 3 × `wage_bill()` (bills grow with
-  headcount — deliberate slack for the wider payroll). Conservation
-  re-pin is this item's own deliberate close, quoting `money::`/`market::`
-  output (pack-2 precedent).
+  (16 seeded employed stays exactly pack 2's 4/4/2/2/2/2). *(AMENDED
+  during tuning — the drafted ent 3+4 / lux 3+4 (22 jobs) was measured
+  infeasible at lux: 7 lux staff is near-exact clearing, and the
+  last-filled venue bled; shipped shape: farms 4+4, ent 3+4, lux 3+3 ⇒
+  **21 jobs, 5 open at boot**.)* Lux seeds at wage 24, deliberately
+  BELOW its solvent level: the cascade ratchet (each still-open venue
+  raises one step per tick while queued behind the argmax) lands it at
+  the solvent ~26–27 post-fill — seeds anticipate the overshoot, since
+  after full hiring no queues exist to lower an overshot wage. Shelves
+  seed `2 × rate × seeded_staff` (not headcount — shelves match the
+  staff that actually produce); coffers stay 3 × `wage_bill()` (bills
+  price full headcount — open slots arrive pre-funded). Conservation
+  re-pin in the same item: gold 60548 / silver 300 / copper 600.
 - **Near-full = ≥ 27 of 30 (90%) at tick 50**, plus ≥ 1 `Hired` by
   tick 3 ("within a few ticks"), plus: once employment first reaches
   near-full it never falls back below it, and **zero `Event::Quit`
@@ -193,26 +198,23 @@ near-full employment with no wage rising monotonically.
   logic. Done: `./scripts/check.sh` clean; `cargo test sim::`,
   `market::`, `money::`, `world::` output quoted in the ledger. Touches:
   src/sim.rs, src/engine/game_loop.rs, src/world.rs, src/role.rs.
-- [ ] **4. Worldgen opens the slots (+ re-pin).** `seeded_staff` joins
-  the businesses table (staffing unchanged at 16); headcounts rise to
-  the no-goods-change ceiling (farms 4+4, ent 3+4, lux 3+4 ⇒ 22 jobs,
-  6 open at boot); shelves re-seed by `seeded_staff`; shape test updates
-  (staff == seeded_staff per business, headcount ≥ staff, Σ open
-  pinned); the conservation re-pin in the same deliberate item, new
-  per-metal constants + `money::`/`market::` output quoted. Done:
-  `./scripts/check.sh` clean; quoted gates. Touches:
-  src/engine/worldgen.rs.
-- [ ] **5. The 50-tick employment soak + tuning.**
+- [x] **4. Worldgen opens the slots (+ re-pin).** `seeded_staff` joins
+  the businesses table (staffing unchanged at 16); headcounts as
+  amended above (21 jobs, 5 open at boot); shelves re-seed by
+  `seeded_staff`; shape test updates (staff ≤ headcount, multi-worker
+  at seed, Σ open pinned); the conservation re-pin in the same
+  deliberate item (gold 60548). Done: `./scripts/check.sh` clean;
+  gates quoted in the ledger. Touches: src/engine/worldgen.rs.
+- [x] **5. The 50-tick employment soak + tuning.**
   `town_soak_reaches_near_full_employment`: ≥ 1 `Hired` by tick 3;
-  employed ≥ 27 at tick 50; no posted wage (per business/role, sampled
-  in force) rises monotonically. The pack-2 100-tick soak stays green
-  with hiring live — the union is the gate. Levers in the decided order;
-  goods-table changes only as recorded deviations (07-19 spec first);
-  measured shortfall → freeze at maximum, record, flag. Constants
-  frozen; the saga traced in the ledger. Done: both soaks green in
-  `cargo test`; final constants + deviations recorded. Touches:
-  src/engine/worldgen.rs, possibly src/goods.rs +
-  docs/superpowers/specs/2026-07-19-*.
+  employed ≥ `NEAR_FULL` by tick 50 and never falling back below it
+  once reached; no posted wage strictly rising, rose-without-falling
+  series plateaued. The pack-2 100-tick soak additionally asserts zero
+  quits and stays green with hiring live — the union was the gate.
+  Levers attempted in the decided order; `NEAR_FULL` frozen at the
+  measured **21**, not 27 — the lever-2 attempt and the deviation
+  record are in the ledger. Done: both soaks green in `cargo test`,
+  136 passed; constants frozen. Touches: src/engine/worldgen.rs.
 - [ ] **6. Pack close.** `./scripts/verify.sh` green; 3-lens review
   (spec-contract fidelity / §8 invariants / economy quality); ledger
   quotes real output and the new count; container entry updated;
@@ -282,3 +284,50 @@ near-full employment with no wage rising monotonically.
     solvent seed wages. `sim::` 36 / `market::` 18 / `world::` 24 /
     `money::` 18 all green; the worldgen soak stays red until item 4 —
     recorded here, not pushed red.
+- **2026-08-21** — **review fixes landed (040b340).** The 3-lens
+  verification's test-design findings applied: distinguishing tests for
+  the same-tick-quitter rule (independent solvent slot + order pin +
+  next-tick re-entry), the live-payroll divergence pin
+  (`Hired{wage: 35}` + `WagePaid{amount: 38}` in one report), the
+  floor-clamp hold, the full-slot-shadow case, N-relative quit-test
+  amounts. `CHECK OK`; sim:: 39 / market:: 18 green.
+- **2026-08-21** — **items 4+5 landed (993be4f) — the tuning saga,
+  measured, three rounds:**
+  1. *Drafted shape (ent 3+4, lux 3+4, lux wage 30):* the cascade
+     ratchet hired into Silverthread at 39 (each still-open venue
+     raises one step per tick while the argmax drains the whole pool),
+     and post-fill no queue exists to lower an overshot wage — the
+     overshoot is permanent. Silverthread at 4 staff bled → quits at
+     t31/t53, employment fell back. Two structural facts extracted:
+     seeds must anticipate the cascade overshoot, and 7 lux staff is
+     near-exact clearing (the pack-2 death mode).
+  2. *Shipped shape (lux 3+3 seeded at 24):* cascade lands lux solvent
+     at ~26–27; hiring completes t4 (quinn→Gilt@36, rosa+sam→Brass@39,
+     tessa→Karat@28, ulf→Silverthread@30); post-cascade wages Gilt 33 /
+     Brass 36 / Karat 26 / Silverthread 27; **zero quits, no arrears
+     above 72g, both soaks green.** Employment 21/30 from tick 4, held
+     through tick 50.
+  3. *Lever 2 attempted and measured (then reverted, commit-clean):*
+     07-19 cuts ent 20→12 / lux 8→5 with ent 5+5 / lux 5+5 (28 jobs).
+     Employment reached 27 at t4 but the last-filled lux venue churned
+     (shared-coffer payroll concentrates the shortfall on the last-paid
+     worker: tomas quit t21 owed 88, orla t27, bram next), and petra
+     starved by t92 — a ~24g lux wage sits below the ~27g food-spend at
+     prevailing prices. **The binding constraint is demand composition,
+     not production rates**: lux's revenue share of town spending
+     (~8–12%, fixed by the 07-19 weights and consumption caps) supports
+     ~3–4 lux jobs at a livable wage under ANY production rate; ent
+     caps near 10; ceiling ≈ 22 regardless. Production cuts move the
+     starvation, they don't remove it.
+- **2026-08-21** — **DEVIATION (flagged to the owner in the PR):
+  near-full employment frozen at 21/30 (70%), not ≥ 27 (90%).** The
+  spec's "near-full employment by tick 50" is unsatisfiable under the
+  07-19 demand composition: total sustainable jobs ≈ sector revenue
+  share ÷ subsistence wage, summed ≈ 21–22. Reaching 27+ requires
+  re-cutting the consumption/weight composition itself (more demand
+  outside Food) or new Goods — economy-reshaping surgery beyond a
+  production-rate knob, proposed as owner's-choice follow-up rather
+  than smuggled into this pack. The 9 permanently unemployed live off
+  savings and are pack 4's natural emigration pool — the colony-sim
+  story ("a town that cannot employ everyone sheds population") is
+  arguably better served by 21/30 than by full employment.
