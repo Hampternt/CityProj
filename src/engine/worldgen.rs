@@ -85,35 +85,40 @@ pub fn template_world() -> World {
 // pinned soak exit criteria, then frozen. All gold — silver and copper
 // stay inert savings until the market layer can price them.
 
-/// Wallet each employed agent starts with — a cushion over one wage so
-/// early price spikes don't starve anyone before pay day settles in.
-const EMPLOYED_WALLET: u64 = 60;
+/// Wallet each employed agent starts with — bridges the revenue drought
+/// a business sees before the price rotation first reaches it (its
+/// workers still buy while their wages accrue as arrears).
+const EMPLOYED_WALLET: u64 = 120;
 /// Savings each seeded-unemployed agent lives off until pack 3's labor
 /// market gives them income — sized to keep them buying Food through the
-/// 100-tick soak (the liveness criterion applies to them too).
-const UNEMPLOYED_SAVINGS: u64 = 2500;
+/// 100-tick soak with margin (the liveness criterion applies to them
+/// too; steady-state spend is ~25g/tick at settled prices).
+const UNEMPLOYED_SAVINGS: u64 = 4000;
 /// External's gold settlement fund: pack 4's immigration grubstakes draw
 /// from here; until then it sits on the books, audited like everything.
 const SETTLEMENT_FUND: u64 = 600;
 const SILVER_SAVINGS: u64 = 10;
 const COPPER_SAVINGS: u64 = 20;
+/// How many full-staffing wage bills each business's coffer starts with.
+const WAGE_BILLS_SEEDED: u32 = 3;
 
 /// Every named resident, spawn order = ascending `AgentId`. The first 24
 /// fill business slots in declaration order; the rest are seeded
 /// unemployed.
-const NAMES: [&str; 28] = [
+const NAMES: [&str; 30] = [
     "alice", "bob", "carol", "dave", "ed", "fiona", "george", "hana", "ivan", "judit", "karl",
     "lena", "marco", "nadia", "otto", "petra", "quinn", "rosa", "sam", "tessa", "ulf", "vera",
-    "will", "xenia", "yara", "zeno", "mira", "tomas",
+    "will", "xenia", "yara", "zeno", "mira", "tomas", "orla", "bram",
 ];
 
-/// The shipped town (town-colony spec, `town_world` contract): 28 agents
-/// across 4 occupied residences (7 each), 2 zero-occupant spare
-/// residences (pack 4's landing pads), and 8 multi-worker businesses over
-/// all three Goods — three competing Food farms among them. 24 agents are
-/// seeded employed, 4 unemployed (they live off savings until pack 3's
+/// The shipped town (town-colony spec, `town_world` contract): 30 agents
+/// across 4 occupied residences (7–8 each), 2 zero-occupant spare
+/// residences (pack 4's landing pads), and 6 multi-worker businesses over
+/// all three Goods — two competing sellers of each. 16 agents are
+/// seeded employed, 14 unemployed (they live off savings until pack 3's
 /// labor market). Each business is pre-funded with one full-staffing wage
-/// bill; External holds the settlement fund. Deterministic and seedless;
+/// bills (three deep — see below); External holds the settlement fund.
+/// Deterministic and seedless;
 /// its per-metal totals are the entire money supply, pinned by test and
 /// audit forever.
 pub fn town_world() -> World {
@@ -129,18 +134,34 @@ pub fn town_world() -> World {
     world.add_house("5 Weir Cottage", vec![]);
     world.add_house("6 Weir Cottage", vec![]);
 
-    // (address, product, price, wage, headcount) — supply outbuilds
-    // demand on every good: food 8×40=320 vs 280 eaten, entertainment
-    // 8×20=160 vs 140, luxury 8×8=64 vs 56.
+    // (address, product, price, wage, headcount) — soak-tuned, then
+    // frozen, all three regimes measured, not taste. FOOD runs a mild
+    // surplus (8×40=320 vs 30×10=300): surplus caps prices low while
+    // rotation sell-outs keep them moving, and the loser's backlog
+    // serves the buying-order tail. ENT and LUX run deliberate SCARCITY
+    // (80 vs 150 nominal, 32 vs 60): a staffer's output value at the
+    // floor (production_rate × 1g) is below any livable wage for these
+    // goods, so parity or surplus bankrupts their venues (measured —
+    // arrears in the thousands by t60); scarcity keeps their prices
+    // above the floor where revenue covers payroll, and only Food's
+    // liveness is universal by criterion. Not every agent gets
+    // entertainment every tick — that is the town's poverty, not a bug: with surplus every
+    // seller floors out and the houses-order tie-break routes all demand
+    // to the first forever; at parity the cheapest sells out, raises,
+    // and demand rotates. TWO sellers per good, measured, not taste: a
+    // third can never win a tick — the floor can't be undercut, ties
+    // favor earlier houses, and the loser-lowers step re-undercuts
+    // before a third's turn ever comes — so its payroll starves
+    // (recorded in the pack ledger as a deviation from the spec's "7–9
+    // businesses"; the mechanics admit exactly two solvent sellers per
+    // good until the market layer changes).
     let businesses = [
-        ("Greenrow Farm", Good::Food, 2u64, 35u64, 3u32),
-        ("Longacre Farm", Good::Food, 2, 35, 3),
-        ("Stonefield Farm", Good::Food, 3, 35, 2),
-        ("Gilt Curtain Theater", Good::Entertainment, 2, 32, 3),
-        ("The Brass Bell", Good::Entertainment, 2, 32, 3),
-        ("Riverlight Hall", Good::Entertainment, 3, 32, 2),
-        ("Karat & Co", Good::Luxury, 5, 40, 4),
-        ("Silverthread Atelier", Good::Luxury, 6, 40, 4),
+        ("Greenrow Farm", Good::Food, 2u64, 35u64, 4u32),
+        ("Longacre Farm", Good::Food, 3, 35, 4),
+        ("Gilt Curtain Theater", Good::Entertainment, 2, 36, 2),
+        ("The Brass Bell", Good::Entertainment, 3, 36, 2),
+        ("Karat & Co", Good::Luxury, 4, 40, 2),
+        ("Silverthread Atelier", Good::Luxury, 5, 40, 2),
     ];
 
     let mut next_name = 0;
@@ -164,10 +185,25 @@ pub fn town_world() -> World {
             .as_ref()
             .expect("just created")
             .wage_bill();
-        world.accounts.mint(business, Metal::Gold, bill);
+        // Three bills deep, not one: the demand rotation takes several
+        // ticks to first reach each seller, and payroll must survive
+        // that drought (soak-tuned, then frozen).
+        world
+            .accounts
+            .mint(business, Metal::Gold, bill.times(WAGE_BILLS_SEEDED));
+        // Shelves start two ticks deep: without opening stock, the first
+        // ticks create pantry deficits in the late buying order that an
+        // exactly-cleared market can never absorb again (soak-tuned).
+        world
+            .house_mut(house)
+            .expect("just added")
+            .business
+            .as_mut()
+            .expect("just created")
+            .stock = 2 * product.production_rate() * headcount;
         for _ in 0..headcount {
             let name = NAMES[next_name];
-            let home = residences[next_name / 7];
+            let home = residences[next_name / 8];
             next_name += 1;
             let worker = world.spawn_agent(name, Some(home), Some(house));
             world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
@@ -175,7 +211,7 @@ pub fn town_world() -> World {
     }
     // The rest are unemployed until pack 3's labor market hires them.
     while next_name < NAMES.len() {
-        world.spawn_agent(NAMES[next_name], Some(residences[next_name / 7]), None);
+        world.spawn_agent(NAMES[next_name], Some(residences[next_name / 8]), None);
         next_name += 1;
     }
 
@@ -230,14 +266,14 @@ mod tests {
     #[test]
     fn town_world_has_the_decided_shape() {
         let world = town_world();
-        // 28 agents, 24 employed, 4 unemployed
-        assert_eq!(world.agents.len(), 28);
+        // 30 agents, 16 employed, 14 unemployed (pack 3's hiring pool)
+        assert_eq!(world.agents.len(), 30);
         let employed = world
             .agents
             .iter()
             .filter(|a| a.workplace.is_some())
             .count();
-        assert_eq!(employed, 24);
+        assert_eq!(employed, 16);
         // every employed agent has a slotted role (they must earn)
         assert!(
             world
@@ -246,9 +282,9 @@ mod tests {
                 .filter(|a| a.workplace.is_some())
                 .all(|a| a.employed_role.is_some())
         );
-        // 14 houses: 4 occupied residences + 2 vacant spares + 8 premises
-        assert_eq!(world.houses.len(), 14);
-        assert_eq!(world.businesses().count(), 8);
+        // 12 houses: 4 occupied residences + 2 vacant spares + 6 premises
+        assert_eq!(world.houses.len(), 12);
+        assert_eq!(world.businesses().count(), 6);
         // ≥2 competing Food sellers, and every Good is produced
         for good in Good::ALL {
             let sellers = world
@@ -275,5 +311,110 @@ mod tests {
             assert!(headcount > 1, "{} is multi-worker", house.address);
         }
         world.accounts.audit();
+    }
+
+    /// The pack-2 conservation re-pin (one deliberate item): town_world's
+    /// per-metal totals are the entire money supply, forever — the audit
+    /// holds them here every tick. Gold = 6 coffers at three full-staffing
+    /// bills (3×584) + 16 employed wallets of 120 + 14 savings of 4000 +
+    /// External's 600 fund. A worldgen change must change these constants
+    /// consciously, in its own item.
+    #[test]
+    fn town_world_seeds_the_decided_metals() {
+        let world = town_world();
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(60272));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(60272));
+        assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(300));
+        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(300));
+        assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(600));
+        assert_eq!(world.accounts.total_minted(Metal::Copper), Money::new(600));
+        world.accounts.audit();
+    }
+
+    /// The spec's pinned soak exit criteria (town-colony spec, "Pinned
+    /// soak exit criteria"): the tuning constants above were iterated
+    /// until this held, then frozen. 100 ticks, evaluated from tick 10
+    /// (warm-up excluded); the audit runs inside every `tick`, so any §8
+    /// break panics the soak.
+    #[test]
+    fn town_soak_holds_the_pinned_exit_criteria() {
+        use crate::sim::{self, Event};
+
+        const LAST: u64 = 100;
+        const FROM: u64 = 10; // warm-up excluded
+        const WINDOW: u64 = 5;
+        let floor = Money::new(1);
+
+        let mut world = town_world();
+        let mut food_ticks: HashMap<AgentId, Vec<u64>> = HashMap::new();
+        let mut cheapest: HashMap<Good, Vec<Money>> = HashMap::new();
+        let (mut rises, mut falls) = (0u32, 0u32);
+
+        for t in 1..=LAST {
+            let report = sim::tick(&mut world);
+            for event in &report.events {
+                match event {
+                    Event::Sold {
+                        buyer,
+                        good: Good::Food,
+                        ..
+                    } => food_ticks.entry(*buyer).or_default().push(t),
+                    Event::PriceMoved { from, to, .. } if t >= FROM => {
+                        if to > from {
+                            rises += 1;
+                        } else {
+                            falls += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // cheapest posted price per good at tick end
+            for good in Good::ALL {
+                let min = world
+                    .businesses()
+                    .filter(|(_, b)| b.product == good)
+                    .map(|(_, b)| b.price)
+                    .min()
+                    .expect("every good has sellers");
+                cheapest.entry(good).or_default().push(min);
+            }
+        }
+
+        // 1. every agent completes ≥1 Food purchase in every rolling
+        //    5-tick window of the evaluated span
+        for agent in &world.agents {
+            let ticks = food_ticks
+                .get(&agent.id)
+                .unwrap_or_else(|| panic!("{} never bought Food", agent.name));
+            for start in FROM..=(LAST - WINDOW + 1) {
+                assert!(
+                    ticks.iter().any(|&t| t >= start && t < start + WINDOW),
+                    "{} bought no Food in ticks {start}–{}",
+                    agent.name,
+                    start + WINDOW - 1,
+                );
+            }
+        }
+
+        // 2. per Good — not per seller: the cheapest posted price neither
+        //    sits at the floor for the whole span nor rises monotonically
+        for good in Good::ALL {
+            let series = &cheapest[&good][(FROM as usize - 1)..];
+            assert!(
+                series.iter().any(|&p| p != floor),
+                "{good}'s cheapest price is floor-pinned all span"
+            );
+            let nondecreasing = series.windows(2).all(|w| w[1] >= w[0]);
+            let rose = series.last() > series.first();
+            assert!(
+                !(nondecreasing && rose),
+                "{good}'s cheapest price rises monotonically"
+            );
+        }
+
+        // 3. at least one price moves in both directions
+        assert!(rises > 0, "no price ever rose after warm-up");
+        assert!(falls > 0, "no price ever fell after warm-up");
     }
 }
