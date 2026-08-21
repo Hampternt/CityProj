@@ -13,24 +13,38 @@ part of the definition of merged. Manifests live in `docs/manifests/`.
 A city economy simulated from the household up, advanced one tick at a time
 from a terminal shell. Enter advances a tick, `q` quits.
 
-Each tick redraws the town in place: the money supply and where it sits,
-every house with its occupants and the business trading from it — what it
-sells, at what price, its stock, its coffers and any wages it owes — and
-every agent with their balance, home and the goods in their inventory.
+Each tick redraws the town in place under a header showing the tick,
+population, and employment counts, then narrates what just happened as an
+event feed: hires and quits, wage and price moves, production, payrolls
+(aggregated per business at town scale), sales, who went hungry, and who
+arrived in or left town. Below the feed sit the money summary and every
+house with its occupants and the business trading from it — what it sells,
+at what price, its stock, its coffers and any wages it owes.
 
-The seeded scenario is one household of four sharing a house, three of them
-employed at a farm, a theater and a jeweler — enough to watch a small
-economy run rather than a blank world.
+The seeded scenario is a town of thirty named residents across four
+occupied residences and two spare cottages, working six multi-worker
+businesses — two farms, two entertainment venues, two luxury workshops —
+with sixteen employed at seed and the rest finding work through the labor
+market in the opening ticks. Its constants were tuned against pinned soak
+criteria and frozen; the manifests record every measured deviation.
 
-Typing an agent's name is meant to inspect one person — their workplace as
-well as their holdings — but the detail is wiped by the next redraw before
-it can be read (observed 2026-08-15).
+`roster` lists every agent on a line — job, wallet, pantry. Typing an
+agent's name inspects one person (balances, home, workplace, goods, hunger,
+and the last three feed lines they starred in); typing a business's address
+inspects the business. Inspection output waits for Enter, so it can
+actually be read before the next redraw.
 
 ## What a tick does
 
 The behaviors you can watch play out over successive ticks:
 
-- **Businesses produce.** Each turns its inputs into stock it can sell.
+- **The labor market clears.** The unemployed apply to the best-paying open
+  slot; racing applicants are settled by live headcount. Posted wages float
+  — an unfilled slot raises its offer when the business can genuinely
+  afford it (net of wage debts), a queue of surplus applicants lowers it.
+  A worker owed too many ticks of back pay walks out, and never applies to
+  an employer still owing them.
+- **Businesses produce.** Each adds stock in proportion to its staff.
 - **Wages are paid from the employer's own coffers.** A business that cannot
   cover its payroll pays what it can and carries the rest as arrears, shown
   against the worker until revenue returns and clears it.
@@ -39,12 +53,22 @@ The behaviors you can watch play out over successive ticks:
 - **Prices move.** A business that sold out raises its price; one that didn't
   sell lowers it. New prices take effect the following tick, so a shortage
   and its correction are visible a tick apart.
-- **Goods are consumed**, which is what creates next tick's need.
+- **Goods are consumed**, which is what creates next tick's need — and an
+  agent who cannot cover a day's food goes visibly hungry, day after day.
+- **Population moves in both directions.** An agent worn down by hunger and
+  too poor to buy food leaves town: any back wages are settled as far as
+  the employer's coffer reaches, and everything they own — every metal —
+  is swept out through the External account, so nothing orphans. When a
+  job stands open long enough with a vacant residence to offer, a named
+  newcomer arrives on a small External-funded grubstake and applies for
+  work the next day. Immigration stalls by design when the fund drains or
+  no residence stands empty.
 
 Money is strictly conserved: each metal's total is fixed at whatever the
 world was seeded with, and the sim halts rather than continue if a tick ever
-fails to balance. Labor allocation, investment, degradation sinks and coin minting
-are not simulated yet — those ticks pass through untouched.
+fails to balance — arrivals and departures included. Investment,
+degradation sinks beyond emigration, and coin minting are not simulated
+yet — those ticks pass through untouched.
 
 - **Coins of three metals** rather than one abstract unit: every balance is
   held per metal (the shell shows them as `g:.. s:.. c:..`) and the
@@ -93,11 +117,8 @@ written are the map exports. Quality gates: `scripts/check.sh` (item) and
 
 ---
 
-🚧 **Town colony sim** — the sim at town scale with a narrated console, a
-phase-1 labor market, and migration through External; four packs in flight on
-`claude/town-colony-sim-p1s06q`
-([`docs/manifests/2026-08-21-town-colony-sim.md`](manifests/2026-08-21-town-colony-sim.md)).
-Folding this pointer into real entries is part of that container's DONE.
-
-*Previous: multi-metal money closed 2026-08-20
+*Previous: town colony sim closed 2026-08-21
+(`docs/manifests/2026-08-21-town-colony-sim.md`) — the narrated town
+console, the phase-1 labor market, and migration through External, folded
+into the entries above. Before that: multi-metal money, closed 2026-08-20
 (`docs/manifests/2026-08-15-multi-metal-money.md`).*

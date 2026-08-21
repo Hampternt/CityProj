@@ -46,7 +46,8 @@ new mechanics into the loop and money:
 - `src/metal.rs` — `Metal` (closed coinage-metal enum: gold/silver/copper)
   + hand-written `Metal::ALL` and lowercase `Display`; the orthogonal key
   for every balance and conservation total (07-12 spec).
-- `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
+- `src/agent.rs`, `src/housing.rs` — `Agent` (person, including the
+  pack-4 `hunger` stopgap counter) and `House` data types.
 - `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
   `Business`/`RoleSlot` (per-role wages, account-only money); phase 3
   (`pay_wages`) reads `employed_role` and `RoleSlot.wage` and keeps the
@@ -68,7 +69,11 @@ new mechanics into the loop and money:
   to the §8.2 chokepoint; `create_business` allocates account-only business
   ids from the agent counter; `businesses()` is the shared phase query;
   `pay` recognizes business ids (refactor Am. 14) and, since pack 2, names
-  its metal (`pay(from, to, metal, amount)`).
+  its metal (`pay(from, to, metal, amount)`); pack 4 added the migration
+  commands — `remove_agent` (validate, settle-then-write-off, per-metal
+  sweep to External, owners strip, remove) and `immigrate` (vacancy-gated
+  wrapper over the untouched `spawn_agent`, bumps the `arrivals` name
+  counter).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last, returning a `TickReport` of typed `Event`s (pure observation,
   Amendment 15); `goods_market` holds the worked decide→apply template;
@@ -94,10 +99,12 @@ new mechanics into the loop and money:
   houses, 6 multi-worker businesses, 16 seeded employed + open headcount
   for the labor market, soak-tuned frozen constants, per-metal totals
   pinned), and `template_world`, the small `#[cfg(test)]` fixture
-  (07-19 farm/theater/jeweler). Both soak tests live here — the
-  100-tick pinned-criteria soak (zero quits asserted) and the 50-tick
+  (07-19 farm/theater/jeweler). The three town soaks live here — the
+  100-tick pinned-criteria soak (zero quits asserted), the 50-tick
   employment soak (`NEAR_FULL` = 21 of 30, the measured ceiling — see
-  the pack-3 manifest's deviation record).
+  the pack-3 manifest's deviation record), and the 200-tick migration
+  soak (population moves both directions, arrivals answering the
+  demand shock, per-account no-orphan sweeps).
 - `src/engine/game_loop.rs` — interactive shell only (Enter advances a
   tick, `roster` lists agents, a name or business address inspects,
   `map` exports map.json, q quits): town header, aggregated per-tick
@@ -106,14 +113,22 @@ new mechanics into the loop and money:
   as compact `g/s/c` (pack 2, D2/D3).
 
 The loops run: phases 1 (labor market — hiring, arrears quits, wage
-tâtonnement; town-colony pack 3), 2 (produce, scaled by staff), 3 (wages
-from business coffers, shortfalls carried as `owed_to` arrears and
-repaid when revenue returns), 4 (goods market via `Intent::Buy`, then
-per-business `adjust_price` write-back — new prices take effect next
-tick), and 5 (consume) have behavior; phases 6, 7, and 8 are TODO
-stubs. The tick-time mint faucet is closed: worldgen's seed is the
-entire money supply and the audit pins it there. The shipped scenario
-is `town_world`. If you change structure, update this section.
+tâtonnement, and since pack 4 the immigration pull: a `RoleSlot`
+vacancy aged `VACANCY_PULL_TICKS`, a vacant residence, and External
+covering the `GRUBSTAKE` bring an `Intent::Arrive` — `immigrate` + the
+capped External→agent transfer, Amendment 16), 2 (produce, scaled by
+staff), 3 (wages from business coffers, shortfalls carried as `owed_to`
+arrears and repaid when revenue returns), 4 (goods market via
+`Intent::Buy`, then per-business `adjust_price` write-back — new prices
+take effect next tick), 5 (consume — also the single writer of
+`Agent.hunger`), and 7 (emigration only: `Intent::Depart` when hunger ≥
+`DEPART_HUNGER_TICKS` and gold below the cheapest posted Food price —
+`remove_agent` settles `min(coffer, owed)` per Amendment 17, sweeps
+every metal to External, and strips the leaver) have behavior; phases 6
+and 8, and phase 7's demurrage/imports, are TODO stubs. The tick-time
+mint faucet is closed: worldgen's seed is the entire money supply and
+the audit pins it there. The shipped scenario is `town_world`. If you
+change structure, update this section.
 
 Multi-metal money is DONE
 ([`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md),
