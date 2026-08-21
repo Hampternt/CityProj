@@ -117,6 +117,19 @@ traces.
   the gate exists to stop; net of arrears, churned wages ratchet *down*
   toward the venue's real revenue (traced 40→36→33→30 with lengthening
   cycles) — the gate's stated purpose, restored.
+- **"Near-full employment by tick 50" is unsatisfiable under the 07-19
+  demand composition — frozen at the measured 21/30.** Sustainable
+  jobs ≈ each sector's revenue share ÷ a subsistence wage: Food's mild
+  surplus caps farms at 8 staff, ent's ~25–30% spending share supports
+  ~7, lux's ~8–12% supports ~3–4 at any livable wage — under ANY
+  production rate (the lever-2 experiment cut ent 20→12 / lux 8→5,
+  reached 27 employed by t4, and starved lux workers whose ~24g wage
+  sat below the ~27g food spend; traced in the pack-3 manifest's
+  ledger, then reverted). Reaching 27+ requires reshaping the
+  consumption/weight composition itself or new Goods — proposed as an
+  owner's-choice follow-up, not smuggled into a pack. The 9
+  permanently unemployed live off savings and are pack 4's natural
+  emigration pool.
 
 ### Proposed pack sequence (the container manifest is written from this)
 

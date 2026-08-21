@@ -267,6 +267,10 @@ fn labor_market(world: &mut World, report: &mut TickReport) {
         // Affordable = the coffer covers one tick's full-staffing bill
         // with THIS role's wage stepped (the wage_bill precedent) — the
         // gate that keeps an insolvent business from posting raises.
+        // Sibling roles are priced at their LIVE wage, deliberately: an
+        // earlier same-tick raise (Role::ALL order) tightens the later
+        // roles' gates, never loosens them. Single-role in every
+        // shipped world; pinned here for the first two-role business.
         let stepped = market::stepped_wage(wage);
         let business = world
             .house(house_id)

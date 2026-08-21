@@ -92,7 +92,14 @@ const EMPLOYED_WALLET: u64 = 120;
 /// Savings each seeded-unemployed agent lives off until pack 3's labor
 /// market gives them income — sized to keep them buying Food through the
 /// 100-tick soak with margin (the liveness criterion applies to them
-/// too; steady-state spend is ~25g/tick at settled prices).
+/// too; steady-state spend is ~25g/tick at settled prices). Also the
+/// town's DEMAND FUSE (pack-3 close review, measured over 300 ticks):
+/// the frozen equilibrium is ~30% dis-saving-financed — coffers absorb
+/// ~90g/tick as one-way sinks while the 9 permanently unemployed
+/// dis-save ~225g/tick — so hunger reaches the unemployed from ~t150
+/// and the first quit lands ~t200. Both soak windows end before the
+/// fuse; pack 4's migration is the designed relief valve and its
+/// tuning must expect this, not rediscover it.
 const UNEMPLOYED_SAVINGS: u64 = 4000;
 /// External's gold settlement fund: pack 4's immigration grubstakes draw
 /// from here; until then it sits on the books, audited like everything.
@@ -316,7 +323,8 @@ mod tests {
             assert!(house.business.is_none());
         }
         // multi-worker slots, seeded staff within headcount, and open
-        // slots for the labor market to clear (pack 3: 22 jobs, 6 open)
+        // slots for the labor market to clear (pack 3: 21 jobs, 5 open —
+        // see the manifest's tuning saga and deviation record)
         let mut total_open = 0;
         for (house, business) in world.businesses() {
             let staff = world.employees_of(house.id).len() as u32;
@@ -337,7 +345,7 @@ mod tests {
     /// open headcounts widen the seeded bills, lux wages drop to
     /// solvency): town_world's per-metal totals are the entire money
     /// supply, forever — the audit holds them here every tick. Gold =
-    /// coffers at three full-headcount bills (3×742 = 2226) + 16
+    /// coffers at three full-headcount bills (3×676 = 2028) + 16
     /// employed wallets of 120 + 14 savings of 4000 + External's 600
     /// fund. A worldgen change must change these constants consciously,
     /// in its own item.
@@ -546,6 +554,16 @@ mod tests {
                     "{business:?}/{role} rose without falling and never plateaued: {series:?}"
                 );
             }
+            // and no slow sawtooth escapes both checks above: every
+            // wage ends within ~2 raise-steps of where it started —
+            // the cascade's measured overshoot, not an unbounded climb
+            let bound = crate::market::stepped_wage(crate::market::stepped_wage(
+                *series.first().expect("series has one entry per tick"),
+            ));
+            assert!(
+                *series.last().expect("series has one entry per tick") <= bound,
+                "{business:?}/{role} climbed past the cascade bound: {series:?}"
+            );
         }
     }
 }

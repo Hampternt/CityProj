@@ -1,6 +1,9 @@
 # Town colony sim — Pack 3: Labor clears
 
-**Status:** IN PROGRESS 2026-08-21 — drafted on the owner's "start pack 3".
+**Status:** DONE 2026-08-21 — all items landed, tuned, and reviewed; close
+gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 136 passed (119
+on arrival, +17). One measured deviation (employment 21/30) and four spec
+Errata — recorded below, flagged to the owner in the PR.
 **Container:** [2026-08-21-town-colony-sim.md](2026-08-21-town-colony-sim.md)
 **Spec contracts executed here:** `market::adjust_wage`,
 `market::{JobOffer, Application, plan_application}`, `Intent::{TakeJob, Quit}`
@@ -155,7 +158,7 @@ near-full employment with no wage rising monotonically.
 
 ## Items
 
-- [ ] **1. Workplace commands learn roles.**
+- [x] **1. Workplace commands learn roles.**
   `assign_workplace(agent, house, role)` writes `workplace` and
   `employed_role` together (the agent.rs reserved extension);
   `vacate_workplace` clears both. Existing tests updated to the new
@@ -164,7 +167,7 @@ near-full employment with no wage rising monotonically.
   item 3 wires the phase (recorded so review doesn't flag it). Done:
   `./scripts/check.sh` clean; `cargo test world::` green. Touches:
   src/world.rs, src/agent.rs (doc note).
-- [ ] **2. The pure wage market.** `JobOffer`/`Application`/
+- [x] **2. The pure wage market.** `JobOffer`/`Application`/
   `plan_application` (highest wage with `open_slots > 0`, skipping
   `owed_by`; ties ascending business id then `Role::ALL` order; `None`
   when nothing open — asserted iteration-order-free) and `adjust_wage`
@@ -174,7 +177,7 @@ near-full employment with no wage rising monotonically.
   Lands in ONE COMMIT with item 3 — an unconsumed pure layer is dead
   code under the clippy gate (third use of the recorded forcing).
   Touches: src/market.rs.
-- [ ] **3. Phase 1 wakes.** `Intent::{TakeJob, Quit}`;
+- [x] **3. Phase 1 wakes.** `Intent::{TakeJob, Quit}`;
   `Event::{Hired, Quit, WageMoved}`; `labor_market(world, report)` per
   the decisions above; apply re-checks live state (agent still
   unemployed; live staff-in-role < headcount) and forwards through the
@@ -215,12 +218,12 @@ near-full employment with no wage rising monotonically.
   measured **21**, not 27 — the lever-2 attempt and the deviation
   record are in the ledger. Done: both soaks green in `cargo test`,
   136 passed; constants frozen. Touches: src/engine/worldgen.rs.
-- [ ] **6. Pack close.** `./scripts/verify.sh` green; 3-lens review
+- [x] **6. Pack close.** `./scripts/verify.sh` green; 3-lens review
   (spec-contract fidelity / §8 invariants / economy quality); ledger
   quotes real output and the new count; container entry updated;
   CLAUDE.md code-state section (phase 1 no longer a stub); PR body
-  updated. Done: `VERIFY OK` quoted with count. Touches:
-  docs/manifests/*, CLAUDE.md.
+  updated. Done: `VERIFY OK — fmt, clippy, build, tests all clean.`
+  136 passed, 0 failed. Touches: docs/manifests/*, CLAUDE.md.
 
 ## Not in this pack unless you say so
 
@@ -331,3 +334,30 @@ near-full employment with no wage rising monotonically.
   savings and are pack 4's natural emigration pool — the colony-sim
   story ("a town that cannot employ everyone sheds population") is
   arguably better served by 21/30 than by full employment.
+- **2026-08-21** — **3-lens close review (contract / §8 invariants /
+  economy quality): zero blockers; applied.** Fixed: two stale
+  worldgen comments carrying the pre-tuning numbers ("22 jobs, 6 open";
+  "3×742 = 2226" — the pin itself was correct, independently re-derived
+  by the reviewer as 3×676 = 2028 → 60548); the 21/30 deviation lifted
+  into the spec as a fourth Erratum (a spec sentence the shipped code
+  makes false must not live only here); the multi-role affordability
+  bill's live-read sequencing pinned by comment (earlier same-tick
+  raises tighten, never loosen, later roles' gates — single-role in
+  every shipped world); the wage-monotone criterion's sawtooth gap
+  closed (every wage must end within ~2 raise-steps of its start);
+  items 1–3 checkboxes ticked. Reviewers confirmed: phase 1 provably
+  money-free, no `HashMap` order reaches behavior, every spec
+  acceptance test present and pinning what it names, all three Errata
+  implemented exactly.
+- **2026-08-21** — **measured and recorded (close review, economy
+  lens, 300-tick probe): the frozen equilibrium runs on a fuse.**
+  Demand is ~30% dis-saving-financed: business coffers absorb ~90g/tick
+  as one-way sinks (no profit distribution exists until phase 6) while
+  the 9 permanently unemployed dis-save ~25g/tick each. With the frozen
+  constants, hunger reaches the unemployed from ~t150 and the first
+  quit lands ~t200 — beyond both soak windows, inside pack 4's 200-tick
+  one. Recorded on `UNEMPLOYED_SAVINGS` in worldgen.rs: pack 4's
+  migration is the designed relief valve, and its tuning must expect
+  revenue ≈ payroll + coffer-accumulation, not rediscover it.
+- **2026-08-21** — **pack closes.** `VERIFY OK — fmt, clippy, build,
+  tests all clean.` 136 passed, 0 failed.

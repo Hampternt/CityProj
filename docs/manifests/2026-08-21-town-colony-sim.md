@@ -1,7 +1,7 @@
 # Town colony sim (container)
 
-**Status:** IN PROGRESS — gate signed 2026-08-21; packs 1 and 2 DONE
-2026-08-21, packs 3–4 proposed shape only.
+**Status:** IN PROGRESS — gate signed 2026-08-21; packs 1–3 DONE
+2026-08-21, pack 4 proposed shape only.
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-21-town-colony-sim-design.md](../superpowers/specs/2026-08-21-town-colony-sim-design.md)
 (approved 2026-08-21; drafted from a judged three-proposal synthesis, then
@@ -164,3 +164,20 @@ rates, seigniorage — 07-12) stay open where they live and block none of this.
   3-lens review: zero blockers; criterion-3 and sampling tightenings
   applied. Close gate quoted in the pack manifest: `VERIFY OK` 119
   passed. Next: pack 3 item manifest, on your go.
+- **2026-08-21** — **pack 3 closes** (nine commits, 7bd4e2e..close).
+  Phase 1 lives: the wage market's pure layer, `Intent::TakeJob`/`Quit`
+  on the template, arrears quitting with the deadbeat exclusion, wage
+  tâtonnement with the net-of-arrears affordability gate. The manifest
+  was adversarially verified BEFORE implementation (3 lenses — the
+  untestable-decision findings became distinguishing tests) and the
+  diff reviewed after (3 lenses, zero blockers). One measured deviation
+  flagged to the owner: employment frozen at 21/30 — the 07-19 demand
+  composition's ceiling, proven by the reverted lever-2 experiment
+  (production cuts reach 27 momentarily, then churn and starve lux
+  workers; the constraint is demand shares, not production rates). Four
+  spec Errata recorded (same-tick payroll reading, `stepped_wage`,
+  net-of-arrears affordability, the employment ceiling). The close
+  review also measured the equilibrium's ~150-tick dis-saving fuse —
+  recorded for pack 4, whose migration is the designed relief. Close
+  gate quoted in the pack manifest: `VERIFY OK` 136 passed. Next:
+  pack 4 item manifest, on your go.
