@@ -110,16 +110,26 @@ near-full employment with no wage rising monotonically.
   re-pin is this item's own deliberate close, quoting `money::`/`market::`
   output (pack-2 precedent).
 - **Near-full = ≥ 27 of 30 (90%) at tick 50**, plus ≥ 1 `Hired` by
-  tick 3 ("within a few ticks"), plus the wage-monotone criterion,
-  refined so the designed end state can pass it: per (business, role)
-  the posted wage series — sampled in force, before each tick — is
-  never strictly increasing across the evaluated span, and any series
-  that rose without ever falling must be constant over its final 10
-  ticks (proof the affordability gate engaged and plateaued the rise —
-  a chronically unfillable slot raising-then-plateauing is the spec's
-  own designed behavior, not a failure; an ungated unbounded rise is).
-  The pack-2 100-tick soak must stay green with phase 1 live: tuning
-  satisfies the UNION of both soaks.
+  tick 3 ("within a few ticks"), plus: once employment first reaches
+  near-full it never falls back below it, and **zero `Event::Quit`
+  across the pack-2 100-tick soak** — no-spurious-quits as an
+  assertion, not a hope (a quitting town is an insolvent town; the
+  quit observable lives in the item-3 tests, where the mechanism is
+  demonstrated end to end — the *tuned* soak proving quit-free is the
+  point, and pack 2's precedent stands that not every observable
+  persists at the healthy steady state). Plus the wage-monotone
+  criterion, refined so the designed end state can pass it: per
+  (business, role) the posted wage series — sampled in force, before
+  each tick — is never strictly increasing across the evaluated span,
+  and any series that rose without ever falling must be constant over
+  its final 10 ticks. The affordability gate's *pin* is the unit tests;
+  what the soak criterion pins is the swarm-then-lower texture and the
+  absence of an ungated unbounded rise. The pack-2 100-tick soak must
+  stay green with phase 1 live: tuning satisfies the UNION of both
+  soaks. **The freeze-at-maximum fallback trims headcounts to the
+  achievable staffing** — the shipped town carries no chronically open
+  slot (headcounts are lever 1, so this is self-consistent; pack 4
+  reopens slots deliberately when the immigration pull needs them).
 - **The cascade ratchet is measured, not assumed**: `plan_application`
   sends the whole pool to the single argmax offer, so businesses fill
   one at a time and every other open business raises one step per tick
@@ -171,7 +181,16 @@ near-full employment with no wage rising monotonically.
   `quit_on_arrears_fires_at_N_preserves_owed_to_and_clears_role`
   (+ `plan_application` never returns the quitter to a business still in
   their `owed_by`), write-back-affects-next-decide-only, unaffordable
-  raise held. Done: `./scripts/check.sh` clean; `cargo test sim::`,
+  raise held; plus the review-added pins: the same-tick quitter does
+  not apply while an *independent* solvent slot stands open (and quits
+  index before hires), the quitter re-enters and is hired at the
+  solvent business next tick (exclusion doesn't overreach), the
+  same-tick raise lands in that tick's payroll while `Hired` carries
+  the snapshot wage (headcount-2 divergence world — the Erratum's
+  reading, pinned, not prose-only), the floor-clamped queue-lower is a
+  held wage (emits nothing), and quit-test amounts written N-relative
+  so item-5 tuning can move `QUIT_ARREARS_BILLS` without touching test
+  logic. Done: `./scripts/check.sh` clean; `cargo test sim::`,
   `market::`, `money::`, `world::` output quoted in the ledger. Touches:
   src/sim.rs, src/engine/game_loop.rs, src/world.rs, src/role.rs.
 - [ ] **4. Worldgen opens the slots (+ re-pin).** `seeded_staff` joins

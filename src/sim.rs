@@ -1664,25 +1664,23 @@ mod tests {
     #[test]
     fn quit_on_arrears_fires_at_n_preserves_owed_to_and_clears_role() {
         let mut world = World::new();
-        let (farm_house, farm, worker) = staffed_business(
-            &mut world,
-            "Farm",
-            Good::Food,
-            Money::new(1),
-            Money::new(35),
-            "f",
-        );
-        // a broke farm: every payroll accrues the full wage as arrears
+        let wage = Money::new(35);
+        let (farm_house, farm, worker) =
+            staffed_business(&mut world, "Farm", Good::Food, Money::new(1), wage, "f");
+        // a broke farm: every payroll accrues the full wage as arrears.
+        // Amounts are written N-relative so tuning QUIT_ARREARS_BILLS
+        // never touches this test's logic.
         for _ in 0..QUIT_ARREARS_BILLS {
             pay_wages(&mut world, &mut TickReport::default());
         }
-        // exactly N bills owed (105) is endured — strictly-greater rule
+        // exactly N bills owed is endured — the strictly-greater rule
         let mut report = TickReport::default();
         labor_market(&mut world, &mut report);
         assert_eq!(report.events, vec![]);
         assert_eq!(world.agent(worker).unwrap().workplace, Some(farm_house));
         // one more unpaid tick crosses the threshold
         pay_wages(&mut world, &mut TickReport::default());
+        let past_threshold = wage.times(QUIT_ARREARS_BILLS + 1);
         let mut report = TickReport::default();
         labor_market(&mut world, &mut report);
         assert_eq!(
@@ -1690,20 +1688,149 @@ mod tests {
             vec![Event::Quit {
                 agent: worker,
                 business: farm,
-                owed: Money::new(140),
+                owed: past_threshold,
             }]
         );
         let quitter = world.agent(worker).unwrap();
         assert_eq!(quitter.workplace, None);
         assert_eq!(quitter.employed_role, None);
         // the debt survives the walkout (settlement is pack 4's)
-        assert_eq!(owed(&world, farm_house, worker), Money::new(140));
+        assert_eq!(owed(&world, farm_house, worker), past_threshold);
         // and the deadbeat exclusion holds: the only open slot belongs to
         // the employer still owing them, so the quitter stays out
         let mut report = TickReport::default();
         labor_market(&mut world, &mut report);
         assert_eq!(report.events, vec![]);
         assert_eq!(world.agent(worker).unwrap().workplace, None);
+    }
+
+    #[test]
+    fn quitter_re_enters_the_pool_next_tick_not_same_tick() {
+        let mut world = World::new();
+        let wage = Money::new(35);
+        // the deadbeat: broke, arrears pushed past the threshold
+        let (_, deadbeat, worker) = staffed_business(
+            &mut world,
+            "Deadbeat Hall",
+            Good::Entertainment,
+            Money::new(2),
+            wage,
+            "w",
+        );
+        for _ in 0..=QUIT_ARREARS_BILLS {
+            pay_wages(&mut world, &mut TickReport::default());
+        }
+        // an independent solvent employer with room (headcount 2), plus a
+        // second unemployed agent so the same tick carries a quit AND an
+        // unrelated hire — pinning the quits-before-hires event order
+        let solvent_house = world.add_house("Solvent & Sons", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(30),
+                headcount: 2,
+            },
+        );
+        let solvent = world
+            .create_business(solvent_house, Good::Food, Money::new(1), roles)
+            .unwrap();
+        let bystander = world.spawn_agent("b", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        // the quitter does NOT apply this tick, even with an open slot
+        // they could take — they re-enter the pool next tick; the
+        // bystander's hire proves the slot was genuinely open, and the
+        // full-vector equality pins quits indexing before hires
+        assert_eq!(
+            report.events,
+            vec![
+                Event::Quit {
+                    agent: worker,
+                    business: deadbeat,
+                    owed: wage.times(QUIT_ARREARS_BILLS + 1),
+                },
+                Event::Hired {
+                    agent: bystander,
+                    business: solvent,
+                    role: Role::Labourer,
+                    wage: Money::new(30),
+                },
+            ]
+        );
+        // next tick the quitter applies: the deadbeat's reopened slot
+        // posts the better wage but is excluded, so the solvent
+        // business wins — the exclusion bars the creditor, nothing more
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Hired {
+                agent: worker,
+                business: solvent,
+                role: Role::Labourer,
+                wage: Money::new(30),
+            }]
+        );
+        assert_eq!(world.agent(worker).unwrap().workplace, Some(solvent_house));
+    }
+
+    #[test]
+    fn same_tick_raise_lands_in_that_payroll_hired_wage_is_the_snapshot() {
+        // the Erratum's reading, pinned by divergence: phase-3 payroll
+        // reads the live slot wage, while Event::Hired carries the
+        // snapshot wage the agent applied at
+        let mut world = World::new();
+        let house = world.add_house("Farm", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 2,
+            },
+        );
+        let farm = world
+            .create_business(house, Good::Food, Money::new(1), roles)
+            .unwrap();
+        world.accounts.mint(farm, Metal::Gold, Money::new(200));
+        let unemployed = world.spawn_agent("u", None, None);
+        let report = tick(&mut world);
+        assert!(report.events.contains(&Event::Hired {
+            agent: unemployed,
+            business: farm,
+            role: Role::Labourer,
+            wage: Money::new(35),
+        }));
+        // the still-open second slot raised 35 → 38 at the end of phase
+        // 1, and that same tick's payroll pays 38
+        assert!(report.events.contains(&Event::WagePaid {
+            business: farm,
+            worker: unemployed,
+            amount: Money::new(38),
+        }));
+    }
+
+    #[test]
+    fn floor_wage_queue_clamp_is_a_held_wage() {
+        let mut world = World::new();
+        let (_, shop) = open_slot_business(&mut world, "Shop", Good::Food, Money::new(1));
+        let first = world.spawn_agent("a", None, None);
+        world.spawn_agent("b", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        // the loser's stale application queues, but the floor clamp is a
+        // hold — Hired only, no WageMoved (the price side's precedent:
+        // lowered-but-floored emits nothing)
+        assert_eq!(
+            report.events,
+            vec![Event::Hired {
+                agent: first,
+                business: shop,
+                role: Role::Labourer,
+                wage: Money::new(1),
+            }]
+        );
     }
 
     #[test]

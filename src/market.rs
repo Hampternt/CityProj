@@ -529,6 +529,17 @@ mod tests {
         // everything excluded → None (not a panic, not a bad fallback)
         assert_eq!(plan_application(&offers, &[AgentId(10), AgentId(11)]), None);
         assert_eq!(plan_application(&[], &[]), None);
+        // a higher-wage FULL slot must not shadow the best open one —
+        // production snapshots include every slotted role, filled or not
+        let mixed = vec![
+            job(10, Role::Labourer, 50, 0),
+            job(11, Role::Labourer, 30, 1),
+        ];
+        let mut mixed_reversed = mixed.clone();
+        mixed_reversed.reverse();
+        for input in [&mixed, &mixed_reversed] {
+            assert_eq!(plan_application(input, &[]).unwrap().business, AgentId(11));
+        }
     }
 
     #[test]
