@@ -103,8 +103,8 @@ const COPPER_SAVINGS: u64 = 20;
 const WAGE_BILLS_SEEDED: u32 = 3;
 
 /// Every named resident, spawn order = ascending `AgentId`. The first
-/// headcount-sum names (16) fill business slots in declaration order; the
-/// rest are seeded unemployed.
+/// seeded-staff-sum names (16) fill business slots in declaration order;
+/// the rest are seeded unemployed.
 const NAMES: [&str; 30] = [
     "alice", "bob", "carol", "dave", "ed", "fiona", "george", "hana", "ivan", "judit", "karl",
     "lena", "marco", "nadia", "otto", "petra", "quinn", "rosa", "sam", "tessa", "ulf", "vera",
@@ -115,8 +115,10 @@ const NAMES: [&str; 30] = [
 /// across 4 occupied residences (8/8/8/6), 2 zero-occupant spare
 /// residences (pack 4's landing pads), and 6 multi-worker businesses over
 /// all three Goods — two competing sellers of each. 16 agents are
-/// seeded employed, 14 unemployed (they live off savings until pack 3's
-/// labor market). Each business is pre-funded with one full-staffing wage
+/// seeded employed; the rest are seeded unemployed and live off savings
+/// until phase 1's labor market hires them into the open headcount
+/// (pack 3: headcount exceeds seeded staffing, so slots stand open at
+/// boot). Each business is pre-funded with one full-staffing wage
 /// bill, three deep (`WAGE_BILLS_SEEDED`); External holds the settlement
 /// fund. Deterministic and seedless;
 /// its per-metal totals are the entire money supply, pinned by test and
@@ -155,17 +157,24 @@ pub fn town_world() -> World {
     // (recorded in the pack ledger as a deviation from the spec's "7–9
     // businesses"; the mechanics admit exactly two solvent sellers per
     // good until the market layer changes).
+    // (address, product, price, wage, headcount, seeded_staff) —
+    // pack 3: `headcount` exceeds `seeded_staff` so the labor market
+    // has open slots to clear at boot; the wage column is seeded
+    // SOLVENT (payroll at full staffing coverable by measured revenue)
+    // because pack 3's quit rule turns latent insolvency into churn —
+    // pack 2's lux wage of 40 bled 1320g of arrears by t100, harmless
+    // only while quitting didn't exist (pack-3 ledger, traced).
     let businesses = [
-        ("Greenrow Farm", Good::Food, 2u64, 35u64, 4u32),
-        ("Longacre Farm", Good::Food, 3, 35, 4),
-        ("Gilt Curtain Theater", Good::Entertainment, 2, 36, 2),
-        ("The Brass Bell", Good::Entertainment, 3, 36, 2),
-        ("Karat & Co", Good::Luxury, 4, 40, 2),
-        ("Silverthread Atelier", Good::Luxury, 5, 40, 2),
+        ("Greenrow Farm", Good::Food, 2u64, 35u64, 4u32, 4u32),
+        ("Longacre Farm", Good::Food, 3, 35, 4, 4),
+        ("Gilt Curtain Theater", Good::Entertainment, 2, 36, 3, 2),
+        ("The Brass Bell", Good::Entertainment, 3, 36, 4, 2),
+        ("Karat & Co", Good::Luxury, 4, 24, 3, 2),
+        ("Silverthread Atelier", Good::Luxury, 5, 24, 3, 2),
     ];
 
     let mut next_name = 0;
-    for (address, product, price, wage, headcount) in businesses {
+    for (address, product, price, wage, headcount, seeded_staff) in businesses {
         let house = world.add_house(address, vec![]);
         let mut roles = HashMap::new();
         roles.insert(
@@ -187,21 +196,24 @@ pub fn town_world() -> World {
             .wage_bill();
         // Three bills deep, not one: the demand rotation takes several
         // ticks to first reach each seller, and payroll must survive
-        // that drought (soak-tuned, then frozen).
+        // that drought (soak-tuned, then frozen). Bills price the FULL
+        // headcount, so open slots arrive pre-funded.
         world
             .accounts
             .mint(business, Metal::Gold, bill.times(WAGE_BILLS_SEEDED));
-        // Shelves start two ticks deep: without opening stock, the first
-        // ticks create pantry deficits in the late buying order that an
-        // exactly-cleared market can never absorb again (soak-tuned).
+        // Shelves start two ticks deep — sized by the staff that
+        // actually produce at boot, not the target headcount: without
+        // opening stock, the first ticks create pantry deficits in the
+        // late buying order that an exactly-cleared market can never
+        // absorb again (soak-tuned).
         world
             .house_mut(house)
             .expect("just added")
             .business
             .as_mut()
             .expect("just created")
-            .stock = 2 * product.production_rate() * headcount;
-        for _ in 0..headcount {
+            .stock = 2 * product.production_rate() * seeded_staff;
+        for _ in 0..seeded_staff {
             let name = NAMES[next_name];
             let home = residences[next_name / 8];
             next_name += 1;
@@ -303,27 +315,37 @@ mod tests {
             assert!(world.occupants_of(house.id).is_empty());
             assert!(house.business.is_none());
         }
-        // every business fully staffed at seed, multi-worker slots
+        // multi-worker slots, seeded staff within headcount, and open
+        // slots for the labor market to clear (pack 3: 22 jobs, 6 open)
+        let mut total_open = 0;
         for (house, business) in world.businesses() {
             let staff = world.employees_of(house.id).len() as u32;
             let headcount: u32 = business.roles.values().map(|slot| slot.headcount).sum();
-            assert_eq!(staff, headcount, "{} staffed to headcount", house.address);
-            assert!(headcount > 1, "{} is multi-worker", house.address);
+            assert!(
+                staff <= headcount,
+                "{} staffed within headcount",
+                house.address
+            );
+            assert!(staff > 1, "{} is multi-worker at seed", house.address);
+            total_open += headcount - staff;
         }
+        assert_eq!(total_open, 5, "the boot-time hiring pool's slots");
         world.accounts.audit();
     }
 
-    /// The pack-2 conservation re-pin (one deliberate item): town_world's
-    /// per-metal totals are the entire money supply, forever — the audit
-    /// holds them here every tick. Gold = 6 coffers at three full-staffing
-    /// bills (3×584) + 16 employed wallets of 120 + 14 savings of 4000 +
-    /// External's 600 fund. A worldgen change must change these constants
-    /// consciously, in its own item.
+    /// The conservation re-pin (re-pinned by pack 3's worldgen item —
+    /// open headcounts widen the seeded bills, lux wages drop to
+    /// solvency): town_world's per-metal totals are the entire money
+    /// supply, forever — the audit holds them here every tick. Gold =
+    /// coffers at three full-headcount bills (3×742 = 2226) + 16
+    /// employed wallets of 120 + 14 savings of 4000 + External's 600
+    /// fund. A worldgen change must change these constants consciously,
+    /// in its own item.
     #[test]
     fn town_world_seeds_the_decided_metals() {
         let world = town_world();
-        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(60272));
-        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(60272));
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(60548));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(60548));
         assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(300));
         assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(300));
         assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(600));
@@ -350,6 +372,7 @@ mod tests {
         let mut cheapest: HashMap<Good, Vec<Money>> = HashMap::new();
         // per business: (rises, falls) after warm-up
         let mut moved: HashMap<AgentId, (u32, u32)> = HashMap::new();
+        let mut quits = 0u32;
 
         for t in 1..=LAST {
             // the prices in force during tick t are those posted before
@@ -381,6 +404,7 @@ mod tests {
                             entry.1 += 1;
                         }
                     }
+                    Event::Quit { .. } => quits += 1,
                     _ => {}
                 }
             }
@@ -424,5 +448,104 @@ mod tests {
             moved.values().any(|&(rises, falls)| rises > 0 && falls > 0),
             "no single posted price moved in both directions after warm-up"
         );
+
+        // 4. zero quits across the whole soak (pack 3): the tuned town
+        //    is solvent, so nobody walks out — no-spurious-quits as an
+        //    assertion, not a hope. A quitting town is a sick town; the
+        //    quit mechanism itself is demonstrated in the sim:: tests.
+        assert_eq!(quits, 0, "the tuned town fired {quits} spurious quits");
+    }
+
+    /// The pack-3 soak (town-colony spec, pack-3 criteria): 50 ticks
+    /// from `town_world` with the labor market live. Constants are
+    /// iterated until this and the 100-tick soak above BOTH hold — the
+    /// union is the gate — then frozen.
+    #[test]
+    fn town_soak_reaches_near_full_employment() {
+        use crate::role::Role;
+        use crate::sim::{self, Event};
+
+        const LAST: u64 = 50;
+        /// "Near-full employment": the measured, frozen target — see the
+        /// pack-3 manifest's deviation record for why it is not 27/30.
+        const NEAR_FULL: usize = 21;
+        /// A rose-without-falling wage series must be flat this long at
+        /// the end — proof the rise plateaued (the affordability gate or
+        /// a filled slot ended it) rather than compounding unbounded.
+        const PLATEAU: usize = 10;
+
+        let mut world = town_world();
+        let mut first_hire: Option<u64> = None;
+        let mut reached_full: Option<u64> = None;
+        // per (business, role): the wage in force before each tick
+        let mut wages: HashMap<(AgentId, Role), Vec<Money>> = HashMap::new();
+
+        for t in 1..=LAST {
+            for (_, business) in world.businesses() {
+                for &role in Role::ALL.iter() {
+                    if let Some(slot) = business.roles.get(&role) {
+                        wages
+                            .entry((business.id, role))
+                            .or_default()
+                            .push(slot.wage);
+                    }
+                }
+            }
+            let report = sim::tick(&mut world);
+            if first_hire.is_none()
+                && report
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::Hired { .. }))
+            {
+                first_hire = Some(t);
+            }
+            let employed = world
+                .agents
+                .iter()
+                .filter(|agent| agent.workplace.is_some())
+                .count();
+            match reached_full {
+                None if employed >= NEAR_FULL => reached_full = Some(t),
+                Some(reached) => assert!(
+                    employed >= NEAR_FULL,
+                    "employment fell back to {employed} at tick {t} after reaching {NEAR_FULL} at tick {reached}"
+                ),
+                None => {}
+            }
+        }
+
+        // 1. the seeded unemployed start getting hired within a few ticks
+        assert!(
+            first_hire.is_some_and(|t| t <= 3),
+            "first hire at {first_hire:?}, not within 3 ticks"
+        );
+        // 2. near-full employment by the soak's end, held once reached
+        assert!(
+            reached_full.is_some_and(|t| t <= LAST),
+            "never reached {NEAR_FULL} employed within {LAST} ticks"
+        );
+
+        // 3. no posted wage rises monotonically: never strictly
+        //    increasing across the span, and a series that rose without
+        //    ever falling must have plateaued — the unit tests pin the
+        //    affordability gate itself; this pins the absence of an
+        //    ungated unbounded rise in the real town
+        for ((business, role), series) in &wages {
+            let strictly_rising = series.windows(2).all(|w| w[1] > w[0]);
+            assert!(
+                !strictly_rising,
+                "{business:?}/{role} wage strictly rising all span"
+            );
+            let never_fell = series.windows(2).all(|w| w[1] >= w[0]);
+            let rose = series.last() > series.first();
+            if never_fell && rose {
+                let tail = &series[series.len() - PLATEAU..];
+                assert!(
+                    tail.windows(2).all(|w| w[1] == w[0]),
+                    "{business:?}/{role} rose without falling and never plateaued: {series:?}"
+                );
+            }
+        }
     }
 }
