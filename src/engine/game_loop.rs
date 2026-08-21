@@ -493,6 +493,9 @@ fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
         println!("  home      {}", describe_house(world, agent.home));
         println!("  workplace {}", describe_house(world, agent.workplace));
         println!("  goods     {}", describe_inventory(agent));
+        if agent.hunger > 0 {
+            println!("  hungry    {} tick(s) without enough food", agent.hunger);
+        }
         println!("  recent:");
         match history.get(&agent.id) {
             Some(lines) if !lines.is_empty() => {

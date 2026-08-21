@@ -681,6 +681,11 @@ fn consume(world: &mut World, report: &mut TickReport) {
         let food = agent.inventory.get(&Good::Food).copied().unwrap_or(0);
         if food < Good::Food.consumption_rate() {
             report.events.push(Event::WentHungry { agent: agent.id });
+            // The stored counter behind the event (pack 4): this is
+            // hunger's SINGLE writer — nothing else touches it.
+            agent.hunger = agent.hunger.saturating_add(1);
+        } else {
+            agent.hunger = 0;
         }
         for good in Good::ALL {
             let held = agent.inventory.entry(good).or_insert(0);
@@ -1433,6 +1438,29 @@ mod tests {
         let mut report = TickReport::default();
         goods_market(&mut world, &mut report);
         assert_eq!(report.events, vec![]);
+    }
+
+    #[test]
+    fn hunger_counts_short_ticks_saturating_and_resets_when_fed() {
+        let mut world = World::new();
+        let agent = world.spawn_agent("a", None, None);
+        assert_eq!(world.agent(agent).unwrap().hunger, 0); // starts fed
+        // short every tick: the counter climbs one per consume
+        consume(&mut world, &mut TickReport::default());
+        consume(&mut world, &mut TickReport::default());
+        assert_eq!(world.agent(agent).unwrap().hunger, 2);
+        // saturates at u8::MAX instead of wrapping
+        world.agent_mut(agent).unwrap().hunger = u8::MAX;
+        consume(&mut world, &mut TickReport::default());
+        assert_eq!(world.agent(agent).unwrap().hunger, u8::MAX);
+        // one fully-fed tick resets it to zero
+        world
+            .agent_mut(agent)
+            .unwrap()
+            .inventory
+            .insert(Good::Food, Good::Food.consumption_rate());
+        consume(&mut world, &mut TickReport::default());
+        assert_eq!(world.agent(agent).unwrap().hunger, 0);
     }
 
     #[test]

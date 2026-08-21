@@ -69,6 +69,7 @@ impl World {
             employed_role: None,
             education: 0,
             inventory: HashMap::new(),
+            hunger: 0,
         });
         id
     }

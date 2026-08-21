@@ -51,4 +51,10 @@ pub struct Agent {
     /// phase-5 consumption. Missing entry reads as 0. Goods are not money
     /// — no conservation audit applies.
     pub inventory: HashMap<Good, u32>,
+    /// Consecutive ticks short of Food (town-colony spec, gate ruling 3 —
+    /// a deliberately throwaway stopgap ahead of the needs model).
+    /// SINGLE WRITER: phase-5 consume — saturating-increments on a tick
+    /// where Food can't cover one `consumption_rate`, resets to 0 on a
+    /// fed tick. Read by phase 7's Depart rule and the shell.
+    pub hunger: u8,
 }
