@@ -1,6 +1,6 @@
 # Town Colony Sim — Design Spec
 
-**Status:** DRAFT 2026-08-21 — awaiting gate sign-off ·
+**Status:** approved 2026-08-21 (gate signed — see below) ·
 **Parent:** [2026-07-02-money-gameloop-skeleton-design.md](2026-07-02-money-gameloop-skeleton-design.md)
 (parent: [2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md))
 **Shape:** container — four packs, one level deep; the container manifest
@@ -410,7 +410,19 @@ are iterated inside the pack until these hold, then frozen.
 
 --- APPROVAL GATE — do not write the plan or any code above this line without sign-off ---
 
-## Open questions
+**SIGNED 2026-08-21.** The owner directed the gate be signed with the
+recommendations as the rulings, so every open question below is resolved and
+none blocks the container — the condition for clearing the gate: (1) firm
+lifecycle is the immediately-following milestone, no fifth pack — this
+container ends at pack 4; (2) emigrant arrears settle `min(coffer, owed)`
+into the leaver's wallet before the sweep and the remainder is written off —
+conditional Amendment 17 is ACTIVE, phase 7's row gains the settlement
+transfer; (3) `Agent.hunger` is approved as a deliberately throwaway
+stopgap ahead of the needs model. Scope stands as written. Planning may
+proceed against `docs/manifests/2026-08-21-town-colony-sim.md`, and the
+owner's "start pack 1" is the go for that pack's items.
+
+## Open questions (all ruled at signing — kept for the record)
 
 1. **Fifth pack or next milestone for the firm lifecycle?** Founding/closure/
    ownership (`Business.owner`, phase-6 profit draw, `Intent::Found`, the

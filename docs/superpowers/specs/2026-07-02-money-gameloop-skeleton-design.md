@@ -1,7 +1,10 @@
 # Money & Game-Loop Skeleton — Design Spec
 
 **Status:** approved in conversation 2026-07-02 · **Parent:**
-[2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md)
+[2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md) ·
+`tick` contract, phase-fn shape, and phase-table rows 1/7 amended by
+[2026-08-21-town-colony-sim-design.md](2026-08-21-town-colony-sim-design.md)
+Am. 15–17
 
 This spec does double duty: it specifies the skeleton build, and it is the
 **standing reference** future mechanics @-point to for *how to hook into the

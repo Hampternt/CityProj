@@ -93,5 +93,11 @@ written are the map exports. Quality gates: `scripts/check.sh` (item) and
 
 ---
 
-*Nothing in transit — multi-metal money closed 2026-08-20
+🚧 **Town colony sim** — the sim at town scale with a narrated console, a
+phase-1 labor market, and migration through External; four packs in flight on
+`claude/town-colony-sim-p1s06q`
+([`docs/manifests/2026-08-21-town-colony-sim.md`](manifests/2026-08-21-town-colony-sim.md)).
+Folding this pointer into real entries is part of that container's DONE.
+
+*Previous: multi-metal money closed 2026-08-20
 (`docs/manifests/2026-08-15-multi-metal-money.md`).*
