@@ -88,15 +88,24 @@ empty; audit green throughout.
   lift-back note). Builds on the untouched 3-arg `spawn_agent` (07-13
   pin): next id, housed at `home`, unemployed, empty inventory, zero
   balances, hunger 0. Moves no money; bumps `arrivals`.
-- **Arrive apply**: re-checks the home is STILL vacant (live), calls
-  `immigrate`, then attempts the full `GRUBSTAKE` External→agent gold
-  transfer via `pay` — a refused stake (External drained since snapshot)
-  leaves a penniless-but-valid newcomer, never a partial or a
-  conservation break (§8.5; pinned by test). `Event::Arrived { agent,
-  name, home }` — "Mara arrived seeking work". Arrivals join the
-  applicant pool next tick (they were not in the phase-start snapshot).
-  GRUBSTAKE first guess 100 (≈4 ticks of living costs — enough to reach
-  the next hiring pass fed), soak-tuned.
+- **Arrive apply** *(AMENDED by the verification round — the boot
+  cascade races the pull)*: re-checks live labor demand — ANY slot
+  with open headcount; a slot filled by this tick's hires kills the
+  arrival, mirroring stale Buys/TakeJobs. The global any-open-slot
+  form was chosen over the-pulling-slot-only because
+  `Intent::Arrive`'s spec-pinned fields carry no slot, and any
+  surviving vacancy justifies the newcomer. The home re-validates
+  inside `immigrate`; then the full `GRUBSTAKE` External→agent gold
+  transfer via `pay`. The refusal arm is unreachable through `tick()`
+  (the decide gates on External at snapshot, phase 1's other applies
+  are money-free, one arrival per tick) — defensive §8.5 robustness,
+  pinned by direct apply invocation, not live behavior; a refused
+  stake leaves a penniless-but-valid newcomer, never a partial.
+  `Event::Arrived { agent, name, home }` — "Mara arrived seeking
+  work". Arrivals join the applicant pool next tick (they were not in
+  the phase-start snapshot). GRUBSTAKE first guess 100 (≈4 ticks of
+  living costs — enough to reach the next hiring pass fed),
+  soak-tuned.
 - **Phase-1 apply order**: quits, hires, arrivals, then the wage
   write-back (which also ages/resets `unfilled_ticks`). Event order
   follows.
@@ -110,13 +119,19 @@ empty; audit green throughout.
 - **The soak union grows to four**: pack-2 100-tick (unchanged criteria +
   zero quits — the fuse must not bite before t100), pack-3 50-tick
   employment, pack-4 200-tick breathing, and `n_ticks_run_clean`. The
-  200-tick soak asserts: population drops below 30 (the destitute leave),
-  at least one `Arrived` (it also rises — both directions), every
-  departure's sweep leaves no orphan balance (per-account, spot-checked
-  via total agent count × savings arithmetic is NOT enough — assert
-  `balance_of` zero for a departed id captured from the event stream),
-  audit green every tick (implicit in `tick`), and External's gold never
-  exceeds its seed + swept amounts (sanity). Tuning levers: H, K,
+  200-tick soak asserts, on the per-tick population SERIES (an
+  event-count proxy could be satisfied by offsetting same-tick moves):
+  some tick ends below the 30-agent seed AND some tick ends strictly
+  above where it began; at least one `Arrived` AFTER the first
+  `Departed` (the pull answering the shock — a boot transient cannot
+  satisfy it); every departure's sweep leaves no orphan balance
+  (per-account: `balance_of` zero on every metal for each id harvested
+  from `Departed` events — ids are never reused, so end-of-soak per-id
+  checks are sound); audit green every tick (implicit in `tick`).
+  *(Struck from the draft: "External's gold never exceeds seed +
+  swept" — violable only by a chokepoint bypass, which the §8.3 audit
+  and `pay` validation already police; subsumed, recorded rather than
+  silently dropped.)* Tuning levers: H, K,
   GRUBSTAKE, `SETTLEMENT_FUND`, and if needed `UNEMPLOYED_SAVINGS` (which
   moves the fuse — but it must stay ≥ ~2600 so nobody departs before the
   100-tick soak's window closes).
@@ -255,6 +270,26 @@ empty; audit green throughout.
   bites exactly for the moneyed-but-starving (supply shortage), who
   rightly stay. Recorded, no change. A zero-amount settlement emits no
   `Settled` (held-price precedent, guarded and tested).
+- **2026-08-21** — **manifest verification (third lens, test design)
+  reconciled — its two blockers were already resolved in the tree (the
+  live labor-demand re-check and `Departed.agent` landed with the
+  earlier lenses' fixes); its missing-test findings all taken
+  (84ddcc2):** `local_applicants_beat_the_pull_and_arrivals_apply_last`
+  (the blocker's demanded counter-test: a K-aged slot plus a same-tick
+  local applicant → Hired, no Arrived, External untouched; and with
+  two open slots the phase-1 order pin — hires before arrivals),
+  `departed_workers_slot_ages_into_a_pull` (the chain at unit
+  granularity: depart → age → pull → the newcomer takes the freed
+  job), `hunger_has_a_single_writer` (every non-consume phase runs;
+  the counter must not move), the strict destitution boundary (gold ==
+  cheapest price stays), the drained-bound hardening (`arrivals == 0`,
+  roster empty) and the passing boundary
+  (`the_last_grubstake_spends_and_then_the_pull_stalls`: External at
+  exactly one GRUBSTAKE funds exactly one arrival, then the pull
+  stalls dry). Manifest corrections in the Decisions above: the
+  population criterion restated on the per-tick series, the
+  unreachable-refusal sentence, the near-vacuous External bound struck
+  with reasoning. 155 passed after.
 - **2026-08-21** — **items 4+5 landed (e32c340), one commit — the
   breathing chain measured end to end:** boot cascade t1–4 (no
   spurious arrival); first destitute departure t127, the nine
