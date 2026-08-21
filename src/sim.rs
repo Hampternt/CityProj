@@ -27,26 +27,87 @@ pub enum Intent {
     },
 }
 
+/// One observable thing a phase did this tick, for the shell to narrate.
+/// Data-only (town-colony spec, `Event`/`TickReport` contract): dropping a
+/// report changes no state. Each pack adds its own variants; the shell
+/// matches exhaustively, so a new variant forces the renderer at compile
+/// time.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    /// Phase 2: a staffed business added `units` of its product to stock.
+    Produced {
+        business: AgentId,
+        good: Good,
+        units: u32,
+    },
+    /// Phase 3: `worker` received `amount` — this tick's wage and any
+    /// past-due arrears share one pot, so this is what actually moved.
+    WagePaid {
+        business: AgentId,
+        worker: AgentId,
+        amount: Money,
+    },
+    /// Phase 3: after paying what the coffers covered, `remaining` stays
+    /// on the `owed_to` ledger against this worker.
+    PayrollShort {
+        business: AgentId,
+        worker: AgentId,
+        remaining: Money,
+    },
+    /// Phase 4 apply: a purchase landed, at the snapshot price.
+    Sold {
+        business: AgentId,
+        buyer: AgentId,
+        good: Good,
+        units: u32,
+        price: Money,
+    },
+    /// Phase 4 write-back: the posted price changed for next tick. A held
+    /// price is not an event.
+    PriceMoved {
+        business: AgentId,
+        good: Good,
+        from: Money,
+        to: Money,
+    },
+    /// Phase 5: the agent's Food could not cover one tick's consumption.
+    /// Event-only this pack — the stored counter is pack 4's.
+    WentHungry { agent: AgentId },
+}
+
+/// Everything `tick` observed happen, in phase order and then each phase's
+/// pinned iteration order (businesses in houses order, agents in
+/// `world.agents` order). Pure observation (Amendment 15): dropping it
+/// changes no state, and the audit emits nothing.
+#[derive(Debug, Default)]
+pub struct TickReport {
+    pub events: Vec<Event>,
+}
+
 /// Runs one tick: phases 1–8 in exactly the spec table's order — labor
 /// clears, produce, wages, goods clear, consume, invest, sinks, mint — then
 /// the conservation audit, unconditionally last; no early return skips it.
+/// Live phases append [`Event`]s to the returned report (Amendment 15);
+/// stub phases gain the report parameter when they gain behavior.
 ///
 /// # Panics
 ///
 /// Panics if the closing [`audit`](crate::money::Accounts::audit) finds the
 /// books imbalanced (§8.3) — meaning some phase moved money outside the
 /// §8.2 chokepoint.
-pub fn tick(world: &mut World) {
+pub fn tick(world: &mut World) -> TickReport {
+    let mut report = TickReport::default();
     labor_market(world);
-    produce(world);
-    pay_wages(world);
-    goods_market(world);
-    consume(world);
+    produce(world, &mut report);
+    pay_wages(world, &mut report);
+    goods_market(world, &mut report);
+    consume(world, &mut report);
     invest(world);
     sinks(world);
     mint_phase(world);
-    // Phase 9: audit (§8.3) — read-only, never gains behavior.
+    // Phase 9: audit (§8.3) — read-only, never gains behavior, emits nothing.
     world.accounts.audit();
+    report
 }
 
 /// Phase 1: match hires, adjust wage offers. Money ops allowed: none.
@@ -55,7 +116,7 @@ fn labor_market(_world: &mut World) {
 }
 
 /// Phase 2: labor + inputs → goods. Money ops allowed: none.
-fn produce(world: &mut World) {
+fn produce(world: &mut World, report: &mut TickReport) {
     // The staffed check borrows world immutably; collect first, then
     // mutate stock through house_mut.
     let staffed: Vec<HouseId> = world
@@ -71,7 +132,13 @@ fn produce(world: &mut World) {
             .business
             .as_mut()
             .expect("collected from businesses()");
-        business.stock += business.product.production_rate();
+        let units = business.product.production_rate();
+        business.stock += units;
+        report.events.push(Event::Produced {
+            business: business.id,
+            good: business.product,
+            units,
+        });
     }
 }
 
@@ -81,7 +148,7 @@ fn produce(world: &mut World) {
 /// — coffers drain to exactly zero before any wage goes unpaid, and
 /// past-due wages repay automatically when revenue returns (arrears and
 /// the current wage share one pot).
-fn pay_wages(world: &mut World) {
+fn pay_wages(world: &mut World, report: &mut TickReport) {
     // Decide from the snapshot: who accrues which role's wage. A worker
     // with no employed_role, or a role the business doesn't slot, earns
     // nothing this milestone.
@@ -121,8 +188,18 @@ fn pay_wages(world: &mut World) {
                 .pay(business_id, worker, Metal::Gold, payable)
                 .is_err()
         {
+            report.events.push(Event::PayrollShort {
+                business: business_id,
+                worker,
+                remaining: owed,
+            });
             continue;
         }
+        report.events.push(Event::WagePaid {
+            business: business_id,
+            worker,
+            amount: payable,
+        });
         let business = world
             .house_mut(house_id)
             .expect("collected from businesses()")
@@ -132,7 +209,13 @@ fn pay_wages(world: &mut World) {
         if owed == payable {
             business.owed_to.remove(&worker);
         } else {
-            business.owed_to.insert(worker, owed.minus(payable));
+            let remaining = owed.minus(payable);
+            business.owed_to.insert(worker, remaining);
+            report.events.push(Event::PayrollShort {
+                business: business_id,
+                worker,
+                remaining,
+            });
         }
     }
 }
@@ -140,7 +223,7 @@ fn pay_wages(world: &mut World) {
 /// Phase 4: agents buy goods, prices adjust. Money ops allowed: transfer
 /// only. This phase is the WORKED decide→apply TEMPLATE — every behavior
 /// phase copies this two-pass shape.
-fn goods_market(world: &mut World) {
+fn goods_market(world: &mut World, report: &mut TickReport) {
     // Decide (pure): every agent plans against the same tick-start offer
     // snapshot. No `&mut` anywhere — unit-testable and free of
     // iteration-order effects. Collective staleness (two buyers wanting
@@ -178,22 +261,31 @@ fn goods_market(world: &mut World) {
     // not. `sold` counts units actually transacted, per business.
     let mut sold: HashMap<AgentId, u32> = HashMap::new();
     for intent in intents {
-        apply_goods_intent(world, intent, &mut sold);
+        apply_goods_intent(world, intent, &mut sold, report);
     }
 
     // Price write-back (logic in market.rs, §8.6): each price adjusts
     // from this tick's sell-through against the snapshot it was offered
     // at. New prices take effect next tick — the decide pass above only
-    // ever saw the snapshot.
+    // ever saw the snapshot. A held price emits nothing.
     for (house_id, offer) in houses.into_iter().zip(offers) {
         let units = sold.get(&offer.business).copied().unwrap_or(0);
+        let adjusted = market::adjust_price(offer.price, offer.stock, units);
+        if adjusted != offer.price {
+            report.events.push(Event::PriceMoved {
+                business: offer.business,
+                good: offer.good,
+                from: offer.price,
+                to: adjusted,
+            });
+        }
         world
             .house_mut(house_id)
             .expect("snapshotted from businesses()")
             .business
             .as_mut()
             .expect("snapshotted from businesses()")
-            .price = market::adjust_price(offer.price, offer.stock, units);
+            .price = adjusted;
     }
 }
 
@@ -211,7 +303,12 @@ fn decide_goods(agent: &Agent, wallet: Money, offers: &[Offer]) -> Vec<Intent> {
         .collect()
 }
 
-fn apply_goods_intent(world: &mut World, intent: Intent, sold: &mut HashMap<AgentId, u32>) {
+fn apply_goods_intent(
+    world: &mut World,
+    intent: Intent,
+    sold: &mut HashMap<AgentId, u32>,
+    report: &mut TickReport,
+) {
     match intent {
         Intent::Buy {
             buyer,
@@ -253,15 +350,27 @@ fn apply_goods_intent(world: &mut World, intent: Intent, sold: &mut HashMap<Agen
                 .expect("intents are decided from world.agents");
             *agent.inventory.entry(good).or_insert(0) += units;
             *sold.entry(business).or_insert(0) += units;
+            report.events.push(Event::Sold {
+                business,
+                buyer,
+                good,
+                units,
+                price,
+            });
         }
     }
 }
 
 /// Phase 5: goods consumed toward needs. Money ops allowed: none.
 /// Shortfall just bottoms out at zero this milestone — no starvation
-/// consequences yet (07-19 spec: out of scope).
-fn consume(world: &mut World) {
+/// consequences yet (07-19 spec: out of scope). Going short of Food is
+/// narrated (event-only; the stored hunger counter is pack 4's).
+fn consume(world: &mut World, report: &mut TickReport) {
     for agent in &mut world.agents {
+        let food = agent.inventory.get(&Good::Food).copied().unwrap_or(0);
+        if food < Good::Food.consumption_rate() {
+            report.events.push(Event::WentHungry { agent: agent.id });
+        }
         for good in Good::ALL {
             let held = agent.inventory.entry(good).or_insert(0);
             *held = held.saturating_sub(good.consumption_rate());
@@ -376,11 +485,11 @@ mod tests {
         world
             .create_business(idle_house, Good::Luxury, Money::new(5), HashMap::new())
             .unwrap();
-        produce(&mut world);
+        produce(&mut world, &mut TickReport::default());
         assert_eq!(stock_of(&world, farm), Good::Food.production_rate());
         assert_eq!(stock_of(&world, idle_house), 0);
         // stock accumulates tick over tick
-        produce(&mut world);
+        produce(&mut world, &mut TickReport::default());
         assert_eq!(stock_of(&world, farm), 2 * Good::Food.production_rate());
     }
 
@@ -418,7 +527,7 @@ mod tests {
             "f",
         );
         world.accounts.mint(farm, Metal::Gold, Money::new(50)); // funded
-        pay_wages(&mut world);
+        pay_wages(&mut world, &mut TickReport::default());
         assert_eq!(
             world.accounts.balance_of(worker, Metal::Gold),
             Money::new(35)
@@ -441,7 +550,7 @@ mod tests {
             "f",
         );
         world.accounts.mint(farm, Metal::Gold, Money::new(10)); // less than the wage
-        pay_wages(&mut world);
+        pay_wages(&mut world, &mut TickReport::default());
         // partial payment IS a full valid transfer of a smaller amount (§8.5)
         assert_eq!(
             world.accounts.balance_of(worker, Metal::Gold),
@@ -464,12 +573,12 @@ mod tests {
             "f",
         );
         // broke business: the full wage becomes debt, no transfer happens
-        pay_wages(&mut world);
+        pay_wages(&mut world, &mut TickReport::default());
         assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
         assert_eq!(owed(&world, farm_house, worker), Money::new(35));
         // revenue returns: this tick's wage joins the pot and all 70 clears
         world.accounts.mint(farm, Metal::Gold, Money::new(100));
-        pay_wages(&mut world);
+        pay_wages(&mut world, &mut TickReport::default());
         assert_eq!(
             world.accounts.balance_of(worker, Metal::Gold),
             Money::new(70)
@@ -505,7 +614,7 @@ mod tests {
             .create_business(house, Good::Food, Money::new(1), roles)
             .unwrap();
         world.accounts.mint(business, Metal::Gold, Money::new(50));
-        pay_wages(&mut world);
+        pay_wages(&mut world, &mut TickReport::default());
         assert_eq!(
             world.accounts.balance_of(business, Metal::Gold),
             Money::new(50)
@@ -531,7 +640,7 @@ mod tests {
         let worker = world.spawn_agent("f", None, Some(house));
         // employed_role stays None
         world.accounts.mint(business, Metal::Gold, Money::new(50));
-        pay_wages(&mut world);
+        pay_wages(&mut world, &mut TickReport::default());
         assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
         assert_eq!(
             world.accounts.balance_of(business, Metal::Gold),
@@ -558,7 +667,7 @@ mod tests {
         let worker = world.spawn_agent("e", None, Some(house));
         world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Engineer);
         world.accounts.mint(business, Metal::Gold, Money::new(50));
-        pay_wages(&mut world);
+        pay_wages(&mut world, &mut TickReport::default());
         assert_eq!(world.accounts.balance_of(worker, Metal::Gold), Money::ZERO);
         assert_eq!(
             world.accounts.balance_of(business, Metal::Gold),
@@ -579,7 +688,7 @@ mod tests {
         );
         set_stock(&mut world, farm_house, 50);
         world.accounts.mint(worker, Metal::Gold, Money::new(10));
-        goods_market(&mut world);
+        goods_market(&mut world, &mut TickReport::default());
         // 10 coins at price 2 → 5 units, capped well below stock and target
         assert_eq!(held(&world, worker, Good::Food), 5);
         assert_eq!(stock_of(&world, farm_house), 45);
@@ -604,7 +713,7 @@ mod tests {
         // both plan against the same 10-unit snapshot and could each afford it
         world.accounts.mint(first, Metal::Gold, Money::new(10));
         world.accounts.mint(second, Metal::Gold, Money::new(10));
-        goods_market(&mut world);
+        goods_market(&mut world, &mut TickReport::default());
         // agents-order: first drains the shelf, second is capped to zero
         assert_eq!(held(&world, first, Good::Food), 10);
         assert_eq!(held(&world, second, Good::Food), 0);
@@ -629,7 +738,7 @@ mod tests {
         );
         set_stock(&mut world, farm_house, 50);
         // no money minted to the worker at all
-        goods_market(&mut world);
+        goods_market(&mut world, &mut TickReport::default());
         assert_eq!(held(&world, worker, Good::Food), 0);
         assert_eq!(stock_of(&world, farm_house), 50);
         assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::ZERO);
@@ -643,7 +752,7 @@ mod tests {
         agent.inventory.insert(Good::Food, 25);
         agent.inventory.insert(Good::Entertainment, 3); // below the rate of 5
         // Luxury absent: stays absent-or-zero, never underflows
-        consume(&mut world);
+        consume(&mut world, &mut TickReport::default());
         assert_eq!(held(&world, a, Good::Food), 15);
         assert_eq!(held(&world, a, Good::Entertainment), 0);
         assert_eq!(held(&world, a, Good::Luxury), 0);
@@ -722,7 +831,7 @@ mod tests {
         );
         set_stock(&mut world, farm_house, 10);
         world.accounts.mint(worker, Metal::Gold, Money::new(20));
-        goods_market(&mut world);
+        goods_market(&mut world, &mut TickReport::default());
         // the whole shelf sold at the OLD price (10 × 2 = 20 coins)…
         assert_eq!(held(&world, worker, Good::Food), 10);
         assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::new(20));
@@ -753,7 +862,7 @@ mod tests {
         set_stock(&mut world, farm_house, 50);
         set_stock(&mut world, stall_house, 50);
         // nobody has money → 0 of 50 sold everywhere
-        goods_market(&mut world);
+        goods_market(&mut world, &mut TickReport::default());
         assert_eq!(price_of(&world, farm_house), Money::new(4));
         // a floor-price seller stays at the floor
         assert_eq!(price_of(&world, stall_house), Money::new(1));
@@ -771,7 +880,266 @@ mod tests {
             "f",
         );
         // stock 0 → offered 0: the price holds, NOT treated as poor sales
-        goods_market(&mut world);
+        goods_market(&mut world, &mut TickReport::default());
         assert_eq!(price_of(&world, farm_house), Money::new(7));
+    }
+
+    // --- Pack-1 emission tests: each behavior phase narrates what it did ---
+
+    #[test]
+    fn produce_emits_produced_for_staffed_only() {
+        let mut world = World::new();
+        let (_, farm, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        let idle_house = world.add_house("Idle", vec![]);
+        world
+            .create_business(idle_house, Good::Luxury, Money::new(5), HashMap::new())
+            .unwrap();
+        let mut report = TickReport::default();
+        produce(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Produced {
+                business: farm,
+                good: Good::Food,
+                units: Good::Food.production_rate(),
+            }]
+        );
+    }
+
+    #[test]
+    fn funded_wages_emit_paid_only() {
+        let mut world = World::new();
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        world.accounts.mint(farm, Metal::Gold, Money::new(50));
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::WagePaid {
+                business: farm,
+                worker,
+                amount: Money::new(35),
+            }]
+        );
+    }
+
+    #[test]
+    fn underfunded_wages_emit_paid_and_shortfall() {
+        let mut world = World::new();
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        world.accounts.mint(farm, Metal::Gold, Money::new(10));
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![
+                Event::WagePaid {
+                    business: farm,
+                    worker,
+                    amount: Money::new(10),
+                },
+                Event::PayrollShort {
+                    business: farm,
+                    worker,
+                    remaining: Money::new(25),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn broke_wages_emit_shortfall_only() {
+        let mut world = World::new();
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::PayrollShort {
+                business: farm,
+                worker,
+                remaining: Money::new(35),
+            }]
+        );
+    }
+
+    #[test]
+    fn sales_and_price_moves_are_narrated() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
+        set_stock(&mut world, farm_house, 10);
+        world.accounts.mint(worker, Metal::Gold, Money::new(20));
+        let mut report = TickReport::default();
+        goods_market(&mut world, &mut report);
+        // apply first (at the snapshot price), then the write-back
+        assert_eq!(
+            report.events,
+            vec![
+                Event::Sold {
+                    business: farm,
+                    buyer: worker,
+                    good: Good::Food,
+                    units: 10,
+                    price: Money::new(2),
+                },
+                Event::PriceMoved {
+                    business: farm,
+                    good: Good::Food,
+                    from: Money::new(2),
+                    to: Money::new(3),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn held_prices_and_empty_shelves_emit_nothing() {
+        let mut world = World::new();
+        // empty shelf: no signal, price holds
+        staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(7),
+            Money::new(35),
+            "f",
+        );
+        // floor-price seller with poor sales: lowered-but-floored is a hold
+        let (stall_house, _, _) = staffed_business(
+            &mut world,
+            "Stall",
+            Good::Entertainment,
+            Money::new(1),
+            Money::new(35),
+            "s",
+        );
+        set_stock(&mut world, stall_house, 50);
+        let mut report = TickReport::default();
+        goods_market(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+    }
+
+    #[test]
+    fn consume_narrates_going_hungry() {
+        let mut world = World::new();
+        let short = world.spawn_agent("short", None, None);
+        let fed = world.spawn_agent("fed", None, None);
+        world
+            .agent_mut(short)
+            .unwrap()
+            .inventory
+            .insert(Good::Food, Good::Food.consumption_rate() - 1);
+        world
+            .agent_mut(fed)
+            .unwrap()
+            .inventory
+            .insert(Good::Food, Good::Food.consumption_rate());
+        let mut report = TickReport::default();
+        consume(&mut world, &mut report);
+        assert_eq!(report.events, vec![Event::WentHungry { agent: short }]);
+    }
+
+    /// Flattened observable state, for comparing two runs. Deterministic
+    /// order: agents then business-hosting houses, in world order.
+    fn digest(world: &World) -> Vec<String> {
+        let mut lines = Vec::new();
+        for agent in &world.agents {
+            let goods: Vec<String> = Good::ALL
+                .iter()
+                .map(|g| format!("{g}:{}", agent.inventory.get(g).copied().unwrap_or(0)))
+                .collect();
+            lines.push(format!(
+                "{} {} {}",
+                agent.name,
+                world.accounts.balance_of(agent.id, Metal::Gold),
+                goods.join(","),
+            ));
+        }
+        for house in &world.houses {
+            if let Some(b) = &house.business {
+                lines.push(format!(
+                    "{} {} {} {} {}",
+                    house.address,
+                    b.price,
+                    b.stock,
+                    world.accounts.balance_of(b.id, Metal::Gold),
+                    b.owed_total(),
+                ));
+            }
+        }
+        lines
+    }
+
+    fn seeded_minimal_economy() -> World {
+        let mut world = World::new();
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        let idle = world.spawn_agent("idle", None, None);
+        world.accounts.mint(farm, Metal::Gold, Money::new(35));
+        for id in [worker, idle] {
+            world.accounts.mint(id, Metal::Gold, Money::new(35));
+            let agent = world.agent_mut(id).unwrap();
+            for good in Good::ALL {
+                agent.inventory.insert(good, good.consumption_rate());
+            }
+        }
+        world
+    }
+
+    /// Amendment 15's contract: the report is pure observation — a run
+    /// that drops every report ends in exactly the state of one that
+    /// keeps them.
+    #[test]
+    fn tick_report_is_pure_observation() {
+        let mut kept = seeded_minimal_economy();
+        let mut dropped = seeded_minimal_economy();
+        let mut observed = 0;
+        for _ in 0..3 {
+            observed += tick(&mut kept).events.len();
+            tick(&mut dropped);
+        }
+        assert!(observed > 0); // the live phases really do narrate
+        assert_eq!(digest(&kept), digest(&dropped));
     }
 }
