@@ -115,16 +115,17 @@ fn labor_market(_world: &mut World) {
     // TODO: firms + labor market land here.
 }
 
-/// Phase 2: labor + inputs → goods. Money ops allowed: none.
+/// Phase 2: labor + inputs → goods. Money ops allowed: none. Output
+/// scales with headcount — `production_rate` is per staffer (pack 2).
 fn produce(world: &mut World, report: &mut TickReport) {
     // The staffed check borrows world immutably; collect first, then
     // mutate stock through house_mut.
-    let staffed: Vec<HouseId> = world
+    let staffed: Vec<(HouseId, u32)> = world
         .businesses()
-        .filter(|(house, _)| world.employee_of(house.id).is_some())
-        .map(|(house, _)| house.id)
+        .map(|(house, _)| (house.id, world.employees_of(house.id).len() as u32))
+        .filter(|(_, staff)| *staff > 0)
         .collect();
-    for house_id in staffed {
+    for (house_id, staff) in staffed {
         let house = world
             .house_mut(house_id)
             .expect("collected from businesses()");
@@ -132,7 +133,7 @@ fn produce(world: &mut World, report: &mut TickReport) {
             .business
             .as_mut()
             .expect("collected from businesses()");
-        let units = business.product.production_rate();
+        let units = business.product.production_rate() * staff;
         business.stock += units;
         report.events.push(Event::Produced {
             business: business.id,
@@ -149,16 +150,25 @@ fn produce(world: &mut World, report: &mut TickReport) {
 /// past-due wages repay automatically when revenue returns (arrears and
 /// the current wage share one pot).
 fn pay_wages(world: &mut World, report: &mut TickReport) {
-    // Decide from the snapshot: who accrues which role's wage. A worker
-    // with no employed_role, or a role the business doesn't slot, earns
-    // nothing this milestone.
-    let accruals: Vec<(HouseId, AgentId, AgentId, Money)> = world
+    // Decide from the snapshot: who accrues which role's wage — every
+    // employee of every business, in businesses() then ascending-id
+    // order (pack 2: multi-worker payrolls share one coffer, paid in
+    // that order). A worker with no employed_role, or a role the
+    // business doesn't slot, earns nothing this milestone.
+    // Shared reborrow: the decide pass is read-only, and `&World` is
+    // Copy so the closures can hold it.
+    let snapshot: &World = world;
+    let accruals: Vec<(HouseId, AgentId, AgentId, Money)> = snapshot
         .businesses()
-        .filter_map(|(house, business)| {
-            let worker = world.employee_of(house.id)?;
-            let role = world.agent(worker)?.employed_role?;
-            let slot = business.roles.get(&role)?;
-            Some((house.id, business.id, worker, slot.wage))
+        .flat_map(|(house, business)| {
+            snapshot
+                .employees_of(house.id)
+                .into_iter()
+                .filter_map(move |worker| {
+                    let role = snapshot.agent(worker)?.employed_role?;
+                    let slot = business.roles.get(&role)?;
+                    Some((house.id, business.id, worker, slot.wage))
+                })
         })
         .collect();
     for (house_id, business_id, worker, wage) in accruals {
@@ -869,6 +879,93 @@ mod tests {
         // stock 0 → offered 0: the price holds, NOT treated as poor sales
         goods_market(&mut world, &mut TickReport::default());
         assert_eq!(price_of(&world, farm_house), Money::new(7));
+    }
+
+    /// Adds a second Labourer to a `staffed_business` fixture, widening
+    /// the slot's headcount to match (pack 2: multi-worker).
+    fn second_worker(world: &mut World, house: HouseId, name: &str) -> AgentId {
+        world
+            .house_mut(house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .roles
+            .get_mut(&Role::Labourer)
+            .unwrap()
+            .headcount = 2;
+        let worker = world.spawn_agent(name, None, Some(house));
+        world.agent_mut(worker).unwrap().employed_role = Some(Role::Labourer);
+        worker
+    }
+
+    #[test]
+    fn produce_scales_with_staff_count() {
+        let mut world = World::new();
+        let (farm_house, _, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        second_worker(&mut world, farm_house, "g");
+        produce(&mut world, &mut TickReport::default());
+        assert_eq!(
+            stock_of(&world, farm_house),
+            2 * Good::Food.production_rate()
+        );
+    }
+
+    #[test]
+    fn payroll_pays_every_employee_in_ascending_order() {
+        let mut world = World::new();
+        let (farm_house, farm, first) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        let second = second_worker(&mut world, farm_house, "g");
+        // coffers cover one and a half wages — the shared pot drains in
+        // ascending-id order, so the first is whole and the second short
+        world.accounts.mint(farm, Metal::Gold, Money::new(52));
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report);
+        assert_eq!(
+            world.accounts.balance_of(first, Metal::Gold),
+            Money::new(35)
+        );
+        assert_eq!(
+            world.accounts.balance_of(second, Metal::Gold),
+            Money::new(17)
+        );
+        assert_eq!(owed(&world, farm_house, first), Money::ZERO);
+        assert_eq!(owed(&world, farm_house, second), Money::new(18));
+        assert_eq!(
+            report.events,
+            vec![
+                Event::WagePaid {
+                    business: farm,
+                    worker: first,
+                    amount: Money::new(35),
+                },
+                Event::WagePaid {
+                    business: farm,
+                    worker: second,
+                    amount: Money::new(17),
+                },
+                Event::PayrollShort {
+                    business: farm,
+                    worker: second,
+                    remaining: Money::new(18),
+                },
+            ]
+        );
+        world.accounts.audit();
     }
 
     // --- Pack-1 emission tests: each behavior phase narrates what it did ---

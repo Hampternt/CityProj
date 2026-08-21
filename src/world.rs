@@ -296,16 +296,20 @@ impl World {
             .filter_map(|house| house.business.as_ref().map(|business| (house, business)))
     }
 
-    /// The agent working at `house`: first match in `agents` order on the
-    /// `workplace` field — derived per the link rule, never stored
-    /// (mirrors [`occupants_of`](World::occupants_of)). `None` for
-    /// unstaffed or unknown houses. v1 businesses are single-headcount,
-    /// so "first" is "the" employee.
-    pub fn employee_of(&self, house: HouseId) -> Option<AgentId> {
+    /// Every agent working at `house`, in ascending `AgentId` order —
+    /// `agents` is append-ordered by the ascending id counter, so a scan
+    /// IS id order (pinned by test, never re-sorted). Derived per the
+    /// link rule, never stored (mirrors
+    /// [`occupants_of`](World::occupants_of)); unstaffed and unknown
+    /// houses yield empty. The deterministic-order contract every
+    /// contended decide pass inherits (town-colony spec). Replaced the
+    /// single-headcount `employee_of` in pack 2.
+    pub fn employees_of(&self, house: HouseId) -> Vec<AgentId> {
         self.agents
             .iter()
-            .find(|agent| agent.workplace == Some(house))
+            .filter(|agent| agent.workplace == Some(house))
             .map(|agent| agent.id)
+            .collect()
     }
 }
 
@@ -700,20 +704,20 @@ mod tests {
     }
 
     #[test]
-    fn employee_of_is_derived_first_match_in_agents_order() {
+    fn employees_of_is_derived_in_ascending_id_order() {
         let mut world = World::new();
         let shop = world.add_house("1 Mill Lane", vec![]);
         let idle_house = world.add_house("2 Kiln Row", vec![]);
         let first = world.spawn_agent("first", None, Some(shop));
-        world.spawn_agent("second", None, Some(shop));
-        // first match in `agents` order wins
-        assert_eq!(world.employee_of(shop), Some(first));
-        // unstaffed and unknown houses: None
-        assert_eq!(world.employee_of(idle_house), None);
-        assert_eq!(world.employee_of(HouseId(99)), None);
+        let second = world.spawn_agent("second", None, Some(shop));
+        assert!(first.0 < second.0, "ids ascend in spawn order");
+        // the full staff, ascending — the contended-decide order contract
+        assert_eq!(world.employees_of(shop), vec![first, second]);
+        // unstaffed and unknown houses: empty
+        assert!(world.employees_of(idle_house).is_empty());
+        assert!(world.employees_of(HouseId(99)).is_empty());
         // derived, never stored: quitting is visible immediately
         world.vacate_workplace(first).unwrap();
-        let second = world.agent_by_name("second").unwrap().id;
-        assert_eq!(world.employee_of(shop), Some(second));
+        assert_eq!(world.employees_of(shop), vec![second]);
     }
 }

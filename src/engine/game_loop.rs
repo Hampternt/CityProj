@@ -485,11 +485,8 @@ fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
             debts.sort();
             println!("  owes    {}", debts.join(" · "));
         }
-        let worker = world
-            .employee_of(house_id)
-            .map(|id| agent_name(world, id))
-            .unwrap_or_else(|| "(none)".to_string());
-        println!("  workers {worker}");
+        let workers = names_of(world, &world.employees_of(house_id));
+        println!("  workers {}", or_none(&workers));
     } else {
         println!("no agent or business named '{name}'");
     }
