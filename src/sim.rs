@@ -847,6 +847,10 @@ fn sinks(world: &mut World, report: &mut TickReport) {
     // Decide (pure): the phase-start snapshot names the leavers, agents
     // in `world.agents` order.
     let snapshot: &World = world;
+    // The reference price is each seller's LIVE posted price at phase-7
+    // start — one write-back step ahead of the price this tick's failed
+    // purchase saw, stock ignored (a sold-out seller's price still
+    // counts). Deterministic either way; recorded in the manifest.
     let Some(cheapest_food) = snapshot
         .businesses()
         .filter(|(_, business)| business.product == Good::Food)

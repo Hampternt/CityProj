@@ -95,6 +95,11 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
             }
             lines.push(render_event(world, event));
         }
+        // a leaver's buffer is unreachable once they're gone — drop it
+        // so churny long runs don't leak dead entries
+        if let Event::Departed { agent, .. } = event {
+            history.remove(agent);
+        }
     }
 }
 

@@ -199,3 +199,70 @@ empty; audit green throughout.
 - **2026-08-21** — **drafted and started.** Go given ("start pack 4").
   Items 1–6 as above; baseline on arrival at 401528c:
   `VERIFY OK — fmt, clippy, build, tests all clean.` 136 passed, 0 failed.
+- **2026-08-21** — **item 1 landed (2f091d2).** `Agent.hunger` behind the
+  existing `WentHungry` emission, single writer consume; shell inspect
+  shows it. `CHECK OK`; `sim::` 40 passed.
+- **2026-08-21** — **item 2 landed (6984460).** `remove_agent`:
+  settle-then-write-off (all three coffer cases pinned), per-metal
+  no-orphan sweep asserted per-account, reserved/business/unknown ids
+  refused with nothing changed, owners-strip + derived-link updates.
+  `CHECK OK`; `world::` 28 / `money::` 18 passed.
+- **2026-08-21** — **item 3 landed (e98bece).** `immigrate`:
+  vacancy-gated (`HouseNotVacant` — one variant covers occupied and
+  business-bearing), money-free on every metal, wraps the untouched
+  constructor, bumps the `arrivals` name counter. `CHECK OK`;
+  `world::` 30 passed.
+- **2026-08-21** — **manifest verification (first lens, contract
+  fidelity) applied mid-implementation:** the Arrive apply now re-checks
+  live labor demand (any open slot) so the boot cascade's race dies like
+  every stale intent — measured before the fix: "Mara" arrived t4 into
+  the still-hiring boom, found the slots taken by lower-id locals, spent
+  her 100g stake and left penniless t22; after: no boot arrival, the
+  first arrival is the real one (~t182). `Event::Departed` gains the
+  `agent` id (names are not enforced unique; the soak harvests ids).
+  The reviewer's fuse-timeline arithmetic confirmed: at savings 4000
+  the arrival chain lands past the window — savings 3400 (first
+  departure ~t127 > the 100-tick criteria span; whole chain < 200) and
+  the conservation re-pin moves to gold 52148. Also recorded: the
+  Depart rule reads each Food seller's live posted price at phase-7
+  start, stock ignored (a sold-out seller's price still counts); the
+  spec's `immigrate_is_money_free_and_stake_is_capped` acceptance test
+  is split across items 3/4 on the module boundary; `Departed.took` is
+  pinned to `Metal::ALL` order by its emission tests; `Settled` renders
+  impersonally ("paid out Ng of back wages to a leaver") — the Departed
+  line immediately after carries the name; a leaver's earlier same-tick
+  events (their last `WentHungry`) render "(unknown agent)" in the
+  post-tick frame — accepted and recorded, revisit if the close review
+  objects.
+- **2026-08-21** — **manifest verification (second lens, mechanics)
+  reconciled — its blocker is structurally prevented, its hardenings
+  taken:** the double-pull it flagged (one aged vacancy pulling two
+  immigrants) cannot occur under the shipped apply order — the first
+  immigrant's TakeJob applies BEFORE the next tick's Arrive, so when
+  the last open slot fills, the second arrival dies on the live
+  labor-demand re-check; with several genuine vacancies, multiple
+  arrivals are the correct behavior (reasoned here, exercised by the
+  200-tick churn). Taken: the 200-tick soak now requires an arrival
+  AFTER the first departure (the pull answering the shock — a boot
+  transient cannot satisfy it); the shell drops a leaver's history
+  buffer (leak); the phase-7 price-reading note (live posted price, one
+  write-back ahead, stock ignored) moved into the code. On its
+  destitution-vacuity concern (post-spend wallets make `gold <
+  cheapest` near-universal for the working poor): the rule is the
+  spec's sentence verbatim, and the hunger clause is the real gate —
+  an employed worker who eats resets to 0 daily; measured across all
+  four soaks, no spurious eviction of the employed. The wallet clause
+  bites exactly for the moneyed-but-starving (supply shortage), who
+  rightly stay. Recorded, no change. A zero-amount settlement emits no
+  `Settled` (held-price precedent, guarded and tested).
+- **2026-08-21** — **items 4+5 landed (e32c340), one commit — the
+  breathing chain measured end to end:** boot cascade t1–4 (no
+  spurious arrival); first destitute departure t127, the nine
+  unemployed leave through ~t173 with silver/copper visibly swept; the
+  demand shock guts The Brass Bell — quits at ~144g arrears from t174,
+  wages ratchet 39→36→33, settlements pay out on churn departures
+  (117g, 132g — Amendment 17 narrated); the K-aged vacancy pulls
+  "Mara" at t182, hired at t183; External drains per stake. Population
+  30 → 24 and rising ticks observed. All four soaks green:
+  `cargo test` 151 passed, 0 failed. Constants frozen: H=5, K=3,
+  GRUBSTAKE=100, savings 3400.
