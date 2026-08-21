@@ -39,6 +39,15 @@ pub enum Intent {
     /// entry persists (settlement only at emigration — Amendment 17,
     /// pack 4).
     Quit { agent: AgentId },
+    /// A newcomer arrives to take a vacant residence (phase 1's pull
+    /// rule, pack 4): decided when a slot has aged past the pull
+    /// threshold, a vacant residence stands, and External can stake
+    /// them. They join the applicant pool next tick.
+    Arrive { name: String, home: HouseId },
+    /// A destitute agent leaves town (phase 7's push rule, pack 4):
+    /// hunger past the threshold and too poor to buy a single unit of
+    /// Food. Apply is `World::remove_agent` — settle, sweep, remove.
+    Depart { agent: AgentId },
 }
 
 /// One observable thing a phase did this tick, for the shell to narrate.
@@ -109,9 +118,36 @@ pub enum Event {
         from: Money,
         to: Money,
     },
-    /// Phase 5: the agent's Food could not cover one tick's consumption.
-    /// Event-only this pack — the stored counter is pack 4's.
+    /// Phase 5: the agent's Food could not cover one tick's consumption;
+    /// the stored `Agent.hunger` counter moves with it (pack 4).
     WentHungry { agent: AgentId },
+    /// Phase 1 apply (pack 4): an immigrant took a vacant residence.
+    /// They apply for work from the next tick's snapshot.
+    Arrived {
+        agent: AgentId,
+        name: String,
+        home: HouseId,
+    },
+    /// Phase 7 apply (Amendment 17): a business settled what its coffer
+    /// covered of a leaver's back wages, immediately before their sweep.
+    /// The written-off remainder is silent bookkeeping — the preceding
+    /// `PayrollShort`s already told that story.
+    Settled {
+        business: AgentId,
+        agent: AgentId,
+        amount: Money,
+    },
+    /// Phase 7 apply (pack 4): an agent emigrated, every balance swept
+    /// to External (settlement included). Carries BOTH the id (tests
+    /// and soaks harvest it — names are not enforced unique) and the
+    /// name (the id resolves to nothing once they are gone). `took`
+    /// lists every `Metal::ALL` entry in that order, zeros included
+    /// (D3 visible-zeros precedent).
+    Departed {
+        agent: AgentId,
+        name: String,
+        took: Vec<(Metal, Money)>,
+    },
 }
 
 /// Everything `tick` observed happen, in phase order and then each phase's
@@ -142,7 +178,7 @@ pub fn tick(world: &mut World) -> TickReport {
     goods_market(world, &mut report);
     consume(world, &mut report);
     invest(world);
-    sinks(world);
+    sinks(world, &mut report);
     mint_phase(world);
     // Phase 9: audit (§8.3) — read-only, never gains behavior, emits nothing.
     world.accounts.audit();
@@ -154,6 +190,36 @@ pub fn tick(world: &mut World) -> TickReport {
 /// greater — exactly N bills is endured). Tuning constant beside its fn,
 /// like the market constants; soak-tuned with worldgen's, then frozen.
 const QUIT_ARREARS_BILLS: u32 = 3;
+
+/// Consecutive hungry ticks before a destitute agent gives up on the
+/// town (phase 7's push rule, pack 4). Soak-tuned, then frozen.
+const DEPART_HUNGER_TICKS: u8 = 5;
+/// How many consecutive post-matching ticks a slot must sit open before
+/// phase 1 pulls an immigrant (pack 4). Soak-tuned, then frozen.
+const VACANCY_PULL_TICKS: u32 = 3;
+/// The gold External stakes each arrival (Amendment 16) — refused whole
+/// if External cannot cover it at apply (§8.5), leaving a
+/// penniless-but-valid newcomer. Soak-tuned, then frozen.
+const GRUBSTAKE: Money = Money::new(100);
+/// Fixed immigrant name table — with `World.arrivals` as the counter,
+/// naming is deterministic, no RNG (town-colony spec). Distinct from
+/// worldgen's resident names so the shell's name-inspect stays exact.
+const IMMIGRANT_NAMES: [&str; 12] = [
+    "Mara", "Ivo", "Corin", "Alba", "Sten", "Noor", "Talia", "Bruno", "Edda", "Falk", "Greta",
+    "Hollis",
+];
+
+/// Deterministic immigrant naming: table + counter, wrapping with a
+/// generation suffix ("Mara 2") if the town ever churns past the list.
+fn immigrant_name(arrivals: u32) -> String {
+    let index = arrivals as usize % IMMIGRANT_NAMES.len();
+    let generation = arrivals as usize / IMMIGRANT_NAMES.len();
+    if generation == 0 {
+        IMMIGRANT_NAMES[index].to_string()
+    } else {
+        format!("{} {}", IMMIGRANT_NAMES[index], generation + 1)
+    }
+}
 
 /// Phase 1: match hires, adjust wage offers. Money ops allowed: none —
 /// hiring and quitting move no coin (the immigration grubstake is
@@ -237,6 +303,38 @@ fn labor_market(world: &mut World, report: &mut TickReport) {
         }
     }
 
+    // The pull rule (pack 4, Amendment 16): a slot aged past the pull
+    // threshold, a vacant residence standing, External able to stake —
+    // at most ONE arrival per tick, so the External drain stays legible
+    // and the pass deterministic. The newcomer is named from the fixed
+    // table by the World counter.
+    let slot_aged = snapshot.businesses().any(|(_, business)| {
+        Role::ALL.iter().any(|role| {
+            business
+                .roles
+                .get(role)
+                .is_some_and(|slot| slot.unfilled_ticks >= VACANCY_PULL_TICKS)
+        })
+    });
+    if slot_aged
+        && snapshot
+            .accounts
+            .balance_of(snapshot.external_id, Metal::Gold)
+            >= GRUBSTAKE
+    {
+        // houses are add-ordered, so `find` is the lowest vacant HouseId
+        let vacant = snapshot
+            .houses
+            .iter()
+            .find(|house| house.business.is_none() && snapshot.occupants_of(house.id).is_empty());
+        if let Some(house) = vacant {
+            intents.push(Intent::Arrive {
+                name: immigrant_name(snapshot.arrivals),
+                home: house.id,
+            });
+        }
+    }
+
     // Apply: re-check live state, mirroring the goods apply — stale
     // intents die cleanly, nothing partially applied. Applications are
     // tallied per (business, role) so the write-back can see the stale
@@ -309,7 +407,7 @@ fn labor_market(world: &mut World, report: &mut TickReport) {
                 to: adjusted,
             });
         }
-        world
+        let slot = world
             .house_mut(house_id)
             .expect("collected from businesses()")
             .business
@@ -317,8 +415,15 @@ fn labor_market(world: &mut World, report: &mut TickReport) {
             .expect("collected from businesses()")
             .roles
             .get_mut(&role)
-            .expect("collected from this business's roles")
-            .wage = adjusted;
+            .expect("collected from this business's roles");
+        slot.wage = adjusted;
+        // The vacancy-pull age (pack 4), measured post-matching — this
+        // write-back is its single writer.
+        slot.unfilled_ticks = if open_slots > 0 {
+            slot.unfilled_ticks.saturating_add(1)
+        } else {
+            0
+        };
     }
 }
 
@@ -403,7 +508,37 @@ fn apply_labor_intent(
                 wage,
             });
         }
-        Intent::Buy { .. } => {
+        Intent::Arrive { name, home } => {
+            // Live re-checks, mirroring stale Buys and TakeJobs: the
+            // pull's justifying vacancy must still exist — a slot filled
+            // by this tick's hires kills the arrival (the boot cascade
+            // races the pull; measured, review-caught) — and the home
+            // re-validates inside the command.
+            let still_hiring = world.businesses().any(|(house, business)| {
+                Role::ALL.iter().any(|&role| {
+                    business
+                        .roles
+                        .get(&role)
+                        .is_some_and(|slot| slot.headcount > staff_in_role(world, house.id, role))
+                })
+            });
+            if !still_hiring {
+                return;
+            }
+            let Ok(newcomer) = world.immigrate(name.clone(), home) else {
+                return;
+            };
+            // Amendment 16 — phase 1's ONE money op: the grubstake,
+            // whole or not at all. A refusal (External drained) leaves a
+            // penniless-but-valid newcomer (§8.5), pinned by test.
+            let _ = world.pay(world.external_id, newcomer, Metal::Gold, GRUBSTAKE);
+            report.events.push(Event::Arrived {
+                agent: newcomer,
+                name,
+                home,
+            });
+        }
+        Intent::Buy { .. } | Intent::Depart { .. } => {
             unreachable!("the labor apply only receives phase-1 intents")
         }
     }
@@ -666,7 +801,10 @@ fn apply_goods_intent(
                 price,
             });
         }
-        Intent::TakeJob { .. } | Intent::Quit { .. } => {
+        Intent::TakeJob { .. }
+        | Intent::Quit { .. }
+        | Intent::Arrive { .. }
+        | Intent::Depart { .. } => {
             unreachable!("the goods apply only receives phase-4 intents")
         }
     }
@@ -699,9 +837,102 @@ fn invest(_world: &mut World) {
     // TODO: firm investment lands here.
 }
 
-/// Phase 7: degradation, imports. Money ops allowed: burn, transfer→External.
-fn sinks(_world: &mut World) {
-    // TODO: demurrage and external purchases land here.
+/// Phase 7: degradation, imports, and — since pack 4 — emigration.
+/// Money ops allowed: burn, transfer→External, and the Amendment-17
+/// settlement transfer (business→leaver, immediately before their
+/// sweep). The push rule: worn down by hunger AND destitute — too poor
+/// to buy even one unit of Food at the cheapest posted price. TODO:
+/// demurrage and external purchases still land here.
+fn sinks(world: &mut World, report: &mut TickReport) {
+    // Decide (pure): the phase-start snapshot names the leavers, agents
+    // in `world.agents` order.
+    let snapshot: &World = world;
+    let Some(cheapest_food) = snapshot
+        .businesses()
+        .filter(|(_, business)| business.product == Good::Food)
+        .map(|(_, business)| business.price)
+        .min()
+    else {
+        // No Food market means no destitution test — there is no price
+        // to be below. Unreachable in shipped worlds; documented.
+        return;
+    };
+    let intents: Vec<Intent> = snapshot
+        .agents
+        .iter()
+        .filter(|agent| {
+            agent.hunger >= DEPART_HUNGER_TICKS
+                && snapshot.accounts.balance_of(agent.id, Metal::Gold) < cheapest_food
+        })
+        .map(|agent| Intent::Depart { agent: agent.id })
+        .collect();
+    for intent in intents {
+        apply_sinks_intent(world, intent, report);
+    }
+}
+
+fn apply_sinks_intent(world: &mut World, intent: Intent, report: &mut TickReport) {
+    match intent {
+        Intent::Depart { agent } => {
+            let Some(person) = world.agent(agent) else {
+                return; // intents don't outlive facts
+            };
+            // Narration needs the name and the amounts BEFORE removal —
+            // the id resolves to nothing afterward. Settlement and sweep
+            // amounts are measured as balance deltas, so the events
+            // report exactly what the command moved, never a
+            // re-derivation that could drift.
+            let name = person.name.clone();
+            let creditors: Vec<(AgentId, Money)> = world
+                .businesses()
+                .filter(|(_, business)| {
+                    business.owed_to.get(&agent).copied().unwrap_or(Money::ZERO) > Money::ZERO
+                })
+                .map(|(_, business)| {
+                    (
+                        business.id,
+                        world.accounts.balance_of(business.id, Metal::Gold),
+                    )
+                })
+                .collect();
+            let external_before: Vec<(Metal, Money)> = Metal::ALL
+                .iter()
+                .map(|&metal| (metal, world.accounts.balance_of(world.external_id, metal)))
+                .collect();
+            if world.remove_agent(agent).is_err() {
+                return; // existence checked above — dies cleanly regardless
+            }
+            for (business, before) in creditors {
+                let amount = before.minus(world.accounts.balance_of(business, Metal::Gold));
+                if amount > Money::ZERO {
+                    report.events.push(Event::Settled {
+                        business,
+                        agent,
+                        amount,
+                    });
+                }
+            }
+            let took: Vec<(Metal, Money)> = external_before
+                .into_iter()
+                .map(|(metal, before)| {
+                    (
+                        metal,
+                        world
+                            .accounts
+                            .balance_of(world.external_id, metal)
+                            .minus(before),
+                    )
+                })
+                .collect();
+            report.events.push(Event::Departed { agent, name, took });
+        }
+        Intent::Buy { .. }
+        | Intent::TakeJob { .. }
+        | Intent::Quit { .. }
+        | Intent::Arrive { .. } => {
+            unreachable!("the sinks apply only receives phase-7 intents")
+        }
+    }
 }
 
 /// Phase 8: new money from reserve. Money ops allowed: mint only.
@@ -735,7 +966,14 @@ mod tests {
     ) -> (HouseId, AgentId, AgentId) {
         let house = world.add_house(address, vec![]);
         let mut roles = HashMap::new();
-        roles.insert(Role::Labourer, RoleSlot { wage, headcount: 1 });
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage,
+                headcount: 1,
+                unfilled_ticks: 0,
+            },
+        );
         let business = world
             .create_business(house, product, price, roles)
             .expect("fresh house");
@@ -924,6 +1162,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(35),
                 headcount: 1,
+                unfilled_ticks: 0,
             },
         );
         let business = world
@@ -947,6 +1186,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(35),
                 headcount: 1,
+                unfilled_ticks: 0,
             },
         );
         let business = world
@@ -974,6 +1214,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(35),
                 headcount: 1,
+                unfilled_ticks: 0,
             },
         );
         let business = world
@@ -1096,23 +1337,31 @@ mod tests {
     /// The first playable loop, end to end: one farm, one worker, one
     /// unemployed agent, seeded exactly like worldgen (wage bill on the
     /// business; wallet + one day's goods per agent). Every tick audits.
+    /// Since pack 4 the story ends differently: the idle agent's ruin
+    /// (07-19: nobody saves the unemployed) now plays out as emigration
+    /// — broke by t1, hungry from ~t5, gone by ~t9.
     #[test]
-    fn minimal_economy_feeds_the_worker_and_breaks_the_idle() {
+    fn minimal_economy_feeds_the_worker_and_the_idle_leaves_town() {
         let (mut world, farm_house, worker, idle) = seeded_minimal_economy();
         for _ in 0..10 {
             tick(&mut world); // audit runs inside — any §8 break panics here
         }
         // the worldgen seed (3 × 35) is the ENTIRE money supply, forever
-        // — the audit pins it there every tick
+        // — the audit pins it there every tick, departures included
         assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(105));
         assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(105));
         // the worker keeps earning, eating, and holding stock
         assert!(world.accounts.balance_of(worker, Metal::Gold) > Money::ZERO);
         assert!(held(&world, worker, Good::Food) > 0);
-        // the idle agent earned nothing: wallet drained, pantry empty
-        // (07-19 spec: nobody saves the unemployed this milestone)
+        // the idle agent earned nothing, drained their wallet, went
+        // hungry, and emigrated (pack 4's push rule) — penniless, so
+        // the sweep moved nothing
+        assert!(world.agent(idle).is_none());
         assert_eq!(world.accounts.balance_of(idle, Metal::Gold), Money::ZERO);
-        assert_eq!(held(&world, idle, Good::Food), 0);
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::ZERO
+        );
         // overproduction piles up on the shelf (40/tick made, ~10 eaten)
         assert!(stock_of(&world, farm_house) > 0);
     }
@@ -1569,7 +1818,14 @@ mod tests {
     ) -> (HouseId, AgentId) {
         let house = world.add_house(address, vec![]);
         let mut roles = HashMap::new();
-        roles.insert(Role::Labourer, RoleSlot { wage, headcount: 1 });
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage,
+                headcount: 1,
+                unfilled_ticks: 0,
+            },
+        );
         let business = world
             .create_business(house, product, Money::new(1), roles)
             .expect("fresh house");
@@ -1762,6 +2018,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(30),
                 headcount: 2,
+                unfilled_ticks: 0,
             },
         );
         let solvent = world
@@ -1820,6 +2077,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(35),
                 headcount: 2,
+                unfilled_ticks: 0,
             },
         );
         let farm = world
@@ -1875,6 +2133,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(35),
                 headcount: 2,
+                unfilled_ticks: 0,
             },
         );
         let farm = world
@@ -1935,6 +2194,255 @@ mod tests {
         let mut report = TickReport::default();
         labor_market(&mut world, &mut report);
         assert_eq!(report.events, vec![]);
+    }
+
+    // --- Pack-4 migration tests: the town gains and loses people ---
+
+    #[test]
+    fn departed_narrates_name_and_swept_metals() {
+        let mut world = World::new();
+        // a Food seller posts the destitution reference price
+        staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
+        let leaver = world.spawn_agent("petra", None, None);
+        world.accounts.mint(leaver, Metal::Gold, Money::new(1)); // below the cheapest Food
+        world.accounts.mint(leaver, Metal::Silver, Money::new(3));
+        world.accounts.mint(leaver, Metal::Copper, Money::new(5));
+        world.agent_mut(leaver).unwrap().hunger = DEPART_HUNGER_TICKS;
+        let mut report = TickReport::default();
+        sinks(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Departed {
+                agent: leaver,
+                name: "petra".to_string(),
+                took: vec![
+                    (Metal::Gold, Money::new(1)),
+                    (Metal::Silver, Money::new(3)),
+                    (Metal::Copper, Money::new(5)),
+                ],
+            }]
+        );
+        assert!(world.agent(leaver).is_none());
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Silver),
+            Money::new(3)
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn settlement_is_narrated_before_the_departure() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
+        world.accounts.mint(farm, Metal::Gold, Money::new(20));
+        world
+            .house_mut(farm_house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(worker, Money::new(50));
+        world.agent_mut(worker).unwrap().hunger = DEPART_HUNGER_TICKS;
+        let mut report = TickReport::default();
+        sinks(&mut world, &mut report);
+        // min(coffer 20, owed 50) settles and rides out with the sweep;
+        // the 30 remainder is written off silently (Amendment 17)
+        assert_eq!(
+            report.events,
+            vec![
+                Event::Settled {
+                    business: farm,
+                    agent: worker,
+                    amount: Money::new(20),
+                },
+                Event::Departed {
+                    agent: worker,
+                    name: "f".to_string(),
+                    took: vec![
+                        (Metal::Gold, Money::new(20)),
+                        (Metal::Silver, Money::ZERO),
+                        (Metal::Copper, Money::ZERO),
+                    ],
+                },
+            ]
+        );
+        assert_eq!(world.accounts.balance_of(farm, Metal::Gold), Money::ZERO);
+        assert!(
+            world
+                .house(farm_house)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn hungry_but_solvent_and_broke_but_fed_agents_stay() {
+        let mut world = World::new();
+        staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
+        // hunger past the threshold, but they can still afford Food
+        let solvent = world.spawn_agent("solvent", None, None);
+        world.accounts.mint(solvent, Metal::Gold, Money::new(10));
+        world.agent_mut(solvent).unwrap().hunger = DEPART_HUNGER_TICKS;
+        // destitute, but not yet worn down
+        let fed = world.spawn_agent("fed", None, None);
+        world.agent_mut(fed).unwrap().hunger = DEPART_HUNGER_TICKS - 1;
+        let mut report = TickReport::default();
+        sinks(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+        assert!(world.agent(solvent).is_some());
+        assert!(world.agent(fed).is_some());
+    }
+
+    #[test]
+    fn vacancy_age_counts_open_ticks_and_resets_on_fill() {
+        let mut world = World::new();
+        let (house, _) = open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        let age = |world: &World| {
+            world.house(house).unwrap().business.as_ref().unwrap().roles[&Role::Labourer]
+                .unfilled_ticks
+        };
+        for expected in 1..=3u32 {
+            labor_market(&mut world, &mut TickReport::default());
+            assert_eq!(age(&world), expected);
+        }
+        // a hire fills the slot — the age resets with the same write-back
+        world.spawn_agent("u", None, None);
+        labor_market(&mut world, &mut TickReport::default());
+        assert_eq!(age(&world), 0);
+    }
+
+    #[test]
+    fn arrival_lands_takes_the_home_and_gets_the_stake() {
+        let mut world = World::new();
+        let (_, farm) = open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        let cottage = world.add_house("5 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(200));
+        // age the slot to the pull threshold (nobody local to hire)
+        for _ in 0..VACANCY_PULL_TICKS {
+            labor_market(&mut world, &mut TickReport::default());
+        }
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        let newcomer = world
+            .agent_by_name("Mara")
+            .expect("the table's first name")
+            .id;
+        assert_eq!(
+            report.events,
+            vec![Event::Arrived {
+                agent: newcomer,
+                name: "Mara".to_string(),
+                home: cottage,
+            }]
+        );
+        assert_eq!(world.agent(newcomer).unwrap().home, Some(cottage));
+        assert_eq!(world.agent(newcomer).unwrap().workplace, None);
+        assert_eq!(world.accounts.balance_of(newcomer, Metal::Gold), GRUBSTAKE);
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(200).minus(GRUBSTAKE)
+        );
+        world.accounts.audit();
+
+        // and they join the applicant pool NEXT tick — hired at the very
+        // slot whose vacancy pulled them
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert!(report.events.contains(&Event::Hired {
+            agent: newcomer,
+            business: farm,
+            role: Role::Labourer,
+            wage: Money::new(35),
+        }));
+    }
+
+    #[test]
+    fn arrivals_stall_on_drained_external_and_on_zero_vacancy() {
+        // bound 1: the fund cannot stake — no arrival, however old the slot
+        let mut world = World::new();
+        open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        world.add_house("5 Weir Cottage", vec![]);
+        world.accounts.mint(
+            world.external_id,
+            Metal::Gold,
+            GRUBSTAKE.minus(Money::new(1)),
+        );
+        for _ in 0..=VACANCY_PULL_TICKS {
+            labor_market(&mut world, &mut TickReport::default());
+        }
+        assert!(world.agent_by_name("Mara").is_none());
+
+        // bound 2: no vacant residence — the only spare hosts a business
+        let mut world = World::new();
+        open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(500));
+        for _ in 0..=VACANCY_PULL_TICKS {
+            labor_market(&mut world, &mut TickReport::default());
+        }
+        assert!(world.agent_by_name("Mara").is_none());
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(500)
+        );
+    }
+
+    #[test]
+    fn stake_failure_leaves_a_valid_penniless_newcomer() {
+        // the apply's §8.5 robustness, exercised directly: External
+        // cannot cover the stake, the arrival still lands whole (the
+        // open slot keeps the live labor-demand re-check satisfied)
+        let mut world = World::new();
+        open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        let cottage = world.add_house("5 Weir Cottage", vec![]);
+        let mut report = TickReport::default();
+        apply_labor_intent(
+            &mut world,
+            Intent::Arrive {
+                name: "Ivo".to_string(),
+                home: cottage,
+            },
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            &mut report,
+        );
+        let newcomer = world.agent_by_name("Ivo").expect("arrived").id;
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(newcomer, metal), Money::ZERO);
+        }
+        assert_eq!(world.agent(newcomer).unwrap().home, Some(cottage));
+        assert!(matches!(report.events[..], [Event::Arrived { .. }]));
+        world.accounts.audit();
     }
 
     /// Amendment 15's contract, as far as a test can pin it: a run that

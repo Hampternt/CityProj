@@ -47,6 +47,7 @@ pub fn template_world() -> World {
             RoleSlot {
                 wage: Money::new(35),
                 headcount: 1,
+                unfilled_ticks: 0,
             },
         );
         let business = world
@@ -93,14 +94,17 @@ const EMPLOYED_WALLET: u64 = 120;
 /// market gives them income — sized to keep them buying Food through the
 /// 100-tick soak with margin (the liveness criterion applies to them
 /// too; steady-state spend is ~25g/tick at settled prices). Also the
-/// town's DEMAND FUSE (pack-3 close review, measured over 300 ticks):
-/// the frozen equilibrium is ~30% dis-saving-financed — coffers absorb
+/// town's DEMAND FUSE (pack-3 close review; re-timed for pack 4): the
+/// frozen equilibrium is ~30% dis-saving-financed — coffers absorb
 /// ~90g/tick as one-way sinks while the 9 permanently unemployed
-/// dis-save ~225g/tick — so hunger reaches the unemployed from ~t150
-/// and the first quit lands ~t200. Both soak windows end before the
-/// fuse; pack 4's migration is the designed relief valve and its
-/// tuning must expect this, not rediscover it.
-const UNEMPLOYED_SAVINGS: u64 = 4000;
+/// dis-save ~25g/tick each — so this constant times ~25 sets when
+/// destitution arrives. Pack 4 shortened it 4000 → 3400 so the WHOLE
+/// breathing chain (broke → hungry → depart → demand shock → quits →
+/// K-aged vacancy → grubstaked arrival) completes inside the 200-tick
+/// soak window, while the first departure (~t125) still lands safely
+/// beyond the 100-tick soak's criteria span. Migration relieves the
+/// fuse; phase-6 profit distribution would cure it (next milestone).
+const UNEMPLOYED_SAVINGS: u64 = 3400;
 /// External's gold settlement fund: pack 4's immigration grubstakes draw
 /// from here; until then it sits on the books, audited like everything.
 const SETTLEMENT_FUND: u64 = 600;
@@ -189,6 +193,7 @@ pub fn town_world() -> World {
             RoleSlot {
                 wage: Money::new(wage),
                 headcount,
+                unfilled_ticks: 0,
             },
         );
         let business = world
@@ -346,14 +351,14 @@ mod tests {
     /// solvency): town_world's per-metal totals are the entire money
     /// supply, forever — the audit holds them here every tick. Gold =
     /// coffers at three full-headcount bills (3×676 = 2028) + 16
-    /// employed wallets of 120 + 14 savings of 4000 + External's 600
-    /// fund. A worldgen change must change these constants consciously,
-    /// in its own item.
+    /// employed wallets of 120 + 14 savings of 3400 + External's 600
+    /// fund (re-pinned by pack 4's fuse shortening). A worldgen change
+    /// must change these constants consciously, in its own item.
     #[test]
     fn town_world_seeds_the_decided_metals() {
         let world = town_world();
-        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(60548));
-        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(60548));
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(52148));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(52148));
         assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(300));
         assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(300));
         assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(600));
@@ -565,5 +570,57 @@ mod tests {
                 "{business:?}/{role} climbed past the cascade bound: {series:?}"
             );
         }
+    }
+
+    /// The pack-4 soak (town-colony spec): 200 ticks from `town_world`
+    /// with every mechanic live. The measured breathing chain: the
+    /// unemployed dis-save and the destitute leave (~t127 on, every
+    /// metal swept); the demand shock bites a venue's payroll; quits
+    /// open slots; the K-aged vacancy pulls grubstaked immigrants
+    /// (~t182 on) who are hired within a tick or two. The audit runs
+    /// inside every `tick`, so any §8 break panics the soak.
+    #[test]
+    fn town_soak_population_moves_both_directions() {
+        use crate::sim::{self, Event};
+
+        const LAST: u64 = 200;
+        let mut world = town_world();
+        let seed_population = world.agents.len();
+        let mut departed_ids: Vec<AgentId> = Vec::new();
+        let mut arrived = 0u32;
+        let mut dipped = false;
+        let mut rose = false;
+        for _ in 1..=LAST {
+            let before = world.agents.len();
+            let report = sim::tick(&mut world);
+            for event in &report.events {
+                match event {
+                    Event::Departed { agent, .. } => departed_ids.push(*agent),
+                    Event::Arrived { .. } => arrived += 1,
+                    _ => {}
+                }
+            }
+            let after = world.agents.len();
+            dipped |= after < seed_population;
+            rose |= after > before;
+        }
+        // population moves in BOTH directions (spec observable)
+        assert!(!departed_ids.is_empty(), "nobody left in {LAST} ticks");
+        assert!(arrived > 0, "nobody arrived in {LAST} ticks");
+        assert!(dipped, "population never fell below the seed count");
+        assert!(rose, "population never rose across a tick");
+        // no orphan balances: every leaver's account is empty on every
+        // metal — the per-account check the totals-only audit cannot
+        // make (ids are never reused, so these must still be zero)
+        for leaver in departed_ids {
+            for metal in Metal::ALL {
+                assert_eq!(
+                    world.accounts.balance_of(leaver, metal),
+                    Money::ZERO,
+                    "orphan balance parked on departed {leaver:?}"
+                );
+            }
+        }
+        world.accounts.audit();
     }
 }

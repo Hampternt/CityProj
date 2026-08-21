@@ -77,10 +77,16 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
     for event in &report.events {
         let starring = match event {
             Event::Hired { agent, .. } | Event::Quit { agent, .. } => Some(*agent),
+            Event::Arrived { agent, .. } => Some(*agent),
             Event::WagePaid { worker, .. } | Event::PayrollShort { worker, .. } => Some(*worker),
             Event::Sold { buyer, .. } => Some(*buyer),
             Event::WentHungry { agent } => Some(*agent),
-            Event::Produced { .. } | Event::PriceMoved { .. } | Event::WageMoved { .. } => None,
+            // the leaver's id resolves to nothing once they are gone
+            Event::Produced { .. }
+            | Event::PriceMoved { .. }
+            | Event::WageMoved { .. }
+            | Event::Settled { .. }
+            | Event::Departed { .. } => None,
         };
         if let Some(id) = starring {
             let lines = history.entry(id).or_default();
@@ -189,10 +195,17 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     let mut shorts = Vec::new();
     let mut moves = Vec::new();
     let mut hungry = Vec::new();
+    // Phase-7 departures close the feed, in event order (settlements
+    // immediately before their leaver).
+    let mut leavers = Vec::new();
     for event in &report.events {
         match event {
-            Event::Hired { .. } | Event::Quit { .. } | Event::WageMoved { .. } => {
-                labor.push(render_event(world, event))
+            Event::Hired { .. }
+            | Event::Quit { .. }
+            | Event::WageMoved { .. }
+            | Event::Arrived { .. } => labor.push(render_event(world, event)),
+            Event::Settled { .. } | Event::Departed { .. } => {
+                leavers.push(render_event(world, event))
             }
             Event::Produced { .. } => produced.push(render_event(world, event)),
             Event::WagePaid {
@@ -246,6 +259,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     }
     lines.extend(moves);
     lines.extend(hungry);
+    lines.extend(leavers);
     lines
 }
 
@@ -336,6 +350,31 @@ fn render_event(world: &World, event: &Event) -> String {
         }
         Event::WentHungry { agent } => {
             format!("{} went hungry", agent_name(world, *agent))
+        }
+        Event::Arrived { name, home, .. } => format!(
+            "{name} arrived seeking work, settling at {}",
+            world
+                .house(*home)
+                .map(|house| house.address.clone())
+                .unwrap_or_else(|| "(unknown house)".to_string()),
+        ),
+        Event::Settled {
+            business, amount, ..
+        } => format!(
+            "{} paid out {amount}g of back wages to a leaver",
+            business_address(world, *business),
+        ),
+        Event::Departed { name, took, .. } => {
+            let holdings: Vec<String> = took
+                .iter()
+                .filter(|(_, amount)| *amount > crate::money::Money::ZERO)
+                .map(|(metal, amount)| format!("{amount}{}", metal_tag(*metal)))
+                .collect();
+            if holdings.is_empty() {
+                format!("{name} left town penniless")
+            } else {
+                format!("{name} left town (took {})", holdings.join(" "))
+            }
         }
     }
 }

@@ -19,6 +19,12 @@ use crate::role::Role;
 pub struct RoleSlot {
     pub wage: Money,
     pub headcount: u32,
+    /// Consecutive ticks this slot has had open headcount, measured
+    /// post-matching (town-colony pack 4: the vacancy-pull age phase 1's
+    /// Arrive rule reads). SINGLE WRITER: phase 1's write-back —
+    /// incremented while open, reset to 0 when fully staffed. Worldgen
+    /// seeds 0; boot-time openings age from tick 1.
+    pub unfilled_ticks: u32,
 }
 
 /// A business attached to a house via `House::business`. `id` keys
@@ -86,6 +92,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(12),
                 headcount: 2,
+                unfilled_ticks: 0,
             },
         );
         roles.insert(
@@ -93,6 +100,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(7),
                 headcount: 5,
+                unfilled_ticks: 0,
             },
         );
         let business = Business {
@@ -117,6 +125,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(12),
                 headcount: 2,
+                unfilled_ticks: 0,
             },
         );
         roles.insert(
@@ -124,6 +133,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(7),
                 headcount: 5,
+                unfilled_ticks: 0,
             },
         );
         let business = Business {
