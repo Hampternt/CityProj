@@ -102,9 +102,9 @@ const COPPER_SAVINGS: u64 = 20;
 /// How many full-staffing wage bills each business's coffer starts with.
 const WAGE_BILLS_SEEDED: u32 = 3;
 
-/// Every named resident, spawn order = ascending `AgentId`. The first 24
-/// fill business slots in declaration order; the rest are seeded
-/// unemployed.
+/// Every named resident, spawn order = ascending `AgentId`. The first
+/// headcount-sum names (16) fill business slots in declaration order; the
+/// rest are seeded unemployed.
 const NAMES: [&str; 30] = [
     "alice", "bob", "carol", "dave", "ed", "fiona", "george", "hana", "ivan", "judit", "karl",
     "lena", "marco", "nadia", "otto", "petra", "quinn", "rosa", "sam", "tessa", "ulf", "vera",
@@ -112,13 +112,13 @@ const NAMES: [&str; 30] = [
 ];
 
 /// The shipped town (town-colony spec, `town_world` contract): 30 agents
-/// across 4 occupied residences (7–8 each), 2 zero-occupant spare
+/// across 4 occupied residences (8/8/8/6), 2 zero-occupant spare
 /// residences (pack 4's landing pads), and 6 multi-worker businesses over
 /// all three Goods — two competing sellers of each. 16 agents are
 /// seeded employed, 14 unemployed (they live off savings until pack 3's
 /// labor market). Each business is pre-funded with one full-staffing wage
-/// bills (three deep — see below); External holds the settlement fund.
-/// Deterministic and seedless;
+/// bill, three deep (`WAGE_BILLS_SEEDED`); External holds the settlement
+/// fund. Deterministic and seedless;
 /// its per-metal totals are the entire money supply, pinned by test and
 /// audit forever.
 pub fn town_world() -> World {
@@ -149,9 +149,9 @@ pub fn town_world() -> World {
     // seller floors out and the houses-order tie-break routes all demand
     // to the first forever; at parity the cheapest sells out, raises,
     // and demand rotates. TWO sellers per good, measured, not taste: a
-    // third can never win a tick — the floor can't be undercut, ties
-    // favor earlier houses, and the loser-lowers step re-undercuts
-    // before a third's turn ever comes — so its payroll starves
+    // third wins at most a warm-up transient before its payroll starves
+    // — the floor can't be undercut, ties favor earlier houses, and the
+    // loser-lowers step re-undercuts before its turn comes again
     // (recorded in the pack ledger as a deviation from the spec's "7–9
     // businesses"; the mechanics admit exactly two solvent sellers per
     // good until the market layer changes).
@@ -348,28 +348,12 @@ mod tests {
         let mut world = town_world();
         let mut food_ticks: HashMap<AgentId, Vec<u64>> = HashMap::new();
         let mut cheapest: HashMap<Good, Vec<Money>> = HashMap::new();
-        let (mut rises, mut falls) = (0u32, 0u32);
+        // per business: (rises, falls) after warm-up
+        let mut moved: HashMap<AgentId, (u32, u32)> = HashMap::new();
 
         for t in 1..=LAST {
-            let report = sim::tick(&mut world);
-            for event in &report.events {
-                match event {
-                    Event::Sold {
-                        buyer,
-                        good: Good::Food,
-                        ..
-                    } => food_ticks.entry(*buyer).or_default().push(t),
-                    Event::PriceMoved { from, to, .. } if t >= FROM => {
-                        if to > from {
-                            rises += 1;
-                        } else {
-                            falls += 1;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // cheapest posted price per good at tick end
+            // the prices in force during tick t are those posted before
+            // it — sample ahead of the write-back, not after
             for good in Good::ALL {
                 let min = world
                     .businesses()
@@ -378,6 +362,27 @@ mod tests {
                     .min()
                     .expect("every good has sellers");
                 cheapest.entry(good).or_default().push(min);
+            }
+            let report = sim::tick(&mut world);
+            for event in &report.events {
+                match event {
+                    Event::Sold {
+                        buyer,
+                        good: Good::Food,
+                        ..
+                    } => food_ticks.entry(*buyer).or_default().push(t),
+                    Event::PriceMoved {
+                        business, from, to, ..
+                    } if t >= FROM => {
+                        let entry = moved.entry(*business).or_default();
+                        if to > from {
+                            entry.0 += 1;
+                        } else {
+                            entry.1 += 1;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -413,8 +418,11 @@ mod tests {
             );
         }
 
-        // 3. at least one price moves in both directions
-        assert!(rises > 0, "no price ever rose after warm-up");
-        assert!(falls > 0, "no price ever fell after warm-up");
+        // 3. at least one price moves in both directions — ONE posted
+        //    price, not an aggregate across sellers (spec sentence)
+        assert!(
+            moved.values().any(|&(rises, falls)| rises > 0 && falls > 0),
+            "no single posted price moved in both directions after warm-up"
+        );
     }
 }

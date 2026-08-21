@@ -28,7 +28,7 @@ pub struct Agent {
     pub name: String,
     /// Where this agent lives, if anywhere.
     pub home: Option<HouseId>,
-    /// Where this agent works, if anywhere. Read by `World::employee_of`
+    /// Where this agent works, if anywhere. Read by `World::employees_of`
     /// for the staffed-business phases; hiring itself lands with the
     /// labor market.
     pub workplace: Option<HouseId>,
