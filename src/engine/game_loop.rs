@@ -11,6 +11,7 @@ use crate::agent::{Agent, AgentId};
 use crate::goods::Good;
 use crate::housing::HouseId;
 use crate::metal::Metal;
+use crate::money::Money;
 use crate::sim::{self, Event, TickReport};
 use crate::terrain::Terrain;
 use crate::world::World;
@@ -137,8 +138,8 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
             println!("  (a quiet tick)");
         }
     } else {
-        for event in &report.events {
-            println!("  {}", render_event(world, event));
+        for line in render_feed(world, report) {
+            println!("  {line}");
         }
     }
 
@@ -164,16 +165,80 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
         }
     }
 
-    println!("agents:");
-    for agent in &world.agents {
-        println!(
-            "  {} — balance {} · home {} · {}",
-            agent.name,
-            compact_balances(world, agent.id),
-            describe_house(world, agent.home),
-            describe_inventory(agent),
-        );
+    // At town scale the per-agent ledger outgrew the frame — `roster`
+    // carries the full list, a name inspects one (pack 2 readability).
+    println!("agents: {population} — `roster` lists them · a name inspects");
+}
+
+/// The feed at town scale (pack 2): the routine aggregates to one line
+/// per business — wages and sales — while the exceptional (shortfalls,
+/// price moves, hunger) stays individual. Category order follows phase
+/// order; within a category, first-seen order (which IS phase iteration
+/// order). Presentation only: events stay granular for tests and the
+/// inspect buffer.
+fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
+    // (business, workers paid, total gold)
+    let mut wages: Vec<(AgentId, u32, Money)> = Vec::new();
+    // (business, good, snapshot price, units, buyers)
+    let mut sales: Vec<(AgentId, Good, Money, u32, u32)> = Vec::new();
+    let mut produced = Vec::new();
+    let mut shorts = Vec::new();
+    let mut moves = Vec::new();
+    let mut hungry = Vec::new();
+    for event in &report.events {
+        match event {
+            Event::Produced { .. } => produced.push(render_event(world, event)),
+            Event::WagePaid {
+                business, amount, ..
+            } => {
+                if let Some(entry) = wages.iter_mut().find(|(id, ..)| *id == *business) {
+                    entry.1 += 1;
+                    entry.2 = entry.2.plus(*amount);
+                } else {
+                    wages.push((*business, 1, *amount));
+                }
+            }
+            Event::PayrollShort { .. } => shorts.push(render_event(world, event)),
+            Event::Sold {
+                business,
+                good,
+                units,
+                price,
+                ..
+            } => {
+                if let Some(entry) = sales
+                    .iter_mut()
+                    .find(|(id, g, ..)| *id == *business && *g == *good)
+                {
+                    entry.3 += *units;
+                    entry.4 += 1;
+                } else {
+                    sales.push((*business, *good, *price, *units, 1));
+                }
+            }
+            Event::PriceMoved { .. } => moves.push(render_event(world, event)),
+            Event::WentHungry { .. } => hungry.push(render_event(world, event)),
+        }
     }
+    let mut lines = produced;
+    for (business, workers, total) in wages {
+        lines.push(format!(
+            "{} paid {workers} worker{} {total}g",
+            business_address(world, business),
+            if workers == 1 { "" } else { "s" },
+        ));
+    }
+    lines.extend(shorts);
+    for (business, good, price, units, buyers) in sales {
+        lines.push(format!(
+            "{} sold {units} {good} to {buyers} buyer{} @ {price}g",
+            business_address(world, business),
+            if buyers == 1 { "" } else { "s" },
+        ));
+    }
+    lines.extend(moves);
+    lines.extend(hungry);
+    lines
 }
 
 /// One feed line for one event. The match is exhaustive on purpose — a
