@@ -2317,11 +2317,17 @@ mod tests {
         // destitute, but not yet worn down
         let fed = world.spawn_agent("fed", None, None);
         world.agent_mut(fed).unwrap().hunger = DEPART_HUNGER_TICKS - 1;
+        // the strict boundary: holding EXACTLY the cheapest price still
+        // buys one unit — they stay (a <= regression would evict them)
+        let boundary = world.spawn_agent("boundary", None, None);
+        world.accounts.mint(boundary, Metal::Gold, Money::new(2));
+        world.agent_mut(boundary).unwrap().hunger = DEPART_HUNGER_TICKS;
         let mut report = TickReport::default();
         sinks(&mut world, &mut report);
         assert_eq!(report.events, vec![]);
         assert!(world.agent(solvent).is_some());
         assert!(world.agent(fed).is_some());
+        assert!(world.agent(boundary).is_some());
     }
 
     #[test]
@@ -2404,6 +2410,8 @@ mod tests {
             labor_market(&mut world, &mut TickReport::default());
         }
         assert!(world.agent_by_name("Mara").is_none());
+        assert_eq!(world.arrivals, 0);
+        assert!(world.agents.is_empty());
 
         // bound 2: no vacant residence — the only spare hosts a business
         let mut world = World::new();
@@ -2446,6 +2454,193 @@ mod tests {
         }
         assert_eq!(world.agent(newcomer).unwrap().home, Some(cottage));
         assert!(matches!(report.events[..], [Event::Arrived { .. }]));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn local_applicants_beat_the_pull_and_arrivals_apply_last() {
+        // one aged open slot, a local applicant racing the pull: the
+        // hire applies first and the arrival dies on the live
+        // labor-demand re-check — no immigrant, External untouched
+        let mut world = World::new();
+        let (house, farm) = open_slot_business(&mut world, "Farm", Good::Food, Money::new(35));
+        world.add_house("5 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(500));
+        world
+            .house_mut(house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .roles
+            .get_mut(&Role::Labourer)
+            .unwrap()
+            .unfilled_ticks = VACANCY_PULL_TICKS;
+        let local = world.spawn_agent("local", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Hired {
+                agent: local,
+                business: farm,
+                role: Role::Labourer,
+                wage: Money::new(35),
+            }]
+        );
+        assert_eq!(world.arrivals, 0);
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(500)
+        );
+
+        // with TWO open slots the demand survives the local's hire, and
+        // the arrival applies after every hire — the phase-1 order pin
+        let mut world = World::new();
+        let house = world.add_house("Farm", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 2,
+                unfilled_ticks: VACANCY_PULL_TICKS,
+            },
+        );
+        let farm = world
+            .create_business(house, Good::Food, Money::new(1), roles)
+            .unwrap();
+        let cottage = world.add_house("5 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(500));
+        let local = world.spawn_agent("local", None, None);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        let newcomer = world.agent_by_name("Mara").expect("pulled").id;
+        assert_eq!(
+            report.events,
+            vec![
+                Event::Hired {
+                    agent: local,
+                    business: farm,
+                    role: Role::Labourer,
+                    wage: Money::new(35),
+                },
+                Event::Arrived {
+                    agent: newcomer,
+                    name: "Mara".to_string(),
+                    home: cottage,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn departed_workers_slot_ages_into_a_pull() {
+        // the full chain at unit granularity: a worker departs, their
+        // slot opens and ages, the pull answers, the newcomer takes the
+        // very job the leaver freed
+        let mut world = World::new();
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
+        let cottage = world.add_house("5 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(500));
+        world.agent_mut(worker).unwrap().hunger = DEPART_HUNGER_TICKS;
+        let mut report = TickReport::default();
+        sinks(&mut world, &mut report);
+        assert!(world.agent(worker).is_none());
+        for _ in 0..VACANCY_PULL_TICKS {
+            labor_market(&mut world, &mut TickReport::default());
+        }
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        let newcomer = world.agent_by_name("Mara").expect("pulled").id;
+        assert!(report.events.contains(&Event::Arrived {
+            agent: newcomer,
+            name: "Mara".to_string(),
+            home: cottage,
+        }));
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert!(report.events.contains(&Event::Hired {
+            agent: newcomer,
+            business: farm,
+            role: Role::Labourer,
+            wage: Money::new(35),
+        }));
+    }
+
+    #[test]
+    fn hunger_has_a_single_writer() {
+        // every behavior phase EXCEPT consume runs; none may touch the
+        // counter — the Depart rule's meaning depends on it
+        let mut world = World::new();
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            "f",
+        );
+        world.accounts.mint(farm, Metal::Gold, Money::new(100));
+        set_stock(&mut world, farm_house, 50);
+        world.agent_mut(worker).unwrap().hunger = DEPART_HUNGER_TICKS - 2;
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        produce(&mut world, &mut report);
+        pay_wages(&mut world, &mut report);
+        goods_market(&mut world, &mut report);
+        sinks(&mut world, &mut report);
+        assert_eq!(world.agent(worker).unwrap().hunger, DEPART_HUNGER_TICKS - 2);
+    }
+
+    #[test]
+    fn the_last_grubstake_spends_and_then_the_pull_stalls() {
+        // the passing boundary of the drain bound: External holding
+        // exactly one stake funds exactly one arrival, then dries
+        let mut world = World::new();
+        let house = world.add_house("Farm", vec![]);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 2,
+                unfilled_ticks: VACANCY_PULL_TICKS,
+            },
+        );
+        world
+            .create_business(house, Good::Food, Money::new(1), roles)
+            .unwrap();
+        world.add_house("5 Weir Cottage", vec![]);
+        world.add_house("6 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, GRUBSTAKE);
+        labor_market(&mut world, &mut TickReport::default());
+        assert_eq!(world.arrivals, 1);
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::ZERO
+        );
+        // the second slot keeps aging and a cottage stands vacant, but
+        // the dry fund never stakes another arrival
+        for _ in 0..(2 * VACANCY_PULL_TICKS) {
+            labor_market(&mut world, &mut TickReport::default());
+        }
+        assert_eq!(world.arrivals, 1);
         world.accounts.audit();
     }
 
