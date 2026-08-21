@@ -1,7 +1,9 @@
 # Town colony sim (container)
 
-**Status:** IN PROGRESS — gate signed 2026-08-21; packs 1–3 DONE
-2026-08-21, pack 4 proposed shape only.
+**Status:** DONE 2026-08-21 — all four packs landed, reviewed, and
+closed on green `verify.sh` gates; the INVENTORY 🚧 pointer is folded.
+Final gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 155
+passed (105 at container start).
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-21-town-colony-sim-design.md](../superpowers/specs/2026-08-21-town-colony-sim-design.md)
 (approved 2026-08-21; drafted from a judged three-proposal synthesis, then
@@ -111,17 +113,26 @@ employment of 21/30 with no wage rising unboundedly.
 
 ### Pack 4 — The town breathes
 
-Proposed shape only. `Agent.hunger` (ruling 3), `Intent::Depart` + phase-7
-push with `remove_agent`'s settle-then-sweep (rulings 2, Amendment 17),
-`Intent::Arrive` + phase-1 pull with `World::immigrate` + the capped
-External grubstake (Amendment 16). Conservation proven per-account at every
-step. Container DONE: fold the 🚧 pointer in `docs/INVENTORY.md` and close
-this ledger quoting real `verify.sh` output.
+Item manifest: [2026-08-21-tcs-pack4-town-breathes.md](2026-08-21-tcs-pack4-town-breathes.md)
+(DONE 2026-08-21; 136 → 155 tests; the INVENTORY fold executed — the
+container's definition of DONE).
 
-Observable: population moves both directions over a 200-tick soak —
-"petra left town (took 12g 3s 5c)", "Mara arrived seeking work" — arrivals
-take vacant residences and apply next tick; immigration visibly stalls when
-External drains or no residence stands empty; audit green throughout.
+`Agent.hunger` (ruling 3, single writer consume); `Intent::Depart` +
+phase-7 push with `remove_agent`'s settle-then-sweep (ruling 2,
+Amendment 17 — `min(coffer, owed)` to the leaver, remainder written off,
+every metal swept to External, no-orphan proven per-account);
+`Intent::Arrive` + phase-1 pull (`RoleSlot.unfilled_ticks` aged past K,
+a vacant residence, External covering the stake) with `World::immigrate`
++ the capped grubstake (Amendment 16 — phase 1's only money op). The
+savings fuse was shortened 4000 → 3400 so the whole breathing chain
+completes inside the 200-tick soak (measured band [3000, 3800]).
+
+Observable, measured: first destitute departure t127 ("vera left town
+(took 10s 20c)"); the demand shock guts a venue from t174; "Mara arrived
+seeking work" t182, hired t183 into the very slot the churn freed;
+settlements narrated on churn departures; External drains per stake and
+the pull stalls dry by design. Population 30 → 24 with rising ticks —
+both directions, audit green throughout.
 
 ## Open questions (carried)
 
@@ -181,3 +192,20 @@ rates, seigniorage — 07-12) stay open where they live and block none of this.
   recorded for pack 4, whose migration is the designed relief. Close
   gate quoted in the pack manifest: `VERIFY OK` 136 passed. Next:
   pack 4 item manifest, on your go.
+- **2026-08-21** — **pack 4 closes; the CONTAINER closes** (commits
+  2f091d2..close). The town breathes: hunger (ruling 3), emigration
+  with settle-then-sweep (ruling 2 / Amendment 17), immigration with
+  the capped grubstake (Amendment 16), the 200-tick soak, and the
+  INVENTORY fold. The manifest was adversarially verified before and
+  during implementation (3 lenses — a boot-race arrival, the fuse
+  timeline, and two unimplementable-as-drafted assertions caught and
+  fixed pre-freeze) and the diff close-reviewed after (3 lenses — one
+  blocker: a soak criterion this ledger had recorded as landed had
+  silently missed the tree, now genuinely in; one real bookkeeping
+  bug: a dangling zero-amount `owed_to` entry on removed ids, fixed
+  and pinned). Four soaks green. One economy-texture note handed to
+  the firm-lifecycle milestone: the vacancy pull recruits into
+  known-deadbeat employers — weigh the owed_by philosophy for
+  immigration there. Close gate quoted in the pack manifest:
+  `VERIFY OK` 155 passed. **The container is DONE**; the immediately
+  following milestone, per gate ruling 1, is the firm lifecycle.

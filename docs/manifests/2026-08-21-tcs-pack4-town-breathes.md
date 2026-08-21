@@ -1,6 +1,9 @@
 # Town colony sim — Pack 4: The town breathes
 
-**Status:** IN PROGRESS 2026-08-21 — drafted on the owner's "start pack 4".
+**Status:** DONE 2026-08-21 — all items landed and reviewed; close gate:
+`VERIFY OK — fmt, clippy, build, tests all clean.` 155 passed (136 on
+arrival, +19). This close closes the CONTAINER: the INVENTORY 🚧 pointer
+is folded and every deviation and Erratum stands recorded and flagged.
 **Container:** [2026-08-21-town-colony-sim.md](2026-08-21-town-colony-sim.md)
 **Spec contracts executed here:** `World::remove_agent` (settle-then-sweep,
 gate ruling 2 / Amendment 17 ACTIVE), `World::immigrate`,
@@ -40,11 +43,14 @@ empty; audit green throughout.
   order. H = `DEPART_HUNGER_TICKS`, first guess 5, soak-tuned. No Food
   seller in the world → nobody departs by this rule (no price to be below;
   unreachable in shipped worlds, documented).
-- **Depart apply = `remove_agent`, and its event carries the NAME**:
-  after removal the id resolves to nothing, so
-  `Event::Departed { name: String, took: Vec<(Metal, Money)> }` snapshots
-  what the shell needs (`took` = the per-metal sweep amounts, settlement
-  included — zero metals still listed, D3 visible-zeros precedent).
+- **Depart apply = `remove_agent`, and its event carries the NAME**
+  *(AMENDED by the verification round: AND the id)*:
+  `Event::Departed { agent: AgentId, name: String, took: Vec<(Metal, Money)> }`
+  — the name because the id resolves to no `Agent` after removal, the id
+  because names are not enforced unique and the soak's per-account
+  no-orphan check harvests ids from the event stream (`took` = the
+  per-metal sweep amounts in `Metal::ALL` order, settlement included —
+  zero metals still listed, D3 visible-zeros precedent).
   `Event::Settled { business, agent, amount }` precedes it when arrears
   settle (Amendment 17 is a money-op row change; it narrates). A written-off
   remainder is silent bookkeeping, consistent with `owed_to` being
@@ -132,9 +138,13 @@ empty; audit green throughout.
   swept" — violable only by a chokepoint bypass, which the §8.3 audit
   and `pay` validation already police; subsumed, recorded rather than
   silently dropped.)* Tuning levers: H, K,
-  GRUBSTAKE, `SETTLEMENT_FUND`, and if needed `UNEMPLOYED_SAVINGS` (which
-  moves the fuse — but it must stay ≥ ~2600 so nobody departs before the
-  100-tick soak's window closes).
+  GRUBSTAKE, `SETTLEMENT_FUND`, and `UNEMPLOYED_SAVINGS`, which moves
+  the fuse. *(CORRECTED by the close review, measured: the four-soak
+  union pins savings to roughly [3000, 3800] — below ~3000 the 100-tick
+  soak's Food-liveness fails FIRST, before any departure (2600 fails at
+  t95–99; 3000 passes); above ~3800 the 200-tick soak's shock-answering
+  arrival lands past the window (4000 fails, 3800 passes). The shipped
+  3400 sits mid-band.)*
 - **INVENTORY fold is the container's DONE** (item 6): the 🚧 pointer
   becomes real entries, and the stale pre-container prose (the 4-agent
   scenario, "labor allocation not simulated", the 2026-08-15 inspect-wipe
@@ -142,13 +152,13 @@ empty; audit green throughout.
 
 ## Items
 
-- [ ] **1. Hunger.** `Agent.hunger: u8` (spawn/immigrate start 0);
+- [x] **1. Hunger.** `Agent.hunger: u8` (spawn/immigrate start 0);
   consume's single-writer rule (increment beside the existing
   `WentHungry` emission, reset on a fed tick); shell inspect shows it.
   Tests: saturating increment, reset-on-fed, starts-at-zero. Done:
   `./scripts/check.sh` clean; `cargo test sim::` green. Touches:
   src/agent.rs, src/sim.rs, src/engine/game_loop.rs.
-- [ ] **2. `World::remove_agent`.** Settle-then-sweep per the decision
+- [x] **2. `World::remove_agent`.** Settle-then-sweep per the decision
   above; `#[allow(dead_code)]` until item 4 wires phase 7 (recorded).
   Tests: `remove_agent_sweeps_every_metal_no_orphans` (per-account:
   leaver zero on every metal, External credited exactly the pre-sweep
@@ -157,7 +167,7 @@ empty; audit green throughout.
   owners-strip, home/workplace/role cleared, derived occupancy updates.
   Done: `./scripts/check.sh` clean; `cargo test world::` + `money::`
   green. Touches: src/world.rs.
-- [ ] **3. `World::immigrate`.** Vacancy-validated wrapper over the
+- [x] **3. `World::immigrate`.** Vacancy-validated wrapper over the
   untouched `spawn_agent`; `HouseNotVacant`; `arrivals` counter.
   `#[allow(dead_code)]` until item 4 (recorded). Tests:
   `immigrate_is_money_free` (zero balances, all metals), occupied and
@@ -165,7 +175,7 @@ empty; audit green throughout.
   unemployed, `spawn_agent` call sites untouched (compile-time fact,
   noted not tested). Done: `./scripts/check.sh` clean;
   `cargo test world::` green. Touches: src/world.rs.
-- [ ] **4. The town breathes.** `Intent::{Depart, Arrive}` +
+- [x] **4. The town breathes.** `Intent::{Depart, Arrive}` +
   `Event::{Settled, Departed, Arrived}`; phase 7's decide→apply
   (destitution rule → settle→sweep→remove); phase 1 gains the pull rule
   (K-counter on `RoleSlot`, name table, capped grubstake — Amendment 16
@@ -179,13 +189,13 @@ empty; audit green throughout.
   `market::`, `money::` output quoted in the ledger. Touches:
   src/sim.rs, src/business.rs, src/world.rs, src/role.rs (if needed),
   src/engine/game_loop.rs.
-- [ ] **5. The 200-tick soak + tuning.** As decided above; constants
+- [x] **5. The 200-tick soak + tuning.** As decided above; constants
   iterated until the FOUR-soak union holds, then frozen; deviations (if
   any) recorded and flagged. Done: full suite green; final constants +
   the breathing timeline (first departure, first arrival, final pop)
   quoted in the ledger. Touches: src/engine/worldgen.rs, src/sim.rs
   (constants).
-- [ ] **6. Container close.** `./scripts/verify.sh` green; 3-lens
+- [x] **6. Container close.** `./scripts/verify.sh` green; 3-lens
   review; INVENTORY 🚧 folded into real entries (and its stale prose
   corrected); CLAUDE.md code-state updated (phases 6/8 the remaining
   stubs, migration live); pack + container ledgers closed quoting real
@@ -292,8 +302,12 @@ empty; audit green throughout.
   with reasoning. 155 passed after.
 - **2026-08-21** — **items 4+5 landed (e32c340), one commit — the
   breathing chain measured end to end:** boot cascade t1–4 (no
-  spurious arrival); first destitute departure t127, the nine
-  unemployed leave through ~t173 with silver/copper visibly swept; the
+  spurious arrival); first destitute departure t127 — six of the nine
+  permanently unemployed leave through ~t173 with silver/copper visibly
+  swept, and the remaining three are briefly re-hired into the
+  churn-opened slots from ~t175, departing later with settlements (the
+  shock partially re-employs the destitute before expelling them —
+  close-review correction); the
   demand shock guts The Brass Bell — quits at ~144g arrears from t174,
   wages ratchet 39→36→33, settlements pay out on churn departures
   (117g, 132g — Amendment 17 narrated); the K-aged vacancy pulls
@@ -301,3 +315,48 @@ empty; audit green throughout.
   30 → 24 and rising ticks observed. All four soaks green:
   `cargo test` 151 passed, 0 failed. Constants frozen: H=5, K=3,
   GRUBSTAKE=100, savings 3400.
+- **2026-08-21** — **3-lens close review (contract / §8 invariants /
+  economy quality): one blocker — ours to own — plus real fixes; all
+  applied:**
+  1. *The blocker:* the "shock-answering arrival" soak criterion this
+     ledger recorded as Taken had silently failed to land (the edit
+     misfired; the commit message claimed it; all three lenses caught
+     the record/code divergence). Now genuinely implemented: the soak
+     requires an `Arrived` at a strictly later tick than the first
+     `Departed`.
+  2. *A real bookkeeping bug:* `remove_agent` left a dangling
+     zero-amount `owed_to` entry naming the removed id (`pay_wages`
+     inserts unconditionally; the settlement loop filtered `> 0`). Now
+     every ledger strips the leaver unconditionally; pinned by a new
+     test case.
+  3. Stale `#[allow(dead_code)]`s on `remove_agent`/`immigrate`
+     dropped; the sinks no-Food-seller guard rescoped from the phase
+     to the Depart decide (future phase-7 mechanics stay reachable);
+     CLAUDE.md's sim.rs bullet corrected ("no money moves in phase 1"
+     contradicted the executed Amendment 16) and the Roadmap's
+     wage-market entry marked shipped; the savings-floor note
+     corrected to the measured [3000, 3800] band; the six-of-nine
+     departure detail corrected; the fuse comment aligned to t127.
+  4. Recorded, no change: the shipped names
+     `arrivals_stall_on_drained_external_and_on_zero_vacancy` and
+     `stake_failure_leaves_a_valid_penniless_newcomer` rename the
+     spec's acceptance entries (the items-3/4 split is on the module
+     boundary); the full quits→hires→arrivals order is pinned by
+     composition (quits-before-hires in pack 3's re-entry test,
+     hires-before-arrivals in `local_applicants_beat_the_pull...`).
+     And one economy-texture observation handed to the FIRM-LIFECYCLE
+     milestone: the pull recruits into known-deadbeat employers — an
+     aged slot at an arrears-carrying venue can cycle immigrants
+     through effectively unpaid work, External netting upward through
+     their sweeps. Spec-conformant here; the next milestone should
+     weigh gating the pull on the poster carrying no arrears (the
+     owed_by philosophy applied to immigration).
+  Reviewers confirmed: the §8.2 chokepoint's sole caller verified;
+  Amendments 16/17 the only new money ops; no `HashMap` order reaches
+  behavior; ids never reused, so the soak's end-state orphan check is
+  sound; K=3 is the knife-edge constant (K=2 reproduces the boot race
+  — recorded); and the container's end state "honestly delivers the
+  spec's design paragraph at its stated horizon".
+- **2026-08-21** — **pack closes; the container closes with it.**
+  `VERIFY OK — fmt, clippy, build, tests all clean.` 155 passed,
+  0 failed.

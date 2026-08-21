@@ -77,11 +77,15 @@ new mechanics into the loop and money:
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last, returning a `TickReport` of typed `Event`s (pure observation,
   Amendment 15); `goods_market` holds the worked decide→apply template;
-  `Intent` is the enum mechanics extend — `Buy`, and since pack 3
+  `Intent` is the enum mechanics extend — `Buy`, since pack 3
   `TakeJob`/`Quit` (phase 1's `labor_market`: JobOffer snapshot →
   quits-then-applications decide → live-re-check apply → wage
   write-back; quit fires when arrears exceed `QUIT_ARREARS_BILLS` ×
-  slot wage; no money moves in phase 1).
+  slot wage), and since pack 4 `Arrive`/`Depart` (the migration pair:
+  phase 1's vacancy pull and phase 7's destitution push). Phase 1's
+  only money op is the immigration grubstake (Amendment 16); phase 7's
+  are the Amendment-17 settlement and the sweep to External — both
+  ride `World::pay`, event amounts measured as balance deltas.
 - `src/terrain.rs` — world coordinates (`Point3`, 1 unit = 0.1 m) and the
   triangulated integer heightmap (`Terrain`, `elevation_at`); pure movement
   math (`grade`, `travel_time` + `SpeedProfile`) with its tuning constants
@@ -160,9 +164,10 @@ records what was verified in the browser before the merge.
   staffed Mint business* that consumes precious-metal goods to mint coins
   (seigniorage formula deferred by the 07-12 multi-metal spec), plus
   trade with outside markets through `External`.
-- **Wage market.** The `adjust_price` pattern applied to `RoleSlot.wage`
-  in phase 1 (can't fill a slot → raise, queue of applicants → lower),
-  plus employee happiness / job-switching driven by the arrears ledger.
+- **Wage market.** *(Shipped as town-colony pack 3 — the `adjust_price`
+  pattern on `RoleSlot.wage`, arrears-driven quitting, the deadbeat
+  exclusion.)* Still future: employee happiness and voluntary
+  job-switching by the employed.
 - **Building volumes.** Buildings will occupy 3D volumes (footprint +
   vertical extent, above or below ground) addressed by `Point3` — never
   tile-locked to the terrain grid, which only stores the ground surface.

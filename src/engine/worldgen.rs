@@ -101,7 +101,7 @@ const EMPLOYED_WALLET: u64 = 120;
 /// destitution arrives. Pack 4 shortened it 4000 → 3400 so the WHOLE
 /// breathing chain (broke → hungry → depart → demand shock → quits →
 /// K-aged vacancy → grubstaked arrival) completes inside the 200-tick
-/// soak window, while the first departure (~t125) still lands safely
+/// soak window, while the first departure (t127, measured) lands safely
 /// beyond the 100-tick soak's criteria span. Migration relieves the
 /// fuse; phase-6 profit distribution would cure it (next milestone).
 const UNEMPLOYED_SAVINGS: u64 = 3400;
@@ -587,16 +587,27 @@ mod tests {
         let mut world = town_world();
         let seed_population = world.agents.len();
         let mut departed_ids: Vec<AgentId> = Vec::new();
-        let mut arrived = 0u32;
+        let mut first_departed: Option<u64> = None;
+        let mut first_arrived_after_departure: Option<u64> = None;
         let mut dipped = false;
         let mut rose = false;
-        for _ in 1..=LAST {
+        for t in 1..=LAST {
             let before = world.agents.len();
             let report = sim::tick(&mut world);
             for event in &report.events {
                 match event {
-                    Event::Departed { agent, .. } => departed_ids.push(*agent),
-                    Event::Arrived { .. } => arrived += 1,
+                    Event::Departed { agent, .. } => {
+                        departed_ids.push(*agent);
+                        first_departed.get_or_insert(t);
+                    }
+                    // only an arrival at a strictly later tick than the
+                    // first departure counts — the pull ANSWERING the
+                    // shock, which a boot transient cannot satisfy
+                    // (phase order puts Arrived before Departed inside
+                    // one tick, so strictly-later is the honest bar)
+                    Event::Arrived { .. } if first_departed.is_some_and(|d| t > d) => {
+                        first_arrived_after_departure.get_or_insert(t);
+                    }
                     _ => {}
                 }
             }
@@ -604,9 +615,13 @@ mod tests {
             dipped |= after < seed_population;
             rose |= after > before;
         }
-        // population moves in BOTH directions (spec observable)
+        // population moves in BOTH directions (spec observable), on the
+        // per-tick series — offsetting same-tick moves cannot fake it
         assert!(!departed_ids.is_empty(), "nobody left in {LAST} ticks");
-        assert!(arrived > 0, "nobody arrived in {LAST} ticks");
+        assert!(
+            first_arrived_after_departure.is_some(),
+            "no arrival answered the shock (first departure at {first_departed:?})"
+        );
         assert!(dipped, "population never fell below the seed count");
         assert!(rose, "population never rose across a tick");
         // no orphan balances: every leaver's account is empty on every

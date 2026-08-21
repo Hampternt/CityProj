@@ -850,26 +850,28 @@ fn sinks(world: &mut World, report: &mut TickReport) {
     // The reference price is each seller's LIVE posted price at phase-7
     // start — one write-back step ahead of the price this tick's failed
     // purchase saw, stock ignored (a sold-out seller's price still
-    // counts). Deterministic either way; recorded in the manifest.
-    let Some(cheapest_food) = snapshot
+    // counts). Deterministic either way; recorded in the manifest. No
+    // Food market means no destitution test (no price to be below —
+    // unreachable in shipped worlds); the guard scopes the DECIDE, not
+    // the phase, so future phase-7 mechanics (demurrage, imports)
+    // appended below stay unconditionally reached.
+    let cheapest_food = snapshot
         .businesses()
         .filter(|(_, business)| business.product == Good::Food)
         .map(|(_, business)| business.price)
-        .min()
-    else {
-        // No Food market means no destitution test — there is no price
-        // to be below. Unreachable in shipped worlds; documented.
-        return;
+        .min();
+    let intents: Vec<Intent> = match cheapest_food {
+        Some(cheapest) => snapshot
+            .agents
+            .iter()
+            .filter(|agent| {
+                agent.hunger >= DEPART_HUNGER_TICKS
+                    && snapshot.accounts.balance_of(agent.id, Metal::Gold) < cheapest
+            })
+            .map(|agent| Intent::Depart { agent: agent.id })
+            .collect(),
+        None => Vec::new(),
     };
-    let intents: Vec<Intent> = snapshot
-        .agents
-        .iter()
-        .filter(|agent| {
-            agent.hunger >= DEPART_HUNGER_TICKS
-                && snapshot.accounts.balance_of(agent.id, Metal::Gold) < cheapest_food
-        })
-        .map(|agent| Intent::Depart { agent: agent.id })
-        .collect();
     for intent in intents {
         apply_sinks_intent(world, intent, report);
     }

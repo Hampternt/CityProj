@@ -349,7 +349,6 @@ impl World {
     /// validation no internal transfer can fail — every amount is
     /// min-bounded by a live balance and both ids are known — so the
     /// command is atomic by construction.
-    #[allow(dead_code)] // no caller until phase 7's Depart lands (item 4)
     pub fn remove_agent(&mut self, agent: AgentId) -> Result<(), WorldError> {
         if self.agent(agent).is_none() {
             return Err(WorldError::UnknownAgent(agent));
@@ -366,19 +365,21 @@ impl World {
                     .map(|owed| (house.id, business.id, owed))
             })
             .collect();
-        for (house_id, business_id, owed) in debts {
+        for (_, business_id, owed) in debts {
             let settlement = self.accounts.balance_of(business_id, Metal::Gold).min(owed);
             if settlement > Money::ZERO {
                 self.pay(business_id, agent, Metal::Gold, settlement)
                     .expect("min-bounded by the live coffer, both ids validated");
             }
-            self.house_mut(house_id)
-                .expect("collected from businesses()")
-                .business
-                .as_mut()
-                .expect("collected from businesses()")
-                .owed_to
-                .remove(&agent); // remainder written off
+        }
+        // Strip the leaver from EVERY ledger, zero-amount entries
+        // included (pay_wages inserts unconditionally, so a zero-wage
+        // slot leaves a 0g entry the settlement filter above never
+        // sees) — no entry may keep naming a removed id.
+        for house in &mut self.houses {
+            if let Some(business) = house.business.as_mut() {
+                business.owed_to.remove(&agent); // remainder written off
+            }
         }
         // The per-metal sweep: everything they hold goes to External.
         for metal in Metal::ALL {
@@ -407,7 +408,6 @@ impl World {
     /// separate, capped `pay` in the Arrive apply, so a failed stake
     /// leaves a penniless-but-valid newcomer). Bumps `arrivals`, the
     /// immigrant-name counter. `Err` means nothing changed.
-    #[allow(dead_code)] // no caller until phase 1's Arrive lands (item 4)
     pub fn immigrate(&mut self, name: String, home: HouseId) -> Result<AgentId, WorldError> {
         match self.house(home) {
             None => return Err(WorldError::UnknownHouse(home)),
@@ -960,6 +960,34 @@ mod tests {
                 .is_empty()
         );
         world.accounts.audit();
+
+        // even a ZERO-amount entry (a zero-wage slot's bookkeeping
+        // residue) must not survive naming a removed id
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        world
+            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::ZERO);
+        world.remove_agent(leaver).unwrap();
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
     }
 
     #[test]
