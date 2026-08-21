@@ -188,11 +188,15 @@ fn pay_wages(world: &mut World, report: &mut TickReport) {
                 .pay(business_id, worker, Metal::Gold, payable)
                 .is_err()
         {
-            report.events.push(Event::PayrollShort {
-                business: business_id,
-                worker,
-                remaining: owed,
-            });
+            // A zero-wage slot with no arrears owes nothing — that is
+            // not a shortfall, so it makes no event.
+            if owed > Money::ZERO {
+                report.events.push(Event::PayrollShort {
+                    business: business_id,
+                    worker,
+                    remaining: owed,
+                });
+            }
             continue;
         }
         report.events.push(Event::WagePaid {
@@ -782,24 +786,7 @@ mod tests {
     /// business; wallet + one day's goods per agent). Every tick audits.
     #[test]
     fn minimal_economy_feeds_the_worker_and_breaks_the_idle() {
-        let mut world = World::new();
-        let (farm_house, farm, worker) = staffed_business(
-            &mut world,
-            "Farm",
-            Good::Food,
-            Money::new(1),
-            Money::new(35),
-            "f",
-        );
-        let idle = world.spawn_agent("idle", None, None);
-        world.accounts.mint(farm, Metal::Gold, Money::new(35)); // one wage bill (tick-1 seed)
-        for id in [worker, idle] {
-            world.accounts.mint(id, Metal::Gold, Money::new(35));
-            let agent = world.agent_mut(id).unwrap();
-            for good in Good::ALL {
-                agent.inventory.insert(good, good.consumption_rate());
-            }
-        }
+        let (mut world, farm_house, worker, idle) = seeded_minimal_economy();
         for _ in 0..10 {
             tick(&mut world); // audit runs inside — any §8 break panics here
         }
@@ -1105,9 +1092,13 @@ mod tests {
         lines
     }
 
-    fn seeded_minimal_economy() -> World {
+    /// The minimal 07-19 economy, seeded exactly like worldgen: one
+    /// staffed farm (wage bill pre-funded), one unemployed agent, wallet
+    /// plus one day's goods each. Returns (world, farm house, worker,
+    /// idle).
+    fn seeded_minimal_economy() -> (World, HouseId, AgentId, AgentId) {
         let mut world = World::new();
-        let (_, farm, worker) = staffed_business(
+        let (farm_house, farm, worker) = staffed_business(
             &mut world,
             "Farm",
             Good::Food,
@@ -1124,16 +1115,36 @@ mod tests {
                 agent.inventory.insert(good, good.consumption_rate());
             }
         }
-        world
+        (world, farm_house, worker, idle)
     }
 
-    /// Amendment 15's contract: the report is pure observation — a run
-    /// that drops every report ends in exactly the state of one that
-    /// keeps them.
+    #[test]
+    fn zero_wage_slot_emits_nothing() {
+        let mut world = World::new();
+        staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::ZERO,
+            "f",
+        );
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report);
+        // nothing is owed, so there is no shortfall to narrate
+        assert_eq!(report.events, vec![]);
+    }
+
+    /// Amendment 15's contract, as far as a test can pin it: a run that
+    /// drops every report ends in exactly the state of one that keeps
+    /// them. Both arms execute the same code, so what this actually pins
+    /// is cross-instance determinism (no state-affecting iteration
+    /// order); observer-effect regressions are caught by the per-phase
+    /// state tests above.
     #[test]
     fn tick_report_is_pure_observation() {
-        let mut kept = seeded_minimal_economy();
-        let mut dropped = seeded_minimal_economy();
+        let (mut kept, _, _, _) = seeded_minimal_economy();
+        let (mut dropped, _, _, _) = seeded_minimal_economy();
         let mut observed = 0;
         for _ in 0..3 {
             observed += tick(&mut kept).events.len();
