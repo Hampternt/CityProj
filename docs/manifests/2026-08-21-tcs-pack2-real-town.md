@@ -1,8 +1,9 @@
 # Town colony sim — Pack 2: A real town
 
-**Status:** IN PROGRESS — drafted 2026-08-21, go given same day ("start
-pack 2"). Baseline on arrival: `VERIFY OK — fmt, clippy, build, tests all
-clean.` 114 passed (pack 1's close gate).
+**Status:** DONE 2026-08-21 — all items landed, tuned, and reviewed; close
+gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 119 passed (114 on
+arrival, +5). Two measured deviations from the drafted shape — recorded in
+the ledger, flagged to the owner in the PR.
 **Container:** [2026-08-21-town-colony-sim.md](2026-08-21-town-colony-sim.md)
 **Spec contracts executed here:** `World::employees_of` (replaces
 `employee_of`), `town_world`; the spec's pinned soak exit criteria become a
@@ -24,12 +25,14 @@ in the feed, multi-worker payrolls, unemployed agents flagged in `roster`,
 
 ## Decisions (this pack's, within the spec's contracts)
 
-- **`town_world` scenario shape**: 28 agents in 14 houses — 4 occupied
-  residences (7 each), 2 zero-occupant spare residences (pack 4's landing
-  pads), 8 business premises. Businesses over `Good::ALL`: 3 Food farms
-  (the competing sellers), 3 Entertainment venues, 2 Luxury ateliers, all
-  `headcount > 1`. 24 agents seeded employed (workplace + employed_role
-  set directly, template precedent), 4 seeded unemployed.
+- **`town_world` scenario shape** *(AMENDED during tuning — the drafted
+  28/14/8-business/24-employed shape was measured infeasible; see the
+  ledger's deviation entries)*: 30 agents in 12 houses — 4 occupied
+  residences (8/8/8/6), 2 zero-occupant spare residences (pack 4's
+  landing pads), 6 business premises. Businesses over `Good::ALL`: 2
+  sellers per good, all `headcount > 1`. 16 agents seeded employed
+  (workplace + employed_role set directly, template precedent), 14 seeded
+  unemployed — pack 3's hiring pool.
 - **The unemployed live off savings until pack 3 hires them**: their
   wallets are seeded deep enough to keep buying Food through the 100-tick
   soak (the spec's every-agent liveness criterion applies to them too;
@@ -53,7 +56,7 @@ in the feed, multi-worker payrolls, unemployed agents flagged in `roster`,
 
 ## Items
 
-- [ ] **1. `employees_of` replaces `employee_of`.** New
+- [x] **1. `employees_of` replaces `employee_of`.** New
   `pub fn employees_of(&self, house: HouseId) -> Vec<AgentId>` (derived
   scan, ascending, unknown house empty); `employee_of` deleted; produce
   scales stock gain by staff count; pay_wages accrues and pays every
@@ -62,7 +65,7 @@ in the feed, multi-worker payrolls, unemployed agents flagged in `roster`,
   multi-worker produce/payroll, updated callers. Done: `./scripts/check.sh`
   clean; `cargo test world::`, `sim::`, `market::`, `money::` green.
   Touches: src/world.rs, src/sim.rs, src/engine/game_loop.rs.
-- [ ] **2. Worldgen split + `town_world`.** `engine/worldgen.rs` with
+- [x] **2. Worldgen split + `town_world`.** `engine/worldgen.rs` with
   `template_world` (moved verbatim) and `town_world` per the contract:
   deterministic, seedless, no RNG; the shape decided above; every business
   seeded one full-staffing `wage_bill()`; every agent wallet + one day's
@@ -71,23 +74,23 @@ in the feed, multi-worker payrolls, unemployed agents flagged in `roster`,
   unemployed count). Done: `./scripts/check.sh` clean; `cargo test
   worldgen` green. Touches: src/engine/mod.rs, src/engine/worldgen.rs,
   src/engine/game_loop.rs.
-- [ ] **3. The conservation re-pin (one deliberate item).**
+- [x] **3. The conservation re-pin (one deliberate item).**
   `town_world_seeds_the_decided_metals` pins the new per-metal totals;
   audit green on the fresh world. Done: `./scripts/check.sh` clean;
   `cargo test money::` and `cargo test market::` output quoted in the
   ledger. Touches: src/engine/worldgen.rs.
-- [ ] **4. Ship it.** The binary boots `town_world` (`template_world`
+- [x] **4. Ship it.** The binary boots `town_world` (`template_world`
   stays the fixture); the aggregated feed lands. Done: `./scripts/check.sh`
   clean; frame confirmed readable by eye at 28 agents. Touches:
   src/engine/game_loop.rs.
-- [ ] **5. 100-tick soak + tuning.** Headless soak test from `town_world`:
+- [x] **5. 100-tick soak + tuning.** Headless soak test from `town_world`:
   audit green every tick (tick panics otherwise); from tick 10 — every
   agent ≥1 Food purchase in every rolling 5-tick window; per Good the
   cheapest posted price neither floor-pinned all span nor monotonically
   rising; at least one price moves in both directions. Constants iterated
   until green, then frozen. Done: soak test green in `cargo test`; final
   constants recorded in the ledger. Touches: src/engine/worldgen.rs.
-- [ ] **6. Pack close.** `./scripts/verify.sh` green; review pass; ledger
+- [x] **6. Pack close.** `./scripts/verify.sh` green; review pass; ledger
   quoting real output and the new count; container entry updated. Done:
   `VERIFY OK — fmt, clippy, build, tests all clean.` quoted with count.
   Touches: docs/manifests/*.
@@ -106,3 +109,50 @@ in the feed, multi-worker payrolls, unemployed agents flagged in `roster`,
 
 - **2026-08-21** — **drafted and started.** Go given ("start pack 2").
   Items 1–6 as above; baseline 114 tests green.
+- **2026-08-21** — **item 1 landed (b0286b1).** `employees_of` replaces
+  `employee_of`; produce scales by staff; payroll pays every slotted
+  employee ascending. `CHECK OK`; 116 passed; `world::`/`sim::`/
+  `market::`/`money::` green within the full run.
+- **2026-08-21** — **item 2 landed (54aa9b9), with one deviation pulled
+  forward:** `run()` boots `town_world` in the same commit — an
+  unconsumed worldgen is dead code under the clippy `-D warnings` gate
+  (same forcing as pack 1's item 1/2 pairing). `template_world` became a
+  `#[cfg(test)]` fixture. `CHECK OK`; 117 passed.
+- **2026-08-21** — **item 4 landed (0f808ea).** Aggregated feed
+  ("Longacre Farm paid 3 workers 210g"), per-agent ledger left the frame
+  (roster carries it). Confirmed readable by eye at town scale.
+- **2026-08-21** — **items 5+3 landed (208c9cf) — the tuning saga,
+  measured, and two DEVIATIONS from the drafted shape:**
+  1. *Six businesses, not the spec's 7–9.* Three same-good sellers cannot
+     all stay solvent under the shipped market mechanics: at the floor
+     the houses-order tie-break routes all demand to the first seller
+     forever (the floor can't be undercut; loser-lowers re-undercuts
+     before a third's turn recurs) — traced live: Stonefield Farm at
+     floor with 1360 unsold food by t20, its workers' wallets at zero by
+     t10. Two sellers per good is the maximum the mechanics admit; the
+     spec's business count and its pinned soak criteria are jointly
+     unsatisfiable at three. Flagged to the owner (PR) as a spec
+     correction candidate rather than silently absorbed.
+  2. *16 employed / 14 unemployed, not 24/4.* Exact supply=demand
+     clearing lets rotation sell-outs ratchet prices until they tax every
+     wage to zero (traced: whole payrolls at 0g by t40); and an ent/lux
+     staffer's output value at the floor (20g/8g per tick) is below any
+     livable wage, so parity staffing bankrupts those venues (arrears
+     5,700g by t75, traced). Frozen regime: Food runs mild surplus with
+     rotation (universal liveness); ent/lux run deliberate scarcity,
+     priced above the floor where revenue covers payroll. The larger
+     unemployed pool becomes pack 3's hiring stock.
+  Frozen constants: pop 30, staff 4+4/2+2/2+2, `EMPLOYED_WALLET` 120,
+  `UNEMPLOYED_SAVINGS` 4000, `WAGE_BILLS_SEEDED` 3, shelves 2 ticks deep,
+  `SETTLEMENT_FUND` 600. Item-3 re-pin: gold 60272 / silver 300 / copper
+  600 (`town_world_seeds_the_decided_metals`). Item-gate output, quoted:
+  `money::` "18 passed; 0 failed", `market::` "12 passed; 0 failed".
+- **2026-08-21** — **3-lens review (contract / invariants /
+  economy-quality): no blockers; applied (72a4085):** criterion 3
+  tightened to one-price-both-directions (the aggregate form was a silent
+  weakening); criterion 2's series re-sampled to the prices in force
+  during the evaluated span; four doc corrections. Reviewers confirmed:
+  employees_of semantics exact, shared-coffer payroll preserved, re-pin
+  arithmetic independently verified, no §8 surface touched.
+- **2026-08-21** — **pack closes.** `VERIFY OK — fmt, clippy, build,
+  tests all clean.` 119 passed, 0 failed.

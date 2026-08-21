@@ -1,7 +1,7 @@
 # Town colony sim (container)
 
-**Status:** IN PROGRESS — gate signed 2026-08-21; pack 1 DONE 2026-08-21,
-packs 2–4 proposed shape only.
+**Status:** IN PROGRESS — gate signed 2026-08-21; packs 1 and 2 DONE
+2026-08-21, packs 3–4 proposed shape only.
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-21-town-colony-sim-design.md](../superpowers/specs/2026-08-21-town-colony-sim-design.md)
 (approved 2026-08-21; drafted from a judged three-proposal synthesis, then
@@ -72,15 +72,19 @@ header showing tick, population, employed count, and per-metal totals;
 
 ### Pack 2 — A real town
 
-Proposed shape only (item manifest drafted when pack 1 closes). `town_world`
-ships as the scenario (`template_world` survives as the test fixture);
-`employees_of` replaces `employee_of`; produce/pay_wages go multi-worker;
-one deliberate conservation re-pin item; constants tuned against the spec's
-pinned soak exit criteria.
+Item manifest: [2026-08-21-tcs-pack2-real-town.md](2026-08-21-tcs-pack2-real-town.md)
+(DONE 2026-08-21; 114 → 119 tests; two measured deviations recorded there
+and flagged to the owner: 6 businesses not 7–9, 16/14 employment split).
 
-Observable: `cargo run` opens on a genuine town — 25–35 named agents,
-competing Food sellers' prices visibly diverging in the feed, multi-worker
-payrolls, unemployed agents flagged in `roster`, 100-tick soak green.
+`town_world` ships as the scenario (`template_world` survives as the
+cfg(test) fixture); `employees_of` replaces `employee_of`; produce and
+pay_wages go multi-worker; the conservation re-pin (gold 60272 / silver
+300 / copper 600); constants soak-tuned against the spec's pinned exit
+criteria and frozen.
+
+Observable: `cargo run` opens on a genuine town — 30 named agents,
+competing sellers' prices leapfrogging in the feed, multi-worker payrolls,
+unemployed agents flagged in `roster`, 100-tick soak green.
 
 ### Pack 3 — Labor clears
 
@@ -141,3 +145,12 @@ rates, seigniorage — 07-12) stay open where they live and block none of this.
   review: zero blockers, three nits applied. Close gate quoted in the pack
   manifest: `VERIFY OK` 114 passed. Next: pack 2 item manifest, on your
   go.
+- **2026-08-21** — **pack 2 closes** (six commits, d9008ca..72a4085).
+  The soak forced two measured deviations, recorded in the pack ledger
+  and flagged to the owner rather than silently absorbed: the market
+  mechanics admit at most two solvent sellers per good (vs the spec's
+  "7–9 businesses"), and ent/lux staffing at parity bankrupts those
+  venues (16/14 employment split, the 14 being pack 3's hiring pool).
+  3-lens review: zero blockers; criterion-3 and sampling tightenings
+  applied. Close gate quoted in the pack manifest: `VERIFY OK` 119
+  passed. Next: pack 3 item manifest, on your go.
