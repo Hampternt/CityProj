@@ -218,30 +218,41 @@ impl World {
         }
     }
 
-    /// Sets `agent`'s workplace. Identical contract to
-    /// [`assign_home`](World::assign_home) on the `workplace` field. No
-    /// firm-side checks in v1 — any existing house qualifies; firm
-    /// validation arrives via spec amendment when firms land.
-    #[allow(dead_code)] // no caller until the labor market lands
-    pub fn assign_workplace(&mut self, agent: AgentId, house: HouseId) -> Result<(), WorldError> {
+    /// Hires `agent` into `role` at `house`: writes `workplace` and
+    /// `employed_role` together (town-colony spec, Intent contract — a
+    /// hire that set only `workplace` would fill the slot yet never
+    /// earn, since `pay_wages` pays on `employed_role`). Same validation
+    /// shape as [`assign_home`](World::assign_home); no firm-side checks
+    /// in v1 — any existing house qualifies, and headcount capping is
+    /// the labor-market apply's job, not this command's.
+    #[allow(dead_code)] // no caller until the labor market lands (item 3)
+    pub fn assign_workplace(
+        &mut self,
+        agent: AgentId,
+        house: HouseId,
+        role: Role,
+    ) -> Result<(), WorldError> {
         if self.agent(agent).is_none() {
             return Err(WorldError::UnknownAgent(agent)); // agent checked first
         }
         if self.house(house).is_none() {
             return Err(WorldError::UnknownHouse(house));
         }
-        self.agent_mut(agent)
-            .expect("existence checked above")
-            .workplace = Some(house);
+        let person = self.agent_mut(agent).expect("existence checked above");
+        person.workplace = Some(house);
+        person.employed_role = Some(role);
         Ok(())
     }
 
-    /// Clears `agent`'s workplace; already-unemployed is an Ok no-op.
-    #[allow(dead_code)] // no caller until the labor market lands
+    /// Clears `agent`'s workplace AND `employed_role` together (the
+    /// employed_role-implies-workplace invariant survives quitting);
+    /// already-unemployed is an Ok no-op.
+    #[allow(dead_code)] // no caller until the labor market lands (item 3)
     pub fn vacate_workplace(&mut self, agent: AgentId) -> Result<(), WorldError> {
         match self.agent_mut(agent) {
             Some(person) => {
                 person.workplace = None;
+                person.employed_role = None;
                 Ok(())
             }
             None => Err(WorldError::UnknownAgent(agent)),
@@ -514,16 +525,18 @@ mod tests {
     }
 
     #[test]
-    fn assign_workplace_sets_and_moves() {
+    fn assign_workplace_writes_workplace_and_role_together() {
         let mut world = World::new();
         let h1 = world.add_house("1 Mill Lane", vec![]);
         let h2 = world.add_house("2 Kiln Row", vec![]);
         let a = world.spawn_agent("a", None, None);
-        world.assign_workplace(a, h1).unwrap();
+        world.assign_workplace(a, h1, Role::Labourer).unwrap();
         assert_eq!(world.agent(a).unwrap().workplace, Some(h1));
-        // re-assigning moves the workplace link
-        world.assign_workplace(a, h2).unwrap();
+        assert_eq!(world.agent(a).unwrap().employed_role, Some(Role::Labourer));
+        // re-assigning moves BOTH fields — never a stale role at a new job
+        world.assign_workplace(a, h2, Role::Engineer).unwrap();
         assert_eq!(world.agent(a).unwrap().workplace, Some(h2));
+        assert_eq!(world.agent(a).unwrap().employed_role, Some(Role::Engineer));
     }
 
     #[test]
@@ -534,28 +547,32 @@ mod tests {
         let ghost_agent = AgentId(99);
         let ghost_house = HouseId(99);
         assert_eq!(
-            world.assign_workplace(ghost_agent, house),
+            world.assign_workplace(ghost_agent, house, Role::Labourer),
             Err(WorldError::UnknownAgent(ghost_agent))
         );
         assert_eq!(
-            world.assign_workplace(a, ghost_house),
+            world.assign_workplace(a, ghost_house, Role::Labourer),
             Err(WorldError::UnknownHouse(ghost_house))
         );
         assert_eq!(
-            world.assign_workplace(ghost_agent, ghost_house),
+            world.assign_workplace(ghost_agent, ghost_house, Role::Labourer),
             Err(WorldError::UnknownAgent(ghost_agent))
         );
-        // nothing changed on any Err
+        // nothing changed on any Err — neither field
         assert_eq!(world.agent(a).unwrap().workplace, None);
+        assert_eq!(world.agent(a).unwrap().employed_role, None);
     }
 
     #[test]
-    fn vacate_workplace_clears_and_tolerates_unemployed() {
+    fn vacate_workplace_clears_both_and_tolerates_unemployed() {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
         let a = world.spawn_agent("a", None, Some(house));
+        world.agent_mut(a).unwrap().employed_role = Some(Role::Labourer);
         world.vacate_workplace(a).unwrap();
         assert_eq!(world.agent(a).unwrap().workplace, None);
+        // the role goes with the job (employed_role-implies-workplace)
+        assert_eq!(world.agent(a).unwrap().employed_role, None);
         // already-unemployed is an Ok no-op
         world.vacate_workplace(a).unwrap();
         let ghost = AgentId(99);

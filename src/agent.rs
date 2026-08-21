@@ -37,9 +37,11 @@ pub struct Agent {
     #[allow(dead_code)]
     pub specialization: Option<Role>,
     /// Role currently filled at `workplace`. Stored, not derived — nothing
-    /// else records it. Intended invariant, documented but NOT yet
-    /// enforced: `employed_role.is_some()` implies `workplace.is_some()`;
-    /// enforcement belongs to the future `assign_workplace` extension.
+    /// else records it. Invariant: `employed_role.is_some()` implies
+    /// `workplace.is_some()` — the workplace commands write and clear the
+    /// pair together (`World::assign_workplace` takes the role;
+    /// `vacate_workplace` clears both). Worldgen sets the fields directly
+    /// and keeps the pair consistent by construction.
     pub employed_role: Option<Role>,
     /// Reserved skill scalar with no defined effect yet — range and meaning
     /// are decided by the first spec that reads it.
