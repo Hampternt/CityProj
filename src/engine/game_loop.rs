@@ -13,7 +13,7 @@ use crate::housing::HouseId;
 use crate::metal::Metal;
 use crate::money::Money;
 use crate::role::Role;
-use crate::sim;
+use crate::sim::{self, Event, TickReport};
 use crate::terrain::Terrain;
 use crate::world::World;
 
@@ -43,16 +43,17 @@ pub fn run() {
     let mut world = template_world();
     let terrain = Terrain::generate(MAP_SEED, MAP_VERTICES, MAP_VERTICES, MAP_CELL_SIZE);
     let mut tick_count: u64 = 0;
+    let mut last_report = TickReport::default();
 
     loop {
         // Redraw the frame in place so the display doesn't scroll downward.
         clear_screen();
-        render(&world, tick_count);
+        render(&world, tick_count, &last_report);
 
         match read_command(tick_count) {
             Command::Quit => break,
             Command::Advance => {
-                sim::tick(&mut world);
+                last_report = sim::tick(&mut world);
                 tick_count += 1;
             }
             Command::Inspect(name) => inspect(&world, &name),
@@ -132,9 +133,19 @@ fn clear_screen() {
     let _ = io::stdout().flush();
 }
 
-/// Draws one stable frame: the money summary, then houses, then agents.
-fn render(world: &World, tick_count: u64) {
-    println!("=== CityProj — tick {tick_count} ===");
+/// Draws one stable frame: town header, money summary, the last tick's
+/// event feed, then the houses/agents ledger.
+fn render(world: &World, tick_count: u64, report: &TickReport) {
+    let population = world.agents.len();
+    let employed = world
+        .agents
+        .iter()
+        .filter(|agent| agent.workplace.is_some())
+        .count();
+    println!(
+        "=== CityProj — tick {tick_count} · pop {population} · employed {employed} · unemployed {} ===",
+        population - employed
+    );
     // D2 (pack 2): one line per metal, `Metal::ALL` order. A cross-metal
     // total does not exist — the core refuses to compute one.
     println!("money:");
@@ -152,6 +163,19 @@ fn render(world: &World, tick_count: u64) {
         compact_balances(world, world.mint_id),
         compact_balances(world, world.external_id),
     );
+
+    println!("last tick:");
+    if report.events.is_empty() {
+        if tick_count == 0 {
+            println!("  (nothing yet — Enter advances the first tick)");
+        } else {
+            println!("  (a quiet tick)");
+        }
+    } else {
+        for event in &report.events {
+            println!("  {}", render_event(world, event));
+        }
+    }
 
     println!("houses:");
     for house in &world.houses {
@@ -185,6 +209,82 @@ fn render(world: &World, tick_count: u64) {
             describe_inventory(agent),
         );
     }
+}
+
+/// One feed line for one event. The match is exhaustive on purpose — a
+/// new `Event` variant fails compilation here instead of silently missing
+/// from the feed. All feed amounts are gold this milestone, rendered `35g`.
+fn render_event(world: &World, event: &Event) -> String {
+    match event {
+        Event::Produced {
+            business,
+            good,
+            units,
+        } => format!(
+            "{} produced {units} {good}",
+            business_address(world, *business)
+        ),
+        Event::WagePaid {
+            business,
+            worker,
+            amount,
+        } => format!(
+            "{} paid {} {amount}g",
+            business_address(world, *business),
+            agent_name(world, *worker),
+        ),
+        Event::PayrollShort {
+            business,
+            worker,
+            remaining,
+        } => format!(
+            "{} still owes {} {remaining}g in wages",
+            business_address(world, *business),
+            agent_name(world, *worker),
+        ),
+        Event::Sold {
+            business,
+            buyer,
+            good,
+            units,
+            price,
+        } => format!(
+            "{} bought {units} {good} @ {price}g from {}",
+            agent_name(world, *buyer),
+            business_address(world, *business),
+        ),
+        Event::PriceMoved {
+            business,
+            good,
+            from,
+            to,
+        } => {
+            let verb = if to > from { "raised" } else { "lowered" };
+            format!(
+                "{} {verb} {good} to {to}g",
+                business_address(world, *business)
+            )
+        }
+        Event::WentHungry { agent } => {
+            format!("{} went hungry", agent_name(world, *agent))
+        }
+    }
+}
+
+/// A business has no name of its own — it renders as its house's address.
+fn business_address(world: &World, id: AgentId) -> String {
+    world
+        .businesses()
+        .find(|(_, business)| business.id == id)
+        .map(|(house, _)| house.address.clone())
+        .unwrap_or_else(|| "(unknown business)".to_string())
+}
+
+fn agent_name(world: &World, id: AgentId) -> String {
+    world
+        .agent(id)
+        .map(|agent| agent.name.clone())
+        .unwrap_or_else(|| "(unknown agent)".to_string())
 }
 
 /// One-letter tag for the compact balance form (D3). A match, so a new
