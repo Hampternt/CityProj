@@ -220,10 +220,15 @@ in roster and inspect.
     spec's `CLOSE_INSOLVENT_TICKS = 6` provisional CANNOT ship as-is,
     and the review quantified how tight the race really is: the streak
     crosses 6 at t133 (Longacre), t146 (Brass Bell), t149 (Gilt
-    Curtain), and each venue's FIRST QUIT lands 0–3 ticks later
-    (t134/t146/t148) — a bare persistence trigger's head start over
-    the quit line is nearly zero, so "worker churn fires first" fails
-    exactly where closure matters. Pack 2 must either make the trigger
+    Curtain), and each venue's FIRST QUIT lands within ±1 tick of that
+    crossing (t134 = +1, t146 = 0, t148 = −1) — a bare persistence
+    trigger's head start over the quit line is nearly zero, and at Gilt
+    Curtain the quit actually fires FIRST, so "worker churn fires
+    first" fails exactly where closure matters. *(Corrected
+    2026-08-22 by the post-pack-1 doc-accuracy review: this entry and
+    the container's close entry both first read "0–3 ticks later",
+    which the tick values printed beside it do not support — the
+    spread is −1..+1, which strengthens the conclusion.)* Pack 2 must either make the trigger
     magnitude-aware (persistence counted only above an arrears level —
     the healthy rolling debt and frozen ~4-wages-per-quitter debt are
     separable by size per worker, not by total) or set the threshold

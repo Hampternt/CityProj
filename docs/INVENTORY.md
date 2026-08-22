@@ -17,7 +17,7 @@ Each tick redraws the town in place under a header showing the tick,
 population, and employment counts, then narrates what just happened as an
 event feed: hires and quits, wage and price moves, production, payrolls
 (aggregated per business at town scale), sales, who went hungry, and who
-arrived in or left town. Below the feed sit the money summary and every
+arrived in or left town. The money summary sits above the feed; below it, every
 house with its occupants and the business trading from it — what it sells,
 at what price, its stock, its coffers and any wages it owes.
 
@@ -64,10 +64,13 @@ The behaviors you can watch play out over successive ticks:
   work the next day. Immigration stalls by design when the fund drains or
   no residence stands empty.
 
-- **Owners take profit.** Every business belongs to a named resident (the
-  seeded venues to their founding worker), and each tick a business pays
-  its gold above a retained safety buffer — three payrolls deep, and
-  nothing while it owes back wages — to its owner, narrated in the feed.
+- **Owners take profit.** Every business is founded by a named resident
+  (the seeded venues by their founding worker), and each tick a business
+  pays its gold above a retained safety buffer — three payrolls deep, plus
+  every coin of back wages it still owes — to its owner, narrated in the
+  feed. Creditors therefore always sit ahead of the owner, though a venue
+  earning well enough to cover both still pays out. An owner who leaves
+  town leaves their venue's draws suspended until closure lands.
   Coffers no longer pool without bound; the owner's wealth does, which is
   the capital the coming founding mechanic spends.
 

@@ -227,8 +227,11 @@ These come from §8 of the design doc. Breaking one is a bug even if tests pass.
 - **Sinks** prevent inflation: degradation (`burn`) and imports (money → `External`
   account, still tracked, out-of-node). `External` is the seam for future
   node-to-node trade.
-- **Agents:** Household, Firm, Mint, External, plus a stubbed node modifier layer
-  (government/policy — undesigned, fill in as needed).
+- **Agents:** Household, Firm, Mint, External, plus a *planned* node modifier
+  layer (government/policy — undesigned; nothing in code yet, so there is no
+  stub to find. The parent design doc's §7 layout files it under a `node.rs`
+  that has never been created, and its "modifier-layer hook exists" line reads
+  as intent, not shipped state).
 - **Two markets**, both adjustment-based and swappable: goods prices and competing
   wages.
 - **Discrete ticks**, fixed order: labor clears → produce → wages → goods clear →
@@ -256,6 +259,15 @@ keep their approval gate; a spec is what a manifest is written *from*.
 format — read it for context, never add to it. The general retrofit procedure
 and the manifest templates live in
 `~/projects/planvisualiser/docs/CONVERTING-A-PROJECT.md`.
+
+Both of those references — the user-global `CLAUDE.md` and the planvisualiser
+doc — live on the owner's machine and are **not reachable from cloud/remote
+sessions**, which see only this repo. Working without them, take the shipped
+manifests as the templates: [`docs/manifests/2026-08-22-firm-lifecycle.md`](docs/manifests/2026-08-22-firm-lifecycle.md)
+for a container (Goal / Decisions / Packs / Open questions / Ledger) and
+[`docs/manifests/2026-08-22-fl-pack1-owners-draw.md`](docs/manifests/2026-08-22-fl-pack1-owners-draw.md)
+for a pack (Status / State on arrival / Decisions / numbered items with `[ ]`
+boxes / append-only Ledger quoting real gate output).
 
 **Contracts are the hard reference.** Write a spec-level I/O contract
 (signature + Given/Then + Error + invariant ref) for a unit only when it is

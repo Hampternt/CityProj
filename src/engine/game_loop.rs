@@ -521,8 +521,9 @@ fn wait_for_enter() {
     let _ = io::stdin().read_line(&mut line);
 }
 
-/// One line per agent: job, employer, gold, pantry — and, for owners,
-/// the venues they own (firm-lifecycle pack 1).
+/// One line per agent: job, employer, balances, pantry — and, for
+/// owners, the venues they own (firm-lifecycle pack 1). Balances render
+/// in D3's compact `g/s/c` form, the same as the inspect views.
 fn roster(world: &World) {
     println!("roster:");
     for agent in &world.agents {
@@ -546,9 +547,9 @@ fn roster(world: &World) {
             format!(" · owns {}", owned.join(", "))
         };
         println!(
-            "  {} — {job}{ownership} · gold {} · {}",
+            "  {} — {job}{ownership} · {} · {}",
             agent.name,
-            world.accounts.balance_of(agent.id, Metal::Gold),
+            compact_balances(world, agent.id),
             describe_inventory(agent),
         );
     }

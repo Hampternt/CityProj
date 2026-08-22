@@ -1,7 +1,8 @@
 # Firm lifecycle (container)
 
-**Status:** PLANNED — gate signed 2026-08-22; pack 1 authorized ("start
-pack 1" ruling recorded in the spec's SIGNED paragraph).
+**Status:** IN FLIGHT — gate signed 2026-08-22; **pack 1 DONE**
+2026-08-22 (`VERIFY OK`, 160 passed). Packs 2–3 planned, each on the
+owner's go.
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-22-firm-lifecycle-design.md](../superpowers/specs/2026-08-22-firm-lifecycle-design.md)
 (approved 2026-08-22; drafted from a judged three-angle proposal panel —
@@ -75,8 +76,9 @@ Item manifest: [2026-08-22-fl-pack1-owners-draw.md](2026-08-22-fl-pack1-owners-d
 (DONE 2026-08-22; 155 → 160 tests; the re-measured baseline and the
 pack-2 trigger-design handoff live in its ledger).
 
-`Business.owner` + the widened, owner-validating `create_business` (~29
-call sites, compile-forced); the worldgen reorder seeding each venue's
+`Business.owner` + the widened, owner-validating `create_business` (27
+forced call sites — the spec's pre-execution ~29 counted two inside
+since-shared fixture helpers); the worldgen reorder seeding each venue's
 first worker as owner-operator (alice/ed/ivan/karl/marco/otto) with the
 id-pin migration and the per-metal totals asserted unchanged; the phase-6
 direct draw pass (`draw_amount`, `DRAW_BUFFER_BILLS`, the dangling-owner
@@ -168,9 +170,47 @@ follow-up whatever pack 1 re-measures.
   earlier and broader** (t174→t134, 2→3 venues, 11→26 quits — the
   cushion the draw removes), and the **pack-2 trigger datum** (post-shock
   insolvency streaks 57–73 ticks at still-operating venues; a bare
-  6-tick persistence trigger's head start over the quit line is 0–3
-  ticks — `CLOSE_INSOLVENT_TICKS = 6` cannot ship as-is; the trigger
+  6-tick persistence trigger's head start over the quit line is −1 to
+  +1 ticks — at one venue the quit fires first — `CLOSE_INSOLVENT_TICKS = 6` cannot ship as-is; the trigger
   goes magnitude-aware or sits above 73, pack 2's manifest rules it).
   3-lens close review: zero blockers; two ledger-honesty MAJORs and six
   MINORs, all applied. Close gate quoted in the pack manifest:
   `VERIFY OK` 160 passed. Next: pack 2 item manifest, on your go.
+- **2026-08-22** — **doc-accuracy review** (owner-requested, between
+  packs: CLAUDE.md, this container, the pack-1 manifest, INVENTORY —
+  five parallel reviewers over ~295 claims, every finding adversarially
+  verified; 1 killed as a misreading, 11 confirmed: 1 MAJOR, 8 MINOR,
+  2 NIT; zero touched a §8 invariant or money logic, and the headline
+  claims re-verified from scratch — `VERIFY OK`, 160 passed). All
+  applied. The two that were code-vs-decision, not prose:
+  - **`roster` had drifted from D3** (multi-metal pack 2 decided the
+    compact `g/s/c` form "everywhere a single balance prints today
+    (roster lines, inspect view)"; roster shipped gold-only, and
+    CLAUDE.md's "every balance renders as compact `g/s/c`" was
+    therefore false). Reconciled toward the decision — roster now calls
+    `compact_balances`, so silver and copper stop being invisible in
+    the one view that lists every agent.
+  - **The draw's "draws nothing, ever" gloss overstated its own
+    formula** — `draw_amount` *nets* arrears into the buffer rather
+    than gating on them, so a venue carrying arrears does draw once its
+    coffer clears bills + owed (phase-4 revenue makes that reachable
+    after phase 3 carried the debt). The formula is the contract and is
+    unchanged — deliberately, since it is measured-in and pack 1 is
+    closed; the gloss was corrected in the spec (as an erratum), in
+    sim.rs, and in INVENTORY.
+  Prose corrections: this container's Status header (stale at PLANNED /
+  "pack 1 authorized" against its own DONE pack section and ledger) and
+  its "~29 call sites" (superseded by the measured 27); the "0–3 ticks"
+  head-start range in BOTH ledgers (the tick values printed beside it
+  give −1..+1, with one venue's quit firing before the crossing —
+  pack 2 designs its trigger from this, so the ordering matters);
+  INVENTORY's frame order (the money summary renders above the feed,
+  not below) and its unconditional "every business belongs to a named
+  resident" (the pack-1 interim tolerates a dangling owner until forced
+  liquidation lands); CLAUDE.md's "stubbed node modifier layer" (there
+  is no stub — nothing in code, and the parent spec's "hook exists" is
+  intent) and its two owner-machine references (unreachable from
+  cloud/remote sessions — the shipped manifests are now named as the
+  fallback templates). Post-fix verification: a second adversarial pass
+  over every edit (each fix lands, none overshoots, no new
+  contradiction introduced) plus the gate.

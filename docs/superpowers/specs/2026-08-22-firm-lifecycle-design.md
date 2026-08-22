@@ -278,8 +278,16 @@ and freeze the buffer above it — it may land above 3. A constant beside
 its fn (the `QUIT_ARREARS_BILLS` placement precedent: retention depth is
 firm bookkeeping, not §8.6 market logic; stated so the plan never
 re-litigates it). The `+ owed_total` term is the
-pack-3 net-of-arrears erratum applied as formula: **a business owing back
-wages draws nothing, ever** — arrears outrank the owner. The pass: every
+pack-3 net-of-arrears erratum applied as formula: **arrears outrank the
+owner** — every coin a creditor is owed sits behind the buffer, unreachable
+by the draw while it is owed. *(Erratum, recorded 2026-08-22 during the
+post-pack-1 doc-accuracy review: this paragraph first glossed the term as
+"a business owing back wages draws nothing, ever". The formula above is
+the contract and it **nets** rather than gates — a venue carrying arrears
+still draws once its coffer clears bills + owed, which phase-4 revenue
+makes reachable after phase 3 carried the debt. The gloss, not the
+formula, was wrong; sim.rs and INVENTORY.md carried the same overstatement
+and were corrected with it.)* The pass: every
 tick, phase 6, businesses in houses order, `Metal::Gold` only (the sole
 trading metal; closure's `Metal::ALL` sweep is the completeness backstop),
 one `World::pay(business, owner, Gold, draw)` per positive draw plus
@@ -573,7 +581,8 @@ the id-migration mechanics of the worldgen reorder.
 
 - `src/world.rs` — `create_business` signature widens (+`owner`,
   validated first): ~29 call sites across worldgen and tests (several
-  inside shared fixture helpers), all compile-time forced. `remove_agent`
+  inside shared fixture helpers), all compile-time forced. *(Measured at
+  pack 1: 27 — this estimate counted two inside since-shared helpers.)* `remove_agent`
   gains the forced-liquidation step and the receipt return (behavior
   change: an owner's departure now moves business money — pinned by the
   fixture tests). `close_business` returns the `ClosureReceipt`.

@@ -857,9 +857,13 @@ fn consume(world: &mut World, report: &mut TickReport) {
 /// The phase-6 profit draw (firm-lifecycle spec): gold coffer minus the
 /// retained buffer — `DRAW_BUFFER_BILLS` full-staffing wage bills PLUS
 /// the outstanding arrears — clamped at zero. Net of arrears by
-/// contract (the pack-3 affordability erratum applied as formula): a
-/// business owing back wages draws nothing, ever — arrears outrank the
-/// owner.
+/// contract (the pack-3 affordability erratum applied as formula):
+/// arrears outrank the owner, so every coin a creditor is owed sits
+/// behind the buffer and never reaches the owner while it is owed.
+/// Netting, not gating — a venue carrying arrears still draws once its
+/// coffer clears bills + owed (reachable: phase-4 revenue lands after
+/// phase 3 carried the debt), which is what keeps a solvent business
+/// with one frozen ex-worker entry from silently becoming a sink.
 fn draw_amount(coffer: Money, wage_bill: Money, owed_total: Money) -> Money {
     let buffer = wage_bill.times(DRAW_BUFFER_BILLS).plus(owed_total);
     if coffer > buffer {
