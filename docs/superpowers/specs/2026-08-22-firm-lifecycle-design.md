@@ -1,6 +1,6 @@
 # Firm Lifecycle — Design Spec
 
-**Status:** DRAFT — awaiting the approval gate ·
+**Status:** approved 2026-08-22 (gate signed — see below) ·
 **Parent:** [2026-07-02-money-gameloop-skeleton-design.md](2026-07-02-money-gameloop-skeleton-design.md)
 (grandparent: [2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md));
 successor to [2026-08-21-town-colony-sim-design.md](2026-08-21-town-colony-sim-design.md)
@@ -136,11 +136,16 @@ one money-op widening.)*
   independently of arrears (boot openings age from tick 1), so no closure
   threshold can win that race.
 - **Post-quit arrears freeze:** quits fire strictly above 3×wage per
-  worker, so a dying venue's `owed_total` plateaus near ~3 wage bills and
-  then freezes when the last worker walks (no employees, no accrual). A
-  closure trigger set as an arrears *level* above that plateau is
-  unreachable; the trigger below is an arrears *persistence* counter
-  instead.
+  worker — each quitter endures three bills and walks on the fourth,
+  freezing ~4 wages of personal debt (measured: 144g at wage 36); a
+  venue's frozen `owed_total` is that times its quitters, and it freezes
+  because pay_wages iterates current employees only — **a frozen
+  ex-worker entry is unpayable outside settlement**, so once a venue has
+  quit-frozen arrears its `owed_total() > ZERO` holds forever. A closure
+  trigger set as an arrears *level* above the plateau is unreachable; the
+  trigger below is an arrears *persistence* counter instead — and its
+  corollary is embraced, not hidden: **any venue that suffers a quit is
+  thereafter guaranteed to close** within the threshold.
 
 ### Proposed pack sequence (the container manifest is written from this)
 
@@ -175,7 +180,20 @@ is soak-invisible and must be proven on a fixture or it ships untested);
 `Event::Closed`/`Event::LaidOff`, `Settled` reused with its doc widened.
 *Observable:* on a stress fixture the whole death narrates — quits, then
 "The Brass Bell closed — karl pockets 12g" — and the freed address inspects
-as a vacant residence; on the tuned town nothing closes (pinned).
+as a vacant residence; on the quit-free 100-tick tuned town nothing closes
+(pinned — scoped to that soak deliberately). **The 200-tick migration soak
+is re-cut in this pack, named here rather than discovered red:** its
+demand-shocked venue now dies by closure shortly after its quits (the
+post-quit freeze guarantees it — see the baseline), and with the Arrive
+exclusion live and closure deleting deadbeat vacancies, the shipped
+arrival-answers-the-shock criterion becomes structurally unsatisfiable on
+pack-2 code: quits create only arrears-carrying vacancies, closure deletes
+them, and no clean vacancy source exists until founding. The
+departure-side criteria stay pinned in pack 2; the arrival chain is
+deliberately handed to pack 3, where a founded (arrears-free, self-hired,
+open-slotted) firm is exactly the pull-eligible vacancy the exclusion
+demands. Pack 2's ledger records the re-cut; pack 3's full-cycle soak
+restores the arrival.
 
 **Pack 3 — Firms are born.** `market::plan_founding` + the per-good
 founding template and `FOUND_SIGNAL` constants; `Intent::Found` on the
@@ -196,9 +214,14 @@ restaffing it; on the tuned equilibrium town, zero foundings (pinned).
 `pub owner: AgentId`
 Required, never `Option`: every business always names a **living spawned
 agent** (never a reserved or business id). The invariant holds by
-construction — every creation path takes a validated owner
-(`create_business`), and `remove_agent` force-liquidates a leaver's firms
-(see below), so no path strips an owner and leaves the field dangling. An
+construction **once pack 2 lands** — every creation path takes a validated
+owner (`create_business`), and `remove_agent` force-liquidates a leaver's
+firms (see below), so no path strips an owner and leaves the field
+dangling. In the pack-1 interim the shipped `remove_agent` knows nothing
+of owners: an owner's departure would leave the field naming a removed id,
+so pack 1's draw pass carries an explicit, recorded tolerance (the skip
+rule in the draw contract below), soak-invisible in practice — owners are
+seeded employed and solvent — and retired by pack 2. An
 agent may own several businesses. Strictly distinct from `House.owners`
 (real-estate bookkeeping, engaged by no rule, untouched here — the shop
 house's owners list and its business's owner may disagree). Economically
@@ -220,7 +243,9 @@ gate over a constructor whose untouched call sites stayed valid, so a new
 name preserved both; here `owner` is a required field of the type — an
 un-widened path would keep manufacturing invalid (ownerless) values, a
 standing invariant hole no wrapper can fix. Every call site changes
-(compile-time forcing, ~17 sites: worldgen ×2, tests).
+(compile-time forcing, ~29 sites: worldgen ×2, world.rs tests ×15, sim.rs
+tests ×12 — several inside shared fixture helpers, so the edit count is
+smaller than the site count).
 Refs: @src/world.rs:278, the Business.owner invariant above.
 
 ### World::found_business  (world.rs, new)
@@ -241,46 +266,76 @@ Refs: @src/world.rs:411 (`immigrate`, the wrapper precedent), §8.2, §8.5.
 
 `fn draw_amount(coffer: Money, wage_bill: Money, owed_total: Money) -> Money`
 Pure: `coffer − (wage_bill × DRAW_BUFFER_BILLS + owed_total)`, clamped at
-`Money::ZERO`. `DRAW_BUFFER_BILLS = 3` provisional — matching
-`WAGE_BILLS_SEEDED`, the measured payroll-drought depth worldgen already
-encodes — a constant beside its fn (the `QUIT_ARREARS_BILLS` placement
-precedent: retention depth is firm bookkeeping, not §8.6 market logic;
-stated so the plan never re-litigates it). The `+ owed_total` term is the
+`Money::ZERO`. `DRAW_BUFFER_BILLS = 3` provisional — an **independent**
+constant, deliberately NOT justified as "the depth worldgen already
+proved": the seeded 3 bills price *full headcount* against *partial boot
+staffing* (a real runway of ~4.5–6 payroll ticks), while the draw pins
+coffers at 3 bills against full-staffing payroll (exactly 3 zero-revenue
+ticks) and removes the accumulated cushion that today absorbs the ent/lux
+rotation's revenue droughts. Pack 1's re-measure sizes it: record the
+longest per-venue revenue drought at actual staffing in the re-run soaks
+and freeze the buffer above it — it may land above 3. A constant beside
+its fn (the `QUIT_ARREARS_BILLS` placement precedent: retention depth is
+firm bookkeeping, not §8.6 market logic; stated so the plan never
+re-litigates it). The `+ owed_total` term is the
 pack-3 net-of-arrears erratum applied as formula: **a business owing back
 wages draws nothing, ever** — arrears outrank the owner. The pass: every
 tick, phase 6, businesses in houses order, `Metal::Gold` only (the sole
 trading metal; closure's `Metal::ALL` sweep is the completeness backstop),
 one `World::pay(business, owner, Gold, draw)` per positive draw plus
 `Event::ProfitDrawn` — a **direct pass**, no intents (the `pay_wages`
-precedent: objective per-business state, zero contention). Ordering inside
-phase 6: closures → Found apply → draws → counter write-back, so a closing
-business never draws and a just-founded firm sits exactly at buffer (draw
-zero by construction). Rides row 6's existing "`transfer` only" — no
-money-op amendment (pinned reading, Invariants).
+precedent: objective per-business state, zero contention). **Pack-1
+interim rule (retired by pack 2):** a draw whose owner no longer exists
+(`world.agent(owner)` is `None` — reachable only while `remove_agent`
+predates forced liquidation) is skipped cleanly, no transfer, no event —
+pinned by a pack-1 test, so the interim is a defined state, not an
+unspecified `Err` path. Ordering inside phase 6: closures → Found apply →
+draws → counter write-back, so a closing business never draws and a
+just-founded firm sits exactly at buffer (draw zero by construction).
+Rides row 6's existing "`transfer` only" — no money-op amendment (pinned
+reading, Invariants).
 Refs: @src/sim.rs:836 (`invest` stub), @src/sim.rs:192
 (`QUIT_ARREARS_BILLS` placement), the 08-21 spec's net-of-arrears erratum.
 
 ### Business.insolvent_ticks + the closure trigger  (business.rs + sim.rs, new)
 
 `pub insolvent_ticks: u32` (field on `Business`)
-Consecutive ticks ending with `owed_total() > ZERO`, measured at phase 6
-(post-payroll, post-revenue). SINGLE WRITER: phase 6's write-back —
-incremented while owed, reset to 0 when clear; worldgen seeds 0 (the
-`RoleSlot.unfilled_ticks` discipline). Closure fires when the phase-start
-snapshot shows `insolvent_ticks >= CLOSE_INSOLVENT_TICKS` (6 provisional,
-in sim.rs beside the fn) — an arrears-**persistence** trigger, deliberately
-not an arrears level: the quit rule caps per-worker debt near 3 bills and
+Consecutive ticks ending with `owed_total() > ZERO`, measured at phase 6 —
+after payroll, but note precisely: **same-tick revenue cannot clear the
+ledger**. Arrears created at phase 3 pay down only at the NEXT tick's
+phase 3 (phase-4 revenue lands in the coffer, never on the ledger), so a
+single `PayrollShort` tick flickers the counter to 1 even for a venue that
+fully repays next tick. SINGLE WRITER: phase 6's write-back — incremented
+while owed, reset to 0 when clear; worldgen seeds 0 (the
+`RoleSlot.unfilled_ticks` discipline). The write-back iterates the LIVE
+`businesses()` set after closures and the Found apply: a closed firm's
+counter dies with it, a just-founded firm records its first measurement
+(0) this tick — never a stale snapshot list that would reach through
+detached houses. Closure fires when the phase-start snapshot shows
+`insolvent_ticks >= CLOSE_INSOLVENT_TICKS` (6 provisional, in sim.rs
+beside the fn) — an arrears-**persistence** trigger, deliberately not an
+arrears level: the quit rule caps per-worker debt near four wages and
 post-quit arrears freeze, so persistence is the one signal that stays
-reachable, and the threshold sits beyond the quit horizon so worker churn
-(the cheaper correction) always fires first. The tuned town must never trip
-it: `insolvent_ticks` pinned 0 for all six seeded firms through the
-100-tick soak (the zero-quits precedent applied to firms).
-Refs: @src/business.rs:20 (`unfilled_ticks`, the counter precedent),
+reachable. On deep (total-shortfall) trajectories the threshold sits
+beyond the ~4-tick quit horizon, so worker churn — the cheaper
+correction — fires first; a **slow-bleed** venue (revenue persistently a
+few coins short of the bill) crosses the persistence threshold before any
+worker's arrears cross the quit line and is liquidated *without* churn — a
+deliberate design decision stated here, not an oversight: persistent
+insolvency of any size is a death signal once it has outlasted the
+threshold, and tâtonnement had `CLOSE_INSOLVENT_TICKS` ticks to correct
+it. The tuned town must never CLOSE: `insolvent_ticks` never reaches
+`CLOSE_INSOLVENT_TICKS` for any seeded firm through the quit-free 100-tick
+soak — benign one-tick flicker tolerated, because the shipped soak pins
+zero *quits* while zero `PayrollShort` was never measured and the draw
+thins every coffer; pack 1's re-measure records the observed per-venue
+counter maximum and the threshold is frozen above it.
+Refs: @src/business.rs:27 (`unfilled_ticks`, the counter precedent),
 @src/sim.rs:192, the post-quit-freeze baseline note above.
 
 ### World::close_business  (world.rs, new)
 
-`pub fn close_business(&mut self, house: HouseId) -> Result<(), WorldError>`
+`pub fn close_business(&mut self, house: HouseId) -> Result<ClosureReceipt, WorldError>`
 Given a house that exists and hosts a business —
 `Err(WorldError::UnknownHouse)` / a new no-business variant otherwise
 (exact variant plan-owned), and `Err` means nothing changed. Then, in
@@ -302,7 +357,17 @@ so `is_known_account` retires the id (any future pay to it refuses) and the
 house — zero occupants, hosting nothing — satisfies the immigration vacancy
 rule verbatim: closure manufactures landing pads by design. Atomic by
 construction after validation: every amount min-bounded by a live balance,
-both ids known. Steady-state caller: phase 6's closure pass (all transfers
+both ids known. **The return value is a `ClosureReceipt`** (exact shape
+plan-owned; what it must carry is contract): the step-1 settlements per
+creditor, the laid-off workers, and the step-3 per-metal residual — each
+amount measured as the balance delta around its own internal `pay`.
+Load-bearing because deltas around the *whole* command cannot attribute
+flows that share a wallet: the canonical case is the owner-as-creditor
+(every shipped owner is their venue's first seeded worker, and a self-hired
+founder's dying firm settles its owner in step 1 AND sweeps them the
+residual in step 3), where `Settled` and `Closed.proceeds` are
+underdetermined from outside. Events are emitted from the receipt, never
+re-derived. Steady-state caller: phase 6's closure pass (all transfers
 under row 6). Forced caller: `remove_agent` (Amendment 19).
 Refs: @src/world.rs:352 (`remove_agent`, the settle-then-sweep shape
 mirrored), §8.2, §8.3 per-account proof obligation, @src/world.rs:176
@@ -318,12 +383,22 @@ own firm owes them), staff laid off, per-metal residual into the *leaver's*
 wallet. The existing sequence then runs unchanged: A17 settlement of other
 businesses' debts to the leaver, the per-metal sweep (now carrying the
 liquidation proceeds) to External, owners strip, removal. Still atomic
-post-validation. This is the one path whose money ops exceed a standing
-row — Amendment 19 names them. No-orphan proofs must cover BOTH dead ids
-(each closed business account and the removed agent) per `Metal::ALL`. The
-path is unreachable in the shipped town (owners are seeded employed and
-solvent) — it is proven on a dedicated fixture, or it ships untested.
-Refs: @src/world.rs:352, Amendment 19, §8.3.
+post-validation. **`remove_agent` returns the step-0 `ClosureReceipt`s**
+(return shape plan-owned): around the whole command the internal flows are
+unobservable — the leaver's own wallet delta is minus their pre-command
+balance whatever happens inside — so phase 7's Depart apply emits
+`Closed`/`LaidOff`/`Settled` from the receipts, and the **existing A17
+creditors snapshot in `apply_sinks_intent` must EXCLUDE firms the leaver
+owns**: their coffer deltas now include closure flows and would otherwise
+emit bogus A17 `Settled` amounts (the around-the-command delta recipe
+stays valid only where each account has a single flow). This is the one
+path whose money ops exceed a standing row — Amendment 19 names them.
+No-orphan proofs must cover BOTH dead ids (each closed business account
+and the removed agent) per `Metal::ALL`. The path is unreachable in the
+shipped town (owners are seeded employed and solvent) — it is proven on a
+dedicated fixture, or it ships untested.
+Refs: @src/world.rs:352, @src/sim.rs:880 (the creditors snapshot that must
+learn the exclusion), Amendment 19, §8.3.
 
 ### The Arrive decide's arrears exclusion  (sim.rs, amended)
 
@@ -334,15 +409,27 @@ handoff resolved in the same grain as the resident deadbeat exclusion
 (`plan_application`'s `owed_by`), extended to people who cannot yet know
 the employer. Rule, not race: `unfilled_ticks` ages independently of
 arrears, so no closure timing can protect an immigrant from a venue whose
-slot aged before its insolvency began.
-Refs: @src/sim.rs:311, @src/market.rs:178 (the deadbeat exclusion),
-the pack-4 ledger handoff.
+slot aged before its insolvency began. The apply's `still_hiring` re-check
+inherits the same conjunct — a venue with `owed_total() > ZERO` cannot
+*confirm* an arrival either, so an intent decided on a clean venue's aged
+slot dies cleanly if only deadbeat headcount remains at apply. Residual
+exposure, recorded as accepted texture rather than resolved: once arrived,
+a newcomer owes nothing, so next tick's `plan_application` can match them
+INTO an arrears-carrying venue — the same exposure every resident
+non-creditor has. The philosophy fix stops the town *importing* strangers
+for employers who don't pay; it does not, and should not, rewrite the
+labor market's normal matching.
+Refs: @src/sim.rs:311 (decide), :517 (`still_hiring`),
+@src/market.rs:178 (the deadbeat exclusion), the pack-4 ledger handoff.
 
 ### market::plan_founding + the founding gates  (market.rs, new)
 
 `pub struct SellerSnapshot { pub good: Good, pub sellers: u32, pub cheapest_price: Option<Money> }`
 `pub struct Prospectus { pub good: Good, pub price: Money }`
 `pub fn plan_founding(snapshots: &[SellerSnapshot]) -> Option<Prospectus>`
+Builder-enforced `SellerSnapshot` invariant, stated so the `Option`
+composes with the gates: `sellers >= 1` implies `cheapest_price` is
+`Some`; `sellers == 0` implies `None`.
 Pure entry choice (§8.6: reading market signals to decide entry IS market
 logic — the ranking mirror of `plan_application`). Scans in `Good::ALL`
 order and returns the first good satisfying the founding gates:
@@ -355,11 +442,20 @@ scarcity gate: a lone survivor facing live demand sells out and ratchets
 up toward the signal; dead demand leaves its price falling to floor and
 nobody refounds into it — the anti-churn discriminator). `FOUND_SIGNAL`
 per-good constants alongside (provisional Food 4 / Entertainment 5 /
-Luxury 8 ≈ 2× seed prices; soak-tuned then frozen). Prospectus price: the
-survivor's live cheapest posted price (enter AT market; tâtonnement takes
-it from there), or the good's seed price when no seller stands. Wage and
-headcount come from the per-good founding template (constants alongside:
-the seeded-solvent wages 35/36/24 — never the top posted wage, which would
+Luxury 8 ≈ 2× seed prices; soak-tuned then frozen — and sized against
+**viability, not just scarcity**: the gate attests excess demand over ONE
+seller's output, never that post-shock demand funds two payrolls, so
+found→close→refound churn is the *expected* failure mode pack 3's tuning
+must defeat, with two named levers — raise the signal toward what covers
+the entrant's payroll share, and/or shrink the founded template's
+headcount, since founding smaller than a worldgen venue is legitimate).
+Prospectus price: the survivor's live cheapest posted price (enter AT
+market; tâtonnement takes it from there), or the template's `FOUND_PRICE`
+when no seller stands — a per-good price column in the founding template
+(provisional 2/2/4, the cheaper worldgen seed of each pair; `goods.rs`
+deliberately holds no prices, so the template is the datum). Wage and
+headcount come from the same per-good template (constants alongside: the
+seeded-solvent wages 35/36/24 — never the top posted wage, which would
 seed a wage war through highest-wage matching — and headcounts 4/3/3;
 single `Labourer` slot). `None` when no good qualifies.
 Refs: @src/market.rs:178 (`plan_application`, the ranking mirror), §8.6,
@@ -367,7 +463,9 @@ the two-seller and demand-shock measurements.
 
 ### Intent::Found  (sim.rs, extended)
 
-`Found { founder: AgentId, home: HouseId, good: Good, price: Money }`
+`Found { founder: AgentId, house: HouseId, good: Good, price: Money }`
+*(`house`, matching `found_business` and `Event::Founded` — never `home`,
+which is Arrive's residence field; the founder does not move in.)*
 Emitted only by phase 6's pure decide over the phase-start snapshot: at
 most ONE per tick (the one-arrival precedent — legible wallet drains,
 deterministic pass). Decide: `plan_founding` over the seller snapshots
@@ -380,40 +478,60 @@ nobody founds themselves destitute). Unemployed-only is the eligibility
 rule (subject to open question 1): founding converts a dis-saver into an
 earner — the one channel in this milestone that actually relieves the fuse.
 Premises: the lowest-id fully-vacant house (the `immigrate` predicate).
-Apply, kill-only live re-checks mirroring stale Buys: founder still exists,
-still unemployed, wallet still covers; house still fully vacant; the good's
-live seller count still `< 2` — then `found_business`, then the stake
-`pay(founder, new_id, Gold, capital)` (cannot fail after the re-check;
-§8.5 backstop: an `Err` on either drops the intent with nothing half-done —
-the command validates before touching state, and the stake precedes nothing
-else), then the founder **self-hires** via
+Apply, kill-only live re-checks mirroring stale Buys: founder still
+exists, still unemployed, wallet still covers `capital + FOUNDER_RESERVE`
+(the decide's own bound, restated so the plan copies it exactly); house
+still fully vacant; the good's live seller count still `< 2` — then
+`found_business`, then the stake `pay(founder, new_id, Gold, capital)`,
+which **cannot fail after the re-check**: `found_business` is money-free
+and nothing runs between the re-check and the pay in the single-threaded
+apply. The defensive branch is still specified, mirroring the grubstake's
+honesty about its own failure mode: a (theoretically unreachable) stake
+`Err` proceeds to the self-hire regardless, leaving a penniless-but-
+STAFFED firm whose immediate payroll arrears drive the normal
+quit→closure death — never a permanently trigger-proof empty firm, which
+would accrue no arrears (`insolvent_ticks` stays 0 with no employees) and
+stand forever as an aged, arrears-free vacancy magnet the new pull
+exclusion cannot see. Then the founder **self-hires** via
 `assign_workplace(founder, house, Labourer)` — without it the new firm's
-open, affordable slot ratchets its wage one step per tick (the measured
-fact-4 overshoot) while standing as an aged-vacancy magnet; with it the
-firm produces next tick. The remaining slots go to the labor market from
-the next tick's snapshot. Every `match Intent` stays exhaustive.
+open, affordable slot ratchets its wage one step per tick (the pack-3
+ledger's measured cascade-ratchet overshoot: a still-open affordable slot
+raises every tick, and post-fill no applicant queue exists to lower it)
+while standing as a vacancy magnet; with it the firm produces next tick.
+The remaining slots go to the labor market from the next tick's snapshot.
+Every `match Intent` stays exhaustive.
 Refs: @src/sim.rs:19, the goods/labor decide→apply templates,
 @src/sim.rs:305 (the one-arrival precedent), §8.2, §8.5.
 
 ### Events  (sim.rs, extended)
 
 `ProfitDrawn { business, owner, amount }` — zero draws emit nothing (the
-held-price precedent). `Closed { business, house, owner, proceeds: Vec<(Metal, Money)> }`
-— carries the house because the business id resolves to nothing afterward
-(the `Departed` precedent); proceeds list every `Metal::ALL` entry in that
-order, zeros included (D3 visible-zeros). `LaidOff { agent, business }` —
-distinct from `Quit` (pushed, not walked; no volition, no arrears
-implication); the money story is told by `Settled`, which is REUSED for
-closure's creditor settlements with its doc widened from "phase 7" to "a
-business settles arrears outside payroll" — covering former-worker
-creditors, who are settled but not laid off. `Founded { business, founder,
-house, good, price, capital }`. All amounts measured as balance deltas
-around the command (the `apply_sinks_intent` precedent — events report what
-moved, never a re-derivation). A phase-7 forced liquidation narrates in
-causal order before the `Departed` line. Exact intra-closure event order is
-plan-owned; determinism (phase order, then pinned iteration order) is not.
+held-price precedent). `Closed { business, house, owner, owner_name, proceeds: Vec<(Metal, Money)> }`
+— carries the house because the business id resolves to nothing afterward,
+and the owner's display name because in the forced path the owner id does
+too (the `Departed` name-carrying precedent, applied to both dead-id
+classes); proceeds list every `Metal::ALL` entry in that order, zeros
+included (D3 visible-zeros). `LaidOff { agent, business }` — distinct from
+`Quit` (pushed, not walked; no volition, no arrears implication); the
+money story is told by `Settled`, which is REUSED for closure's creditor
+settlements with its doc widened from "phase 7" to "a business settles
+arrears outside payroll" — covering former-worker creditors, who are
+settled but not laid off. `Founded { business, founder, house, good,
+price, capital }`. Amounts are measured as balance deltas around each
+**individual** transfer or command — sourced from the `ClosureReceipt`
+wherever flows share a wallet (see `close_business`; the
+`apply_sinks_intent` around-the-command recipe stays valid only where each
+account has a single flow, and its creditors snapshot must exclude
+leaver-owned firms once forced liquidation exists) — never re-derived. A
+phase-7 forced liquidation narrates in causal order before the `Departed`
+line. `Settled`/`LaidOff` renderers must tolerate a business id that no
+longer resolves (the shell's address lookup runs on the live world after
+detach) — the render fallback is plan-owned, the constraint is not. Exact
+intra-closure event order is plan-owned; determinism (phase order, then
+pinned iteration order) is not.
 Refs: @src/sim.rs:59 (`Event`), :146 (`Departed`, the Vec-with-zeros and
-name-carrying precedent), :880 (balance-delta measurement).
+name-carrying precedent), :880 (the single-flow delta precedent and the
+snapshot needing the exclusion).
 
 ### Worldgen seeds owners  (engine/worldgen.rs, amended)
 
@@ -454,10 +572,11 @@ the id-migration mechanics of the worldgen reorder.
 ## Migration impact (breaks existing shipped code)
 
 - `src/world.rs` — `create_business` signature widens (+`owner`,
-  validated first): ~17 call sites across worldgen and tests, all
-  compile-time forced. `remove_agent` gains the forced-liquidation step
-  (behavior change: an owner's departure now moves business money — pinned
-  by the fixture tests).
+  validated first): ~29 call sites across worldgen and tests (several
+  inside shared fixture helpers), all compile-time forced. `remove_agent`
+  gains the forced-liquidation step and the receipt return (behavior
+  change: an owner's departure now moves business money — pinned by the
+  fixture tests). `close_business` returns the `ClosureReceipt`.
 - `src/business.rs` — `Business` gains `owner` and `insolvent_ticks`:
   every literal constructor in tests gains two fields.
 - `src/engine/worldgen.rs` — the reorder item: staff spawned before
@@ -465,9 +584,13 @@ the id-migration mechanics of the worldgen reorder.
   tests and event expectations migrate in the same item; per-metal pins
   asserted unchanged.
 - `src/sim.rs` — `invest` gains behavior and the report param; phase 1's
-  Arrive decide gains the arrears conjunct (the 200-tick migration soak's
-  arrival timing may shift — re-pinned in pack 2 if so); `Intent::Found`
-  and four `Event` variants force every exhaustive match (trace, shell).
+  Arrive decide and apply gain the arrears conjunct, and the shipped
+  200-tick migration soak is **re-cut in pack 2** (departure criteria
+  stay; the arrival-answers-the-shock assertion moves to pack 3's
+  full-cycle soak — see the pack sequence for why it cannot hold on
+  pack-2 code); `Intent::Found` and the new `Event` variants force every
+  exhaustive match (trace, shell); `apply_sinks_intent`'s creditors
+  snapshot learns the owned-firm exclusion.
 - `src/engine/game_loop.rs` — render arms for the new variants; owner
   display; business count.
 - Soak criteria — pack 1's re-measure re-pins the fuse timeline and
@@ -482,25 +605,36 @@ the id-migration mechanics of the worldgen reorder.
 - `draw_pass_pays_owner_and_pins_coffer_at_buffer` — phase-6 pass on a
   fixture: transfer lands, `ProfitDrawn` emitted, zero-draw silent, audit
   green.
+- `draw_skips_a_dangling_owner_cleanly` — the pack-1 interim rule pinned:
+  a business whose owner id no longer resolves draws nothing, emits
+  nothing, panics nothing (test retired/retargeted when pack 2's forced
+  liquidation makes the state unreachable).
 - `create_business_validates_owner_first` — ghosts, reserved ids, business
   ids refuse with `UnknownAgent` before house checks; nothing changed on
   `Err`.
 - `close_business_settles_ascending_writes_off_and_sweeps_no_orphans` —
-  multi-creditor coffer-short fixture: ascending order pinned, remainders
-  written off, zero-amount entries stripped, every `Metal::ALL` balance of
-  the dead id zero PER-ACCOUNT, proceeds = owner wallet deltas, house
-  passes the `immigrate` vacancy predicate afterward, audit green.
+  multi-creditor coffer-short fixture INCLUDING the owner-as-creditor
+  case: ascending order pinned, remainders written off, zero-amount
+  entries stripped, every `Metal::ALL` balance of the dead id zero
+  PER-ACCOUNT, `Closed.proceeds` = the receipt's step-3 residual, owner
+  wallet delta = own-arrears settlement + summed proceeds (never "proceeds
+  = owner wallet delta", which conflates the two flows), house passes the
+  `immigrate` vacancy predicate afterward, audit green.
 - `insolvent_ticks_single_writer_and_healthy_town_control` — the counter
-  moves only in phase 6's write-back; all six seeded firms hold 0 through
-  the 100-tick soak.
+  moves only in phase 6's write-back over the live `businesses()` set; no
+  seeded firm's counter reaches `CLOSE_INSOLVENT_TICKS` through the
+  100-tick soak (benign flicker tolerated; the observed per-venue maximum
+  recorded in pack 1's re-measure and the threshold frozen above it).
 - `closure_fires_on_persistence_after_quits` — the doomed-venue fixture:
   workers quit first (the cheaper correction), the counter ages on frozen
   post-quit arrears, closure fires at the threshold — the reachability
   proof the level-gate design fails.
 - `owner_emigration_forces_liquidation_no_orphans_on_either_id` — the
   dedicated fixture: leaver's firm settled/laid-off/liquidated, proceeds
-  ride the sweep, External's delta exact, both dead ids zero per
-  `Metal::ALL`, causal event order, audit green.
+  ride the sweep, events sourced from the receipts, the A17 creditors
+  snapshot excludes the leaver's own firms (no bogus `Settled`),
+  External's delta exact, both dead ids zero per `Metal::ALL`, causal
+  event order, audit green.
 - `arrive_pull_skips_arrears_carrying_venues` — an aged slot at an owing
   venue pulls nobody; the same slot clean pulls (the handoff pin).
 - `plan_founding_gates` — count gate (2 sellers → `None`), scarcity gate
@@ -515,19 +649,52 @@ the id-migration mechanics of the worldgen reorder.
 - `one_founding_per_tick_ascending_founder` — two qualifying founders, one
   fires, deterministic winner.
 - Soaks: pack 1's four re-runs with re-pinned numbers; pack 2's
-  stress-fixture death + tuned-town zero-closures; pack 3's both-directions
-  shock soak — a fixtured single-seller closure with live demand founds
-  within a pinned window, a fixtured demand-death founds NOTHING — plus
-  zero foundings on the tuned equilibrium town, the anti-churn cycle cap
-  (no good exceeds one found→close cycle per 100 ticks), the vacant-house
-  competition watch (immigration still completes), and the full-cycle chain
-  criterion: `Closed` → that house re-used (`Founded` or `Arrived` there) →
-  `Hired`, population moving both directions, audit green every tick of
-  every soak.
+  stress-fixture death, the 100-tick tuned-town zero-closures pin, and the
+  **named re-cut** of the 200-tick migration soak (departure criteria
+  kept; the arrival assertion moves to pack 3 — recorded in pack 2's
+  ledger, never silently weakened); pack 3's both-directions shock soak —
+  a fixtured single-seller closure with live demand founds within a pinned
+  window (the fixture seeds a thin surviving shelf or budgets the window
+  as backlog-drain ticks + ratchet steps + one founding tick: a raise
+  needs ≥9/10 of the OFFERED shelf sold, and the Food survivor carries a
+  backlog), a fixtured demand-death founds NOTHING — plus zero foundings
+  on the tuned equilibrium town, the anti-churn tuning target (no good
+  exceeds one found→close cycle per 100 ticks, defended by the two named
+  levers: signal sized toward viability, template headcount shrinkable),
+  the vacant-house competition watch (immigration still completes), and
+  the full-cycle chain criterion: `Closed` → the freed house passes the
+  vacancy predicate and SOME house is `Founded`- or `Arrived`-into after
+  the closure → `Hired` (the exact-freed-house version is pinned in the
+  fixture, where the spares are controlled — in the town the lowest-id
+  rule reuses the seeded spares first), population moving both directions,
+  audit green every tick of every soak.
 
 --- APPROVAL GATE — do not write the plan or any code above this line without sign-off ---
 
-## Open questions
+**SIGNED 2026-08-22.** The owner directed the gate be signed with the
+recommendations as the rulings, so every open question below is resolved
+and none blocks the container: (1) founder eligibility is
+**unemployed-only** — the Intent::Found contract stands as written; (2)
+**Amendment 18 is spent** on the row-6 purpose-text edit — the 07-02 table
+stays honest, and the direction-unrestricted reading of its money-op
+column is pinned in this spec's Invariants; (3) **three packs**, forced
+liquidation landing in pack 2 beside `close_business`, with the pack-1
+interim draw-skip tolerance specified and test-pinned. The spec was
+adversarially verified against shipped code before this signing (three
+lenses — contradiction, §8/money-op audit, economy/test-feasibility; both
+this pass and the drafting panel are recorded in PR #2): the verification
+found and fixed pre-gate the closure-receipt event-measurement mechanism,
+the pack-2 migration-soak re-cut (the shipped arrival criterion cannot
+hold once quits guarantee closure and the pull excludes deadbeats — its
+restoration is pack 3's), the pack-1 dangling-owner tolerance, the
+independent (not "already measured") draw-buffer depth, the slow-bleed
+closure ordering honesty, the founding template's missing price datum, and
+the stake-failure branch that would otherwise mint a closure-proof empty
+firm. Scope stands as written. Planning proceeds against
+`docs/manifests/2026-08-22-firm-lifecycle.md`, and the owner's "start
+pack 1" is the go for that pack's items.
+
+## Open questions (all ruled at signing — kept for the record)
 
 1. **Founder eligibility: unemployed-only, or any capitalized agent?**
    Unemployed-only (recommended, and written into the Intent::Found
@@ -549,9 +716,10 @@ the id-migration mechanics of the worldgen reorder.
    19. Blocks nothing; decides only what the 07-02 doc looks like.
 3. **Pack cut: three packs (forced liquidation inside pack 2, with its
    fixture), or four (owner-departure isolated as its own closing pack)?**
-   Three (recommended): the always-a-living-owner invariant is enforced the
-   moment closure machinery exists — a four-pack cut leaves the draw paying
-   a dangling id if an owner emigrates during the interim packs, an
-   unspecified path under three soak-bearing packs. The four-pack
+   Three (recommended). Both cuts have a dangling-owner window — pack 1
+   cannot avoid one, which is why the draw contract specifies the interim
+   skip rule and pins it by test — but three packs close the window the
+   moment closure machinery exists (one pack, one specified tolerance),
+   where four leave it open across three soak-bearing packs. The four-pack
    alternative isolates the milestone's only amendment and its fixture at
-   the cost of that window. Blocks the manifest's shape only.
+   the cost of that longer window. Blocks the manifest's shape only.

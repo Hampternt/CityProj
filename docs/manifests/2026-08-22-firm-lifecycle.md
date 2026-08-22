@@ -1,0 +1,155 @@
+# Firm lifecycle (container)
+
+**Status:** PLANNED — gate signed 2026-08-22; pack 1 authorized ("start
+pack 1" ruling recorded in the spec's SIGNED paragraph).
+**Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
+**Origin:** [2026-08-22-firm-lifecycle-design.md](../superpowers/specs/2026-08-22-firm-lifecycle-design.md)
+(approved 2026-08-22; drafted from a judged three-angle proposal panel —
+market-signal purist / bookkeeping minimalist / colony-story first, scored
+under repo-fidelity, economy-soundness, and incrementality lenses — then
+adversarially verified against shipped code before the gate; both passes
+recorded in PR #2).
+
+## Goal
+
+Firms stop being immortal coffers. Every business gets a required living
+owner; phase 6 wakes with the three lifecycle transitions: the **profit
+draw** (gold surplus above a retained buffer, business→owner, every tick —
+the recorded cure for the dis-saving fuse, expected partial: consumption
+caps turn draws into founding capital, not demand), **closure** (persistent
+arrears liquidate a venue: creditors settled `min(coffer, owed)` ascending,
+staff laid off, every metal of the residual to the owner, the freed house a
+landing pad), and **founding** (`Intent::Found`: fewer than two sellers
+plus a live scarcity price — or a dead sector — and the first capitalized
+unemployed resident stakes three wage bills into a new venue and
+self-hires). An emigrating owner's firms force-liquidate inside
+`remove_agent` (Amendment 19 — the milestone's one money-op widening); the
+vacancy pull gains an arrears exclusion, resolving the recorded
+deadbeat-recruitment handoff. End state at `cargo run`: profit lines in
+the feed, a demand-gutted venue visibly dying instead of zombie-ing, and
+the full phoenix cycle — closure → scarcity → founding → restaffing —
+playing out inside a soak, audit green throughout.
+
+Not in scope (spec, Out of scope): ownership transfer/sale/inheritance,
+shares, banking/credit, `House.owners` rules, voluntary job-switching,
+multi-role founded firms, premises construction, demand-composition
+reshaping, the wage-ratchet overshoot, the Mint business, non-gold
+pricing, terrain, physical goods movement.
+
+## Decisions (fixed by the spec and the gate rulings)
+
+- **Gate rulings (2026-08-22):** (1) founder eligibility is
+  unemployed-only; (2) Amendment 18 is spent on the row-6 purpose-text
+  edit (the direction-unrestricted "transfer only" reading is pinned in
+  the spec's Invariants); (3) three packs, forced liquidation in pack 2.
+- **Amendments 18–19** ride this container: 18 (row 6 purpose text, lands
+  pack 1 with the draw), 19 (row 7 money-ops gains the forced-liquidation
+  transfers, lands pack 2 with `remove_agent`'s step 0).
+- **`Business.owner` is required and living** — enforced by construction
+  once pack 2 lands; the pack-1 interim carries the specified draw-skip
+  tolerance (dangling owner ⇒ skip cleanly, no event, test-pinned,
+  retired by pack 2).
+- **The `ClosureReceipt` is the event-measurement mechanism**: settlement
+  and residual can share the owner's wallet inside one atomic command, so
+  events are emitted from per-step receipts, never around-the-command
+  deltas; `apply_sinks_intent`'s A17 creditors snapshot excludes
+  leaver-owned firms once step 0 exists.
+- **The pack-2 re-cut is named up front**: any quit now guarantees that
+  venue's closure (frozen ex-worker arrears are unpayable outside
+  settlement), and with the Arrive exclusion live, the shipped 200-tick
+  arrival criterion cannot hold on pack-2 code — its departure-side
+  criteria stay, the arrival assertion moves to pack 3's full-cycle soak,
+  where a founded firm is the pull-eligible vacancy.
+- **Pack 1 re-measures before anything freezes**: the draw re-times the
+  fuse and the 21/30 ceiling; every pack-2/3 criterion is written against
+  pack 1's re-pinned numbers, never the inherited t127 / 21-of-30.
+- **Determinism without RNG** carries over: houses-order passes,
+  ascending-`AgentId` settlement and founder choice, `Good::ALL` /
+  `Metal::ALL` iteration, sorted `owed_to` keys — never `HashMap` order.
+
+## Packs
+
+### Pack 1 — Owners and the draw
+
+Item manifest: [2026-08-22-fl-pack1-owners-draw.md](2026-08-22-fl-pack1-owners-draw.md).
+
+`Business.owner` + the widened, owner-validating `create_business` (~29
+call sites, compile-forced); the worldgen reorder seeding each venue's
+first worker as owner-operator (alice/ed/ivan/karl/marco/otto) with the
+id-pin migration and the per-metal totals asserted unchanged; the phase-6
+direct draw pass (`draw_amount`, `DRAW_BUFFER_BILLS`, the dangling-owner
+skip) with `Event::ProfitDrawn`; Amendment 18 executed; shell owner
+display + business count; the named re-measure item re-pinning the fuse
+timeline and `NEAR_FULL` under the draw.
+
+Observable: "Greenrow Farm paid alice 62g profit" in the feed; coffers
+visibly plateau at the buffer; owners named in roster and inspect.
+
+### Pack 2 — Firms die
+
+Item manifest: written on your go.
+
+`Business.insolvent_ticks` (single writer: phase 6's write-back over the
+live set); `World::close_business` returning the `ClosureReceipt`
+(settle-ascending → write-off incl. zero entries → layoffs → `Metal::ALL`
+residual to owner → detach); the phase-6 closure pass before draws; the
+Arrive decide+apply arrears exclusion (the handoff resolved by rule);
+forced liquidation in `remove_agent` + Amendment 19 + the dedicated
+owner-emigration fixture; `Closed`/`LaidOff` + `Settled` doc widened; the
+100-tick zero-closure pin and the NAMED re-cut of the 200-tick migration
+soak.
+
+Observable: on a stress fixture the whole death narrates — quits, then
+"The Brass Bell closed — karl pockets 12g" — and the freed address
+inspects as a vacant residence.
+
+### Pack 3 — Firms are born
+
+Item manifest: written on your go.
+
+`market::plan_founding` + the founding template (FOUND_PRICE/wage/
+headcount per good) + `FOUND_SIGNAL`; `Intent::Found` (one per tick,
+unemployed-only, phase-start snapshot, kill-only re-checks);
+`World::found_business` + the stake; the founder self-hire;
+`Event::Founded`; the both-directions shock soak, the anti-churn tuning
+target with its two named levers, the restored arrival chain, the
+full-cycle criterion; CLAUDE.md update + INVENTORY fold = container DONE.
+
+Observable: after a venue dies, "mira founded a food stall at
+5 Weir Cottage (staked 420g)", then Hired events restaffing it; zero
+foundings on the tuned equilibrium town.
+
+## Open questions (carried)
+
+None. All three spec questions were ruled at the 2026-08-22 signing (see
+the spec's SIGNED paragraph). Carried *re-records*, not questions: the
+wage-ratchet overshoot stays untouched; owner-wallet pooling is the
+recorded seam for phase 6's "expand capacity" half; `House.owners` stays
+rule-inert; the 21/30 ceiling's composition cause stays the owner's-choice
+follow-up whatever pack 1 re-measures.
+
+## Ledger
+
+- **2026-08-22** — **container drafted from the approved spec.** Baseline:
+  the town-colony container closed at `VERIFY OK — fmt, clippy, build,
+  tests all clean.` 155 passed (head 7794676). Spec provenance: three-angle
+  proposal panel judged under three lenses (the minimalist spine won, with
+  the colony-story command shapes and the purist's closure trigger
+  grafted; the judges killed the sell-through founding signal — it reads
+  the ent/lux deliberate-scarcity regime as an entry invitation — and the
+  close-beats-pull timing race). Adversarial verification (three critics
+  vs. shipped code) found and fixed pre-gate: the closure-receipt
+  event-measurement mechanism (around-the-command deltas cannot attribute
+  flows sharing a wallet), the guaranteed-closure-after-any-quit corollary
+  and the pack-2 migration-soak re-cut it forces, the pack-1
+  dangling-owner window (now a specified, test-pinned tolerance), the
+  draw-buffer depth mismeasure (worldgen's 3 bills bought ~4.5–6 boot
+  ticks, not 3 full-staffing ticks), the slow-bleed closure ordering (now
+  a stated design decision), the founding template's missing price datum,
+  and the stake-failure branch that would have minted a closure-proof
+  empty firm.
+- **2026-08-22** — **gate signed; container moves to PLANNED.** All three
+  open questions ruled per the owner's direction (recommendations
+  adopted): unemployed-only founders; Amendment 18 spent on the
+  purpose-text edit; three packs. Owner's "start pack 1" is the go on
+  pack 1's items — execution authorized for pack 1 only.
