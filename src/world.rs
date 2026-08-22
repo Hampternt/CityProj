@@ -268,20 +268,29 @@ impl World {
         }
     }
 
-    /// Attaches a new business to `house`, allocating its account id from
-    /// the same counter as `spawn_agent` — never a reserved id, never
-    /// reused, and NO `Agent` struct is created (business ids are
-    /// account-only, like Mint/External). Starts with zero stock; product
+    /// Attaches a new business to `house`, owned by `owner`, allocating
+    /// its account id from the same counter as `spawn_agent` — never a
+    /// reserved id, never reused, and NO `Agent` struct is created
+    /// (business ids are account-only, like Mint/External). `owner` must
+    /// be a real spawned agent (firm-lifecycle spec: every business
+    /// always names a living owner — reserved ids, business ids, and
+    /// ghosts refuse) and is checked FIRST, per the agent-checked-first
+    /// convention of the other commands. Starts with zero stock; product
     /// is fixed at creation, price is the initial posted price; phase 4's
-    /// `market::adjust_price` adjusts price each tick based on sell-through.
-    /// Validates before touching state: `Err` means nothing changed.
+    /// `market::adjust_price` adjusts price each tick based on
+    /// sell-through. Validates before touching state: `Err` means nothing
+    /// changed.
     pub fn create_business(
         &mut self,
         house: HouseId,
+        owner: AgentId,
         product: Good,
         price: Money,
         roles: HashMap<Role, RoleSlot>,
     ) -> Result<AgentId, WorldError> {
+        if self.agent(owner).is_none() {
+            return Err(WorldError::UnknownAgent(owner)); // owner checked first
+        }
         match self.house(house) {
             None => return Err(WorldError::UnknownHouse(house)),
             Some(existing) if existing.business.is_some() => {
@@ -295,6 +304,7 @@ impl World {
             .expect("existence checked above")
             .business = Some(Business {
             id,
+            owner,
             product,
             price,
             stock: 0,
@@ -706,7 +716,7 @@ mod tests {
         let house = world.add_house("1 Mill Lane", vec![]);
         let person = world.spawn_agent("a", None, None);
         let business = world
-            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .create_business(house, person, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         // shared counter: distinct from reserved ids and every spawned agent
         assert_ne!(business, world.mint_id);
@@ -722,9 +732,10 @@ mod tests {
     #[test]
     fn create_business_rejects_unknown_house() {
         let mut world = World::new();
+        let owner = world.spawn_agent("owner", None, None);
         let ghost = HouseId(99);
         assert_eq!(
-            world.create_business(ghost, Good::Food, Money::new(1), HashMap::new()),
+            world.create_business(ghost, owner, Good::Food, Money::new(1), HashMap::new()),
             Err(WorldError::UnknownHouse(ghost))
         );
     }
@@ -733,11 +744,12 @@ mod tests {
     fn create_business_rejects_duplicate() {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
         let first = world
-            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .create_business(house, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         assert_eq!(
-            world.create_business(house, Good::Food, Money::new(1), HashMap::new()),
+            world.create_business(house, owner, Good::Food, Money::new(1), HashMap::new()),
             Err(WorldError::BusinessAlreadyExists(house))
         );
         // Err changed nothing: the original business is untouched
@@ -748,17 +760,51 @@ mod tests {
     }
 
     #[test]
+    fn create_business_validates_owner_first() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let person = world.spawn_agent("a", None, None);
+        let shop = world.add_house("Shop", vec![]);
+        let business = world
+            .create_business(shop, person, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let ghost = AgentId(99);
+        let ghost_house = HouseId(99);
+        // every non-agent owner refuses: ghosts, reserved ids, business ids
+        for refused in [ghost, world.mint_id, world.external_id, business] {
+            assert_eq!(
+                world.create_business(house, refused, Good::Food, Money::new(1), HashMap::new()),
+                Err(WorldError::UnknownAgent(refused))
+            );
+        }
+        // owner is checked FIRST: both bad ⇒ the owner is reported
+        assert_eq!(
+            world.create_business(
+                ghost_house,
+                ghost,
+                Good::Food,
+                Money::new(1),
+                HashMap::new()
+            ),
+            Err(WorldError::UnknownAgent(ghost))
+        );
+        // nothing changed on any Err
+        assert!(world.house(house).unwrap().business.is_none());
+    }
+
+    #[test]
     fn businesses_yields_only_hosting_houses_in_houses_order() {
         let mut world = World::new();
         let h1 = world.add_house("1 Mill Lane", vec![]);
         world.add_house("2 Kiln Row", vec![]); // hosts nothing — must be skipped
         let h3 = world.add_house("3 Forge Way", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
         // created out of order to prove iteration follows `houses`, not creation
         let b3 = world
-            .create_business(h3, Good::Food, Money::new(1), HashMap::new())
+            .create_business(h3, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let b1 = world
-            .create_business(h1, Good::Food, Money::new(1), HashMap::new())
+            .create_business(h1, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let found: Vec<_> = world
             .businesses()
@@ -773,7 +819,7 @@ mod tests {
         let house = world.add_house("1 Mill Lane", vec![]);
         let worker = world.spawn_agent("a", None, None);
         let business = world
-            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .create_business(house, worker, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         world.accounts.mint(business, Metal::Gold, Money::new(100)); // sanctioned test funding
         // business → agent: the future pay_wages direction
@@ -805,8 +851,15 @@ mod tests {
     fn create_business_sets_product_price_and_empty_stock() {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
         world
-            .create_business(house, Good::Entertainment, Money::new(2), HashMap::new())
+            .create_business(
+                house,
+                owner,
+                Good::Entertainment,
+                Money::new(2),
+                HashMap::new(),
+            )
             .unwrap();
         let business = world.house(house).unwrap().business.as_ref().unwrap();
         assert_eq!(business.product, Good::Entertainment);
@@ -858,8 +911,9 @@ mod tests {
         // the sweep
         let mut world = World::new();
         let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
         let business = world
-            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let leaver = world.spawn_agent("leaver", None, None);
         world.accounts.mint(business, Metal::Gold, Money::new(100));
@@ -896,8 +950,9 @@ mod tests {
         // off — the entry leaves the ledger regardless
         let mut world = World::new();
         let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
         let business = world
-            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let leaver = world.spawn_agent("leaver", None, None);
         world.accounts.mint(business, Metal::Gold, Money::new(20));
@@ -932,8 +987,9 @@ mod tests {
         // an empty coffer settles nothing but still writes the debt off
         let mut world = World::new();
         let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
         world
-            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let leaver = world.spawn_agent("leaver", None, None);
         world
@@ -965,8 +1021,9 @@ mod tests {
         // residue) must not survive naming a removed id
         let mut world = World::new();
         let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
         world
-            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let leaver = world.spawn_agent("leaver", None, None);
         world
@@ -994,8 +1051,9 @@ mod tests {
     fn remove_agent_rejects_non_agents_with_nothing_changed() {
         let mut world = World::new();
         let house = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
         let business = world
-            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .create_business(house, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         world.accounts.mint(business, Metal::Gold, Money::new(50));
         let ghost = AgentId(99);
@@ -1021,7 +1079,7 @@ mod tests {
         let home = world.add_house("1 Mill Lane", vec![leaver, other]);
         let shop = world.add_house("Shop", vec![leaver]);
         world
-            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .create_business(shop, other, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         world.assign_home(leaver, home).unwrap();
         world
@@ -1061,10 +1119,10 @@ mod tests {
     fn immigrate_rejects_non_vacant_and_unknown_houses() {
         let mut world = World::new();
         let occupied = world.add_house("1 Mill Lane", vec![]);
-        world.spawn_agent("resident", Some(occupied), None);
+        let resident = world.spawn_agent("resident", Some(occupied), None);
         let shop = world.add_house("Shop", vec![]);
         world
-            .create_business(shop, Good::Food, Money::new(1), HashMap::new())
+            .create_business(shop, resident, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let ghost = HouseId(99);
         let before = world.agents.len();

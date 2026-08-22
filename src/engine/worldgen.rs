@@ -41,6 +41,11 @@ pub fn template_world() -> World {
         (jeweler, Good::Luxury, Money::new(5), "carol"),
     ];
     for (house, product, price, worker_name) in scenario {
+        // Owner-before-venue (firm-lifecycle pack 1): the worker must
+        // exist so `create_business` can validate them as owner — each
+        // venue is an owner-operator shop.
+        let worker = world.spawn_agent(worker_name, Some(residence), Some(house));
+        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -51,8 +56,8 @@ pub fn template_world() -> World {
             },
         );
         let business = world
-            .create_business(house, product, price, roles)
-            .expect("fresh house");
+            .create_business(house, worker, product, price, roles)
+            .expect("fresh house, spawned owner");
         let bill = world
             .house(house)
             .expect("just added")
@@ -61,8 +66,6 @@ pub fn template_world() -> World {
             .expect("just created")
             .wage_bill();
         world.accounts.mint(business, Metal::Gold, bill);
-        let worker = world.spawn_agent(worker_name, Some(residence), Some(house));
-        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
     }
     world.spawn_agent("dave", Some(residence), None); // unemployed, housed
 
@@ -103,7 +106,13 @@ const EMPLOYED_WALLET: u64 = 120;
 /// K-aged vacancy → grubstaked arrival) completes inside the 200-tick
 /// soak window, while the first departure (t127, measured) lands safely
 /// beyond the 100-tick soak's criteria span. Migration relieves the
-/// fuse; phase-6 profit distribution would cure it (next milestone).
+/// fuse. The phase-6 draw (firm-lifecycle pack 1) killed the coffer
+/// SINK — coffers now cap at the retained buffer and ~22k gold
+/// recirculated to owners over 200 ticks — but the fuse itself barely
+/// moved (first departure still t127, measured): `target_days` purchase
+/// caps keep owner income pooling in wallets, never reaching the
+/// unemployed. The pooled capital is the recorded seam for founding
+/// (pack 3) and phase 6's expand-capacity half.
 const UNEMPLOYED_SAVINGS: u64 = 3400;
 /// External's gold settlement fund: pack 4's immigration grubstakes draw
 /// from here; until then it sits on the books, audited like everything.
@@ -187,6 +196,23 @@ pub fn town_world() -> World {
     let mut next_name = 0;
     for (address, product, price, wage, headcount, seeded_staff) in businesses {
         let house = world.add_house(address, vec![]);
+        // Owner-before-venue (firm-lifecycle pack 1): each venue's staff
+        // spawn BEFORE `create_business` so the first seeded worker's id
+        // exists to validate as owner — the owner-operator pattern
+        // (alice, ed, ivan, karl, marco, otto by construction). The
+        // agent-spawn ORDER (names, homes, sequence) is unchanged; only
+        // the business-id interleaving moves, which is why this landed
+        // as one deliberate re-pin item.
+        let mut first_worker = None;
+        for _ in 0..seeded_staff {
+            let name = NAMES[next_name];
+            let home = residences[next_name / 8];
+            next_name += 1;
+            let worker = world.spawn_agent(name, Some(home), Some(house));
+            world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
+            first_worker.get_or_insert(worker);
+        }
+        let owner = first_worker.expect("every seeded venue has staff");
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -197,8 +223,8 @@ pub fn town_world() -> World {
             },
         );
         let business = world
-            .create_business(house, product, Money::new(price), roles)
-            .expect("fresh house");
+            .create_business(house, owner, product, Money::new(price), roles)
+            .expect("fresh house, spawned owner");
         let bill = world
             .house(house)
             .expect("just added")
@@ -225,13 +251,6 @@ pub fn town_world() -> World {
             .as_mut()
             .expect("just created")
             .stock = 2 * product.production_rate() * seeded_staff;
-        for _ in 0..seeded_staff {
-            let name = NAMES[next_name];
-            let home = residences[next_name / 8];
-            next_name += 1;
-            let worker = world.spawn_agent(name, Some(home), Some(house));
-            world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
-        }
     }
     // The rest are unemployed until pack 3's labor market hires them.
     while next_name < NAMES.len() {
@@ -366,6 +385,35 @@ mod tests {
         world.accounts.audit();
     }
 
+    /// Firm-lifecycle pack 1: each venue's owner is its first seeded
+    /// worker — the owner-operator pattern, deterministic by spawn
+    /// order. All six owners are employed, so the 9 permanently
+    /// unemployed stay non-owners and the emigration pool survives.
+    #[test]
+    fn town_world_seeds_owner_operators() {
+        let world = town_world();
+        let expected = [
+            ("Greenrow Farm", "alice"),
+            ("Longacre Farm", "ed"),
+            ("Gilt Curtain Theater", "ivan"),
+            ("The Brass Bell", "karl"),
+            ("Karat & Co", "marco"),
+            ("Silverthread Atelier", "otto"),
+        ];
+        for (address, owner_name) in expected {
+            let (house, business) = world
+                .businesses()
+                .find(|(house, _)| house.address == address)
+                .expect("seeded venue");
+            let owner = world
+                .agent(business.owner)
+                .expect("owner is a living agent");
+            assert_eq!(owner.name, owner_name, "{address}");
+            // owner-operator: employed at their own venue
+            assert_eq!(owner.workplace, Some(house.id), "{address}");
+        }
+    }
+
     /// The spec's pinned soak exit criteria (town-colony spec, "Pinned
     /// soak exit criteria"): the tuning constants above were iterated
     /// until this held, then frozen. 100 ticks, evaluated from tick 10
@@ -386,6 +434,7 @@ mod tests {
         // per business: (rises, falls) after warm-up
         let mut moved: HashMap<AgentId, (u32, u32)> = HashMap::new();
         let mut quits = 0u32;
+        let mut drew: HashMap<AgentId, u32> = HashMap::new();
 
         for t in 1..=LAST {
             // the prices in force during tick t are those posted before
@@ -418,7 +467,27 @@ mod tests {
                         }
                     }
                     Event::Quit { .. } => quits += 1,
+                    Event::ProfitDrawn { business, .. } => *drew.entry(*business).or_default() += 1,
                     _ => {}
+                }
+            }
+            // 5. (firm-lifecycle pack 1) the sink is dead: from tick 20
+            //    every coffer sits at or under the retained buffer —
+            //    DRAW_BUFFER_BILLS full-staffing bills plus outstanding
+            //    arrears. Phase 7 can only debit coffers after the draw
+            //    (settlements), so the post-tick bound is the phase-6
+            //    bound or tighter.
+            if t >= 20 {
+                for (house, business) in world.businesses() {
+                    let bound = business
+                        .wage_bill()
+                        .times(crate::sim::DRAW_BUFFER_BILLS)
+                        .plus(business.owed_total());
+                    assert!(
+                        world.accounts.balance_of(business.id, Metal::Gold) <= bound,
+                        "{}'s coffer exceeds the draw buffer at t{t}",
+                        house.address
+                    );
                 }
             }
         }
@@ -467,6 +536,18 @@ mod tests {
         //    assertion, not a hope. A quitting town is a sick town; the
         //    quit mechanism itself is demonstrated in the sim:: tests.
         assert_eq!(quits, 0, "the tuned town fired {quits} spurious quits");
+
+        // 6. (firm-lifecycle pack 1) profit flows: every venue drew at
+        //    least once across the soak — coffers recirculate to owners
+        //    instead of pooling (the fuse cure landed; magnitudes in the
+        //    pack-1 ledger).
+        for (house, business) in world.businesses() {
+            assert!(
+                drew.get(&business.id).copied().unwrap_or(0) > 0,
+                "{} never drew profit across the soak",
+                house.address
+            );
+        }
     }
 
     /// The pack-3 soak (town-colony spec, pack-3 criteria): 50 ticks

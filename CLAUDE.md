@@ -51,7 +51,11 @@ new mechanics into the loop and money:
 - `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
   `Business`/`RoleSlot` (per-role wages, account-only money); phase 3
   (`pay_wages`) reads `employed_role` and `RoleSlot.wage` and keeps the
-  per-worker `owed_to` wage-arrears ledger.
+  per-worker `owed_to` wage-arrears ledger. Since firm-lifecycle pack 1
+  every `Business` names a living `owner` (required, validated at
+  creation, strictly distinct from the still-rule-inert `House.owners`);
+  the always-living invariant completes when pack 2's forced liquidation
+  lands — until then phase 6's draw skips a dangling owner by contract.
 - `src/goods.rs` — `Good` (closed consumable enum) + the 07-19 per-good
   constants table (consumption, weight, target days, production).
 - `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
@@ -73,7 +77,10 @@ new mechanics into the loop and money:
   commands — `remove_agent` (validate, settle-then-write-off, per-metal
   sweep to External, owners strip, remove) and `immigrate` (vacancy-gated
   wrapper over the untouched `spawn_agent`, bumps the `arrivals` name
-  counter).
+  counter); firm-lifecycle pack 1 widened `create_business` with the
+  validated `owner` param (checked first — reserved/business/ghost ids
+  refuse; the 07-13 "wrap, don't widen" precedent is distinguished in
+  that spec: an un-widened path would manufacture ownerless firms).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last, returning a `TickReport` of typed `Event`s (pure observation,
   Amendment 15); `goods_market` holds the worked decide→apply template;
@@ -85,7 +92,13 @@ new mechanics into the loop and money:
   phase 1's vacancy pull and phase 7's destitution push). Phase 1's
   only money op is the immigration grubstake (Amendment 16); phase 7's
   are the Amendment-17 settlement and the sweep to External — both
-  ride `World::pay`, event amounts measured as balance deltas.
+  ride `World::pay`, event amounts measured as balance deltas. Since
+  firm-lifecycle pack 1, phase 6 (`invest`) runs the profit draw: a
+  direct pay_wages-style pass (no intents) paying each business's gold
+  above `draw_amount`'s retained buffer — `DRAW_BUFFER_BILLS` (3,
+  frozen) full-staffing bills plus `owed_total()`, net of arrears by
+  contract — to its owner, `Event::ProfitDrawn`, under row 6's
+  "transfer only" (Amendment 18 touched only that row's purpose text).
 - `src/terrain.rs` — world coordinates (`Point3`, 1 unit = 0.1 m) and the
   triangulated integer heightmap (`Terrain`, `elevation_at`); pure movement
   math (`grade`, `travel_time` + `SpeedProfile`) with its tuning constants
@@ -103,12 +116,18 @@ new mechanics into the loop and money:
   houses, 6 multi-worker businesses, 16 seeded employed + open headcount
   for the labor market, soak-tuned frozen constants, per-metal totals
   pinned), and `template_world`, the small `#[cfg(test)]` fixture
-  (07-19 farm/theater/jeweler). The three town soaks live here — the
-  100-tick pinned-criteria soak (zero quits asserted), the 50-tick
-  employment soak (`NEAR_FULL` = 21 of 30, the measured ceiling — see
-  the pack-3 manifest's deviation record), and the 200-tick migration
-  soak (population moves both directions, arrivals answering the
-  demand shock, per-account no-orphan sweeps).
+  (07-19 farm/theater/jeweler). Since firm-lifecycle pack 1 each venue's
+  staff spawn before `create_business` and its first seeded worker is
+  its owner-operator (alice/ed/ivan/karl/marco/otto, pinned; per-metal
+  totals unchanged by the reorder — gold 52148 / silver 300 / copper
+  600). The three town soaks live here — the 100-tick pinned-criteria
+  soak (zero quits asserted; since pack 1 also the coffer-at-buffer
+  bound from t20 and every-venue-draws), the 50-tick employment soak
+  (`NEAR_FULL` = 21 of 30, the measured ceiling — re-measured unchanged
+  under the draw), and the 200-tick migration soak (population moves
+  both directions, arrivals answering the demand shock, per-account
+  no-orphan sweeps; re-measured under the draw: first departure t127
+  unchanged, first arrival t175).
 - `src/engine/game_loop.rs` — interactive shell only (Enter advances a
   tick, `roster` lists agents, a name or business address inspects,
   `map` exports map.json, q quits): town header, aggregated per-tick
@@ -128,11 +147,13 @@ take effect next tick), 5 (consume — also the single writer of
 `Agent.hunger`), and 7 (emigration only: `Intent::Depart` when hunger ≥
 `DEPART_HUNGER_TICKS` and gold below the cheapest posted Food price —
 `remove_agent` settles `min(coffer, owed)` per Amendment 17, sweeps
-every metal to External, and strips the leaver) have behavior; phases 6
-and 8, and phase 7's demurrage/imports, are TODO stubs. The tick-time
-mint faucet is closed: worldgen's seed is the entire money supply and
-the audit pins it there. The shipped scenario is `town_world`. If you
-change structure, update this section.
+every metal to External, and strips the leaver), and 6 (the profit
+draw — firm-lifecycle pack 1; closure and founding land there as that
+container's packs 2–3) have behavior; phase 8 and phase 7's
+demurrage/imports are TODO stubs. The tick-time mint faucet is closed:
+worldgen's seed is the entire money supply and the audit pins it there.
+The shipped scenario is `town_world`. If you change structure, update
+this section.
 
 Multi-metal money is DONE
 ([`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md),
@@ -146,6 +167,13 @@ until the market layer can price non-gold metals (reference currency and
 exchange rates stay open questions there). The wage-payment/hiring work
 CLAUDE.md previously named as next landed as town-colony pack 3
 ([`docs/manifests/2026-08-21-tcs-pack3-labor-clears.md`](docs/manifests/2026-08-21-tcs-pack3-labor-clears.md)).
+The **firm lifecycle is in flight**
+([`docs/manifests/2026-08-22-firm-lifecycle.md`](docs/manifests/2026-08-22-firm-lifecycle.md),
+spec
+[`docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md`](docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md),
+gate signed 2026-08-22): pack 1 (owners + the phase-6 profit draw)
+landed 2026-08-22; packs 2 (closure, Amendment 19) and 3 (founding)
+follow on the owner's go.
 
 The terrain playground landed on 2026-08-15 —
 [`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)

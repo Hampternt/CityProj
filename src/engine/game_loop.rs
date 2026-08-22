@@ -81,6 +81,8 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
             Event::WagePaid { worker, .. } | Event::PayrollShort { worker, .. } => Some(*worker),
             Event::Sold { buyer, .. } => Some(*buyer),
             Event::WentHungry { agent } => Some(*agent),
+            // profit is the owner's story
+            Event::ProfitDrawn { owner, .. } => Some(*owner),
             // the leaver's id resolves to nothing once they are gone
             Event::Produced { .. }
             | Event::PriceMoved { .. }
@@ -120,8 +122,9 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
         .iter()
         .filter(|agent| agent.workplace.is_some())
         .count();
+    let businesses = world.businesses().count();
     println!(
-        "=== CityProj — tick {tick_count} · pop {population} · employed {employed} · unemployed {} ===",
+        "=== CityProj — tick {tick_count} · pop {population} · employed {employed} · unemployed {} · businesses {businesses} ===",
         population - employed
     );
     // D2 (pack 2): one line per metal, `Metal::ALL` order. A cross-metal
@@ -167,9 +170,10 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
         );
         if let Some(business) = &house.business {
             println!(
-                "    sells {} @{} · stock {} · balance {} · owed {}",
+                "    sells {} @{} · owner {} · stock {} · balance {} · owed {}",
                 business.product,
                 business.price,
+                agent_name(world, business.owner),
                 business.stock,
                 compact_balances(world, business.id),
                 business.owed_total(),
@@ -200,6 +204,8 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     let mut shorts = Vec::new();
     let mut moves = Vec::new();
     let mut hungry = Vec::new();
+    // Phase-6 draws land between hunger and the leavers, per phase order.
+    let mut draws = Vec::new();
     // Phase-7 departures close the feed, in event order (settlements
     // immediately before their leaver).
     let mut leavers = Vec::new();
@@ -243,6 +249,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
             }
             Event::PriceMoved { .. } => moves.push(render_event(world, event)),
             Event::WentHungry { .. } => hungry.push(render_event(world, event)),
+            Event::ProfitDrawn { .. } => draws.push(render_event(world, event)),
         }
     }
     let mut lines = labor;
@@ -264,6 +271,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     }
     lines.extend(moves);
     lines.extend(hungry);
+    lines.extend(draws);
     lines.extend(leavers);
     lines
 }
@@ -356,6 +364,15 @@ fn render_event(world: &World, event: &Event) -> String {
         Event::WentHungry { agent } => {
             format!("{} went hungry", agent_name(world, *agent))
         }
+        Event::ProfitDrawn {
+            business,
+            owner,
+            amount,
+        } => format!(
+            "{} paid {} {amount}g profit",
+            business_address(world, *business),
+            agent_name(world, *owner),
+        ),
         Event::Arrived { name, home, .. } => format!(
             "{name} arrived seeking work, settling at {}",
             world
@@ -504,7 +521,8 @@ fn wait_for_enter() {
     let _ = io::stdin().read_line(&mut line);
 }
 
-/// One line per agent: job, employer, gold, pantry.
+/// One line per agent: job, employer, gold, pantry — and, for owners,
+/// the venues they own (firm-lifecycle pack 1).
 fn roster(world: &World) {
     println!("roster:");
     for agent in &world.agents {
@@ -517,8 +535,18 @@ fn roster(world: &World) {
             }
             _ => "unemployed".to_string(),
         };
+        let owned: Vec<String> = world
+            .businesses()
+            .filter(|(_, business)| business.owner == agent.id)
+            .map(|(house, _)| house.address.clone())
+            .collect();
+        let ownership = if owned.is_empty() {
+            String::new()
+        } else {
+            format!(" · owns {}", owned.join(", "))
+        };
         println!(
-            "  {} — {job} · gold {} · {}",
+            "  {} — {job}{ownership} · gold {} · {}",
             agent.name,
             world.accounts.balance_of(agent.id, Metal::Gold),
             describe_inventory(agent),
@@ -558,6 +586,7 @@ fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
         let business = house.business.as_ref().expect("found above");
         println!("{} (business):", house.address);
         println!("  sells   {} @{}g", business.product, business.price);
+        println!("  owner   {}", agent_name(world, business.owner));
         println!("  stock   {}", business.stock);
         println!("  coffers {}", compact_balances(world, business_id));
         if business.owed_to.is_empty() {

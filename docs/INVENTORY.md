@@ -64,11 +64,25 @@ The behaviors you can watch play out over successive ticks:
   work the next day. Immigration stalls by design when the fund drains or
   no residence stands empty.
 
+- **Owners take profit.** Every business belongs to a named resident (the
+  seeded venues to their founding worker), and each tick a business pays
+  its gold above a retained safety buffer — three payrolls deep, and
+  nothing while it owes back wages — to its owner, narrated in the feed.
+  Coffers no longer pool without bound; the owner's wealth does, which is
+  the capital the coming founding mechanic spends.
+
+🚧 Firm lifecycle in flight
+(`docs/manifests/2026-08-22-firm-lifecycle.md`): closure (a persistently
+insolvent venue liquidates — back wages settled, staff laid off, the
+residual to its owner, the freed house a landing pad) and founding (a
+capitalized resident opens a replacement venue into measured scarcity)
+land as packs 2–3; the profit draw above was pack 1.
+
 Money is strictly conserved: each metal's total is fixed at whatever the
 world was seeded with, and the sim halts rather than continue if a tick ever
-fails to balance — arrivals and departures included. Investment,
-degradation sinks beyond emigration, and coin minting are not simulated
-yet — those ticks pass through untouched.
+fails to balance — arrivals and departures included. Business closure and
+founding, degradation sinks beyond emigration, and coin minting are not
+simulated yet — those ticks pass through untouched.
 
 - **Coins of three metals** rather than one abstract unit: every balance is
   held per metal (the shell shows them as `g:.. s:.. c:..`) and the

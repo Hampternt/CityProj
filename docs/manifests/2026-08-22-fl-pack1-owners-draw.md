@@ -76,7 +76,7 @@ in roster and inspect.
 
 ## Items
 
-- [ ] **1. The owner lands everywhere (atomic).** `Business.owner:
+- [x] **1. The owner lands everywhere (atomic).** `Business.owner:
   AgentId` (doc: required, living once pack 2 lands, distinct from
   `House.owners`); `create_business` widened — `owner` validated FIRST
   (spawned agents only; reserved/business/ghost ids ⇒
@@ -90,7 +90,7 @@ in roster and inspect.
   at their venue). Done: `./scripts/check.sh` clean; `cargo test world::`
   + `engine::` green, quoted. Touches: src/business.rs, src/world.rs,
   src/engine/worldgen.rs, src/sim.rs (test fixtures).
-- [ ] **2. Phase 6 wakes: the draw.** `draw_amount` + `DRAW_BUFFER_BILLS`
+- [x] **2. Phase 6 wakes: the draw.** `draw_amount` + `DRAW_BUFFER_BILLS`
   beside it in sim.rs; `invest(world, report)` gains the direct pass per
   the decision (houses order, gold only, dangling-owner skip);
   `Event::ProfitDrawn` + render arm + trace arm (compile-forced);
@@ -102,12 +102,12 @@ in roster and inspect.
   silent), audit green through draws. Done: `./scripts/check.sh` clean;
   `cargo test sim:: money::` quoted. Touches: src/sim.rs,
   src/engine/game_loop.rs, docs/superpowers/specs/2026-07-02-*.md.
-- [ ] **3. The shell knows owners.** Roster owner mark, business-inspect
+- [x] **3. The shell knows owners.** Roster owner mark, business-inspect
   owner line, header business count; ProfitDrawn stars the owner in
   last-3 history. Done: `./scripts/check.sh` clean; behavior eyeballed at
   `cargo run` and described in the ledger. Touches:
   src/engine/game_loop.rs.
-- [ ] **4. The re-measure (+ the buffer freeze).** Per the decision:
+- [x] **4. The re-measure (+ the buffer freeze).** Per the decision:
   four soaks re-run under the draw; the sink-is-dead coffer criterion
   added to the 100-tick soak; drought/flicker instrumentation via
   TickReport harvesting in the soak harness; fuse timeline +
@@ -142,3 +142,63 @@ in roster and inspect.
   the decisions above. Arrival state measured (table above): 155 tests at
   the container-close head; the spec + container manifest + this manifest
   are the only diffs since.
+- **2026-08-22** — **items 1–3 land** (one commit; the compile gate
+  forces the widening + reorder + draw together: `owner` unread until
+  the draw exists). The compiler enumerated 27 forced call sites (the
+  spec's ~29 counted two inside since-shared fixture helpers); one
+  arrival-test assertion (`world.agents.is_empty()` after a stalled
+  pull) re-pinned to "only the fixture's landlord" — labor-test owners
+  are spawned as inert on-premises landlords (workplace set, no role:
+  both decides skip them, `staff_in_role` ignores them), produce-test
+  owners off-premises so unstaffed venues stay unstaffed. Worldgen
+  reorder landed exactly as decided: agent spawn order unchanged, only
+  the business-id interleaving moved; owners alice/ed/ivan/karl/marco/
+  otto pinned by `town_world_seeds_owner_operators`; per-metal totals
+  asserted unchanged (gold 52148 / silver 300 / copper 600). Amendment
+  18 executed in the 07-02 spec. New tests: owner-validation-first
+  suite, the `draw_amount` unit suite, the draw pass + zero-draw
+  silence, the dangling-owner skip. Gates: `CHECK OK — fmt, clippy,
+  build clean.`; full suite 160 passed, 0 failed.
+- **2026-08-22** — **item 4: the re-measure (200-tick probe, run with
+  --nocapture, probe then removed; permanent criteria 5–6 added to the
+  100-tick soak).** THE NEW BASELINE packs 2–3 cite:
+  - **The sink is dead**: every coffer ≤ 3 bills + owed from t20
+    through t200 (now criterion 5, asserted every tick from 20).
+    Per-venue 200-tick draw totals: Greenrow 6951g, Longacre 3259g,
+    Gilt Curtain 3064g, Brass Bell 2282g, Karat 3676g, Silverthread
+    3080g — ~22.3k gold recirculated where coffers used to absorb
+    ~90g/tick. Every venue draws inside the 100-tick soak
+    (criterion 6).
+  - **The fuse barely moved — the cure is capital, not demand**: first
+    departure t127 (UNCHANGED from pack 4 — the caps analysis
+    confirmed: owner income pools, the unemployed dis-save exactly as
+    before); first arrival t175 (was t182 — thinner coffers bring the
+    demand shock slightly earlier); min pop 25, final pop 26,
+    population still moves both directions; `NEAR_FULL` UNCHANGED at
+    21 (max employed 21, held at t50). No constant retuned;
+    `UNEMPLOYED_SAVINGS` band untouched; `DRAW_BUFFER_BILLS` FROZEN
+    at 3 (healthy-window max sold-drought 2, one 1-tick arrears
+    flicker of 11g at Longacre — three bills carry every measured
+    drought).
+  - **HANDED TO PACK 2 (trigger-design datum, measured here so its
+    manifest starts from fact):** post-fuse, insolvency persistence is
+    the NORMAL state of demand-losing venues — hand-to-mouth under the
+    draw cap, max consecutive owed-ticks Longacre 73 / Brass Bell 60 /
+    Gilt Curtain 57, peak owed_total 659g/1033g/569g (4.7–7.2 bills) —
+    while the t≤100 window is clean (max streak 1, peak 11g). The
+    spec's `CLOSE_INSOLVENT_TICKS = 6` provisional CANNOT survive
+    contact with the 200-tick town: a bare persistence trigger would
+    shutter three solvent venues around t130–140. Pack 2 must either
+    make the trigger magnitude-aware (persistence counted only above
+    an arrears level — the healthy rolling debt and a corpse's frozen
+    ~4-wages-per-quitter debt are separable by size per worker, not by
+    total) or set the threshold above the measured 73 and accept slow
+    shutters — measured options, its manifest's call, likely a spec
+    erratum either way. The healthy-town control pin as re-drafted
+    ("never reaches the threshold through the 100-tick soak, flicker
+    tolerated") holds against these numbers.
+  - Owner wallets at t200: alice 8446g, ed 4234g, ivan 3572g, karl
+    2922g, marco 3373g, otto 2978g — the pooled founding capital
+    pack 3 spends.
+  Gates: full suite green with criteria 5–6 live; `VERIFY OK — fmt,
+  clippy, build, tests all clean.` 160 passed, 0 failed.

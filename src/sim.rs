@@ -121,6 +121,14 @@ pub enum Event {
     /// Phase 5: the agent's Food could not cover one tick's consumption;
     /// the stored `Agent.hunger` counter moves with it (pack 4).
     WentHungry { agent: AgentId },
+    /// Phase 6 (firm-lifecycle pack 1): a business paid its gold coffer
+    /// surplus above the retained buffer to its owner. A zero draw is
+    /// not an event (the held-price precedent).
+    ProfitDrawn {
+        business: AgentId,
+        owner: AgentId,
+        amount: Money,
+    },
     /// Phase 1 apply (pack 4): an immigrant took a vacant residence.
     /// They apply for work from the next tick's snapshot.
     Arrived {
@@ -177,7 +185,7 @@ pub fn tick(world: &mut World) -> TickReport {
     pay_wages(world, &mut report);
     goods_market(world, &mut report);
     consume(world, &mut report);
-    invest(world);
+    invest(world, &mut report);
     sinks(world, &mut report);
     mint_phase(world);
     // Phase 9: audit (§8.3) — read-only, never gains behavior, emits nothing.
@@ -190,6 +198,20 @@ pub fn tick(world: &mut World) -> TickReport {
 /// greater — exactly N bills is endured). Tuning constant beside its fn,
 /// like the market constants; soak-tuned with worldgen's, then frozen.
 const QUIT_ARREARS_BILLS: u32 = 3;
+
+/// How many full-staffing wage bills a business retains before paying
+/// profit to its owner (phase 6, firm-lifecycle pack 1). An independent
+/// constant, deliberately NOT "worldgen's proven drought depth": the
+/// seeded 3 bills price full headcount against partial boot staffing
+/// (~4.5–6 real payroll ticks of runway), while this buffer holds
+/// exactly `DRAW_BUFFER_BILLS` zero-revenue ticks at full staffing —
+/// the pack-1 re-measure sizes it against the longest observed revenue
+/// drought, then freezes it. FROZEN at 3 (pack-1 ledger): the healthy
+/// 100-tick window shows max sold-drought 2 and a single one-tick
+/// arrears flicker (11g, Longacre) — three bills carry every measured
+/// drought with margin, and all four soaks hold. `pub(crate)` so the
+/// worldgen soak asserts the coffer bound against the same constant.
+pub(crate) const DRAW_BUFFER_BILLS: u32 = 3;
 
 /// Consecutive hungry ticks before a destitute agent gives up on the
 /// town (phase 7's push rule, pack 4). Soak-tuned, then frozen.
@@ -832,9 +854,68 @@ fn consume(world: &mut World, report: &mut TickReport) {
     }
 }
 
-/// Phase 6: expand capacity / take profit. Money ops allowed: transfer only.
-fn invest(_world: &mut World) {
-    // TODO: firm investment lands here.
+/// The phase-6 profit draw (firm-lifecycle spec): gold coffer minus the
+/// retained buffer — `DRAW_BUFFER_BILLS` full-staffing wage bills PLUS
+/// the outstanding arrears — clamped at zero. Net of arrears by
+/// contract (the pack-3 affordability erratum applied as formula): a
+/// business owing back wages draws nothing, ever — arrears outrank the
+/// owner.
+fn draw_amount(coffer: Money, wage_bill: Money, owed_total: Money) -> Money {
+    let buffer = wage_bill.times(DRAW_BUFFER_BILLS).plus(owed_total);
+    if coffer > buffer {
+        coffer.minus(buffer)
+    } else {
+        Money::ZERO
+    }
+}
+
+/// Phase 6: take profit (firm-lifecycle pack 1; closure and founding
+/// land here in packs 2–3). Money ops allowed: transfer only — the draw
+/// is a business→owner `World::pay`, inside the row's existing
+/// allowance (Amendment 18 touched only the purpose text). A DIRECT
+/// pass, no intents (the pay_wages precedent: objective per-business
+/// state, zero contention), businesses in houses order, gold only —
+/// the sole trading metal; closure's pack-2 `Metal::ALL` sweep is the
+/// completeness backstop. This is the recorded cure for the
+/// coffers-as-one-way-sinks fuse, expected partial: `target_days`
+/// purchase caps mean owner income mostly pools (the recorded
+/// expand-capacity seam), so the pack-1 re-measure pins what actually
+/// moves rather than assuming.
+fn invest(world: &mut World, report: &mut TickReport) {
+    let draws: Vec<(AgentId, AgentId, Money)> = world
+        .businesses()
+        .map(|(_, business)| {
+            (
+                business.id,
+                business.owner,
+                draw_amount(
+                    world.accounts.balance_of(business.id, Metal::Gold),
+                    business.wage_bill(),
+                    business.owed_total(),
+                ),
+            )
+        })
+        .collect();
+    for (business, owner, draw) in draws {
+        if draw == Money::ZERO {
+            continue;
+        }
+        // Pack-1 interim tolerance (spec, draw contract — retired by
+        // pack 2's forced liquidation): an owner removed by emigration
+        // before `remove_agent` knows about firms leaves a dangling id;
+        // the draw skips cleanly, no transfer, no event.
+        if world.agent(owner).is_none() {
+            continue;
+        }
+        world
+            .pay(business, owner, Metal::Gold, draw)
+            .expect("min-bounded by the live coffer, both ids validated");
+        report.events.push(Event::ProfitDrawn {
+            business,
+            owner,
+            amount: draw,
+        });
+    }
 }
 
 /// Phase 7: degradation, imports, and — since pack 4 — emigration.
@@ -980,11 +1061,11 @@ mod tests {
                 unfilled_ticks: 0,
             },
         );
-        let business = world
-            .create_business(house, product, price, roles)
-            .expect("fresh house");
         let worker = world.spawn_agent(worker_name, None, Some(house));
         world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
+        let business = world
+            .create_business(house, worker, product, price, roles)
+            .expect("fresh house, spawned owner");
         (house, business, worker)
     }
 
@@ -1042,8 +1123,16 @@ mod tests {
         );
         // unstaffed: business exists, nobody works there
         let idle_house = world.add_house("Idle", vec![]);
+        // owner off-premises: the business must stay genuinely unstaffed
+        let landlord = world.spawn_agent("landlord", None, None);
         world
-            .create_business(idle_house, Good::Luxury, Money::new(5), HashMap::new())
+            .create_business(
+                idle_house,
+                landlord,
+                Good::Luxury,
+                Money::new(5),
+                HashMap::new(),
+            )
             .unwrap();
         produce(&mut world, &mut TickReport::default());
         assert_eq!(stock_of(&world, farm), Good::Food.production_rate());
@@ -1162,6 +1251,7 @@ mod tests {
     fn unstaffed_business_pays_nobody() {
         let mut world = World::new();
         let house = world.add_house("Idle", vec![]);
+        let landlord = world.spawn_agent("landlord", None, None);
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -1172,7 +1262,7 @@ mod tests {
             },
         );
         let business = world
-            .create_business(house, Good::Food, Money::new(1), roles)
+            .create_business(house, landlord, Good::Food, Money::new(1), roles)
             .unwrap();
         world.accounts.mint(business, Metal::Gold, Money::new(50));
         pay_wages(&mut world, &mut TickReport::default());
@@ -1195,11 +1285,11 @@ mod tests {
                 unfilled_ticks: 0,
             },
         );
-        let business = world
-            .create_business(house, Good::Food, Money::new(1), roles)
-            .unwrap();
         // Spawn worker at the workplace but WITHOUT setting employed_role
         let worker = world.spawn_agent("f", None, Some(house));
+        let business = world
+            .create_business(house, worker, Good::Food, Money::new(1), roles)
+            .unwrap();
         // employed_role stays None
         world.accounts.mint(business, Metal::Gold, Money::new(50));
         pay_wages(&mut world, &mut TickReport::default());
@@ -1223,11 +1313,11 @@ mod tests {
                 unfilled_ticks: 0,
             },
         );
-        let business = world
-            .create_business(house, Good::Food, Money::new(1), roles)
-            .unwrap();
         // Spawn worker and assign Engineer role, which is NOT in the business's roles
         let worker = world.spawn_agent("e", None, Some(house));
+        let business = world
+            .create_business(house, worker, Good::Food, Money::new(1), roles)
+            .unwrap();
         world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Engineer);
         world.accounts.mint(business, Metal::Gold, Money::new(50));
         pay_wages(&mut world, &mut TickReport::default());
@@ -1337,6 +1427,111 @@ mod tests {
         // the tick-time faucet is closed: nothing beyond the seed, ever
         assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(35));
         assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(35));
+        world.accounts.audit();
+    }
+
+    // --- Firm-lifecycle pack 1: the phase-6 profit draw ---
+
+    #[test]
+    fn draw_amount_clamps_and_respects_arrears() {
+        let bill = Money::new(140); // 35 × headcount 4
+        // above buffer: the surplus is drawn, integer-exact
+        assert_eq!(
+            draw_amount(Money::new(500), bill, Money::ZERO),
+            Money::new(80) // 500 − 3×140
+        );
+        // at buffer exactly: nothing (a just-founded firm's state, pack 3)
+        assert_eq!(draw_amount(Money::new(420), bill, Money::ZERO), Money::ZERO);
+        // below buffer: nothing
+        assert_eq!(draw_amount(Money::new(100), bill, Money::ZERO), Money::ZERO);
+        // arrears widen the buffer — net of arrears, the erratum as formula
+        assert_eq!(
+            draw_amount(Money::new(500), bill, Money::new(80)),
+            Money::ZERO
+        );
+        assert_eq!(
+            draw_amount(Money::new(500), bill, Money::new(50)),
+            Money::new(30)
+        );
+    }
+
+    #[test]
+    fn draw_pass_pays_owner_and_pins_coffer_at_buffer() {
+        let mut world = World::new();
+        let (farm_house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        // coffer well above the 3-bill buffer (bill = 35 × headcount 1)
+        world.accounts.mint(farm, Metal::Gold, Money::new(150));
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        // the owner is the worker (owner-operator fixture): 150 − 105
+        assert_eq!(
+            world.accounts.balance_of(worker, Metal::Gold),
+            Money::new(45)
+        );
+        assert_eq!(
+            world.accounts.balance_of(farm, Metal::Gold),
+            Money::new(105)
+        );
+        assert_eq!(
+            report.events,
+            vec![Event::ProfitDrawn {
+                business: farm,
+                owner: worker,
+                amount: Money::new(45),
+            }]
+        );
+        world.accounts.audit();
+        // at buffer now: a second pass draws nothing and emits nothing
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+        // arrears close the tap even with the coffer above three bills
+        world
+            .house_mut(farm_house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(worker, Money::new(60));
+        world.accounts.mint(farm, Metal::Gold, Money::new(50)); // 155 < 105+60
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn draw_skips_a_dangling_owner_cleanly() {
+        // The pack-1 interim rule (spec, draw contract): an owner removed
+        // before pack 2's forced liquidation leaves a dangling id — the
+        // draw skips, no transfer, no event, no panic. Retired when
+        // remove_agent learns to liquidate.
+        let mut world = World::new();
+        let (_, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(35),
+            "f",
+        );
+        world.accounts.mint(farm, Metal::Gold, Money::new(150));
+        world.remove_agent(worker).unwrap(); // the owner emigrates
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert_eq!(report.events, vec![]);
+        assert_eq!(
+            world.accounts.balance_of(farm, Metal::Gold),
+            Money::new(150)
+        );
         world.accounts.audit();
     }
 
@@ -1539,8 +1734,16 @@ mod tests {
             "f",
         );
         let idle_house = world.add_house("Idle", vec![]);
+        // owner off-premises: the business must stay genuinely unstaffed
+        let landlord = world.spawn_agent("landlord", None, None);
         world
-            .create_business(idle_house, Good::Luxury, Money::new(5), HashMap::new())
+            .create_business(
+                idle_house,
+                landlord,
+                Good::Luxury,
+                Money::new(5),
+                HashMap::new(),
+            )
             .unwrap();
         let mut report = TickReport::default();
         produce(&mut world, &mut report);
@@ -1823,6 +2026,11 @@ mod tests {
         wage: Money,
     ) -> (HouseId, AgentId) {
         let house = world.add_house(address, vec![]);
+        // Inert owner-on-premises: workplace set, employed_role None —
+        // both labor decides skip them (employed ⇒ no application,
+        // roleless ⇒ no quit), `staff_in_role` ignores them, and payroll
+        // accrues them nothing — so the slot stays genuinely open.
+        let landlord = world.spawn_agent("landlord", None, Some(house));
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -1833,8 +2041,8 @@ mod tests {
             },
         );
         let business = world
-            .create_business(house, product, Money::new(1), roles)
-            .expect("fresh house");
+            .create_business(house, landlord, product, Money::new(1), roles)
+            .expect("fresh house, spawned owner");
         (house, business)
     }
 
@@ -2018,6 +2226,7 @@ mod tests {
         // second unemployed agent so the same tick carries a quit AND an
         // unrelated hire — pinning the quits-before-hires event order
         let solvent_house = world.add_house("Solvent & Sons", vec![]);
+        let solvent_landlord = world.spawn_agent("landlord", None, Some(solvent_house));
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -2028,7 +2237,13 @@ mod tests {
             },
         );
         let solvent = world
-            .create_business(solvent_house, Good::Food, Money::new(1), roles)
+            .create_business(
+                solvent_house,
+                solvent_landlord,
+                Good::Food,
+                Money::new(1),
+                roles,
+            )
             .unwrap();
         let bystander = world.spawn_agent("b", None, None);
         let mut report = TickReport::default();
@@ -2077,6 +2292,7 @@ mod tests {
         // snapshot wage the agent applied at
         let mut world = World::new();
         let house = world.add_house("Farm", vec![]);
+        let farm_landlord = world.spawn_agent("landlord", None, Some(house));
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -2087,7 +2303,7 @@ mod tests {
             },
         );
         let farm = world
-            .create_business(house, Good::Food, Money::new(1), roles)
+            .create_business(house, farm_landlord, Good::Food, Money::new(1), roles)
             .unwrap();
         world.accounts.mint(farm, Metal::Gold, Money::new(200));
         let unemployed = world.spawn_agent("u", None, None);
@@ -2133,6 +2349,7 @@ mod tests {
     fn wage_writeback_steers_only_the_next_matching() {
         let mut world = World::new();
         let house = world.add_house("Farm", vec![]);
+        let farm_landlord = world.spawn_agent("landlord", None, Some(house));
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -2143,7 +2360,7 @@ mod tests {
             },
         );
         let farm = world
-            .create_business(house, Good::Food, Money::new(1), roles)
+            .create_business(house, farm_landlord, Good::Food, Money::new(1), roles)
             .unwrap();
         world.accounts.mint(farm, Metal::Gold, Money::new(200));
         let first = world.spawn_agent("a", None, None);
@@ -2413,7 +2630,8 @@ mod tests {
         }
         assert!(world.agent_by_name("Mara").is_none());
         assert_eq!(world.arrivals, 0);
-        assert!(world.agents.is_empty());
+        // only the fixture's landlord — nobody arrived
+        assert_eq!(world.agents.len(), 1);
 
         // bound 2: no vacant residence — the only spare hosts a business
         let mut world = World::new();
@@ -2502,6 +2720,7 @@ mod tests {
         // the arrival applies after every hire — the phase-1 order pin
         let mut world = World::new();
         let house = world.add_house("Farm", vec![]);
+        let farm_landlord = world.spawn_agent("landlord", None, Some(house));
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -2512,7 +2731,7 @@ mod tests {
             },
         );
         let farm = world
-            .create_business(house, Good::Food, Money::new(1), roles)
+            .create_business(house, farm_landlord, Good::Food, Money::new(1), roles)
             .unwrap();
         let cottage = world.add_house("5 Weir Cottage", vec![]);
         world
@@ -2614,6 +2833,7 @@ mod tests {
         // exactly one stake funds exactly one arrival, then dries
         let mut world = World::new();
         let house = world.add_house("Farm", vec![]);
+        let farm_landlord = world.spawn_agent("landlord", None, Some(house));
         let mut roles = HashMap::new();
         roles.insert(
             Role::Labourer,
@@ -2624,7 +2844,7 @@ mod tests {
             },
         );
         world
-            .create_business(house, Good::Food, Money::new(1), roles)
+            .create_business(house, farm_landlord, Good::Food, Money::new(1), roles)
             .unwrap();
         world.add_house("5 Weir Cottage", vec![]);
         world.add_house("6 Weir Cottage", vec![]);

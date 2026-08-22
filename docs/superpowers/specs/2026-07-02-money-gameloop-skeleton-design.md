@@ -4,7 +4,10 @@
 [2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md) ·
 `tick` contract, phase-fn shape, and phase-table rows 1/7 amended by
 [2026-08-21-town-colony-sim-design.md](2026-08-21-town-colony-sim-design.md)
-Am. 15–17
+Am. 15–17 · row 6's purpose text amended by
+[2026-08-22-firm-lifecycle-design.md](2026-08-22-firm-lifecycle-design.md)
+Am. 18 (its Am. 19, row 7's forced-liquidation money ops, executes with
+that container's pack 2)
 
 This spec does double duty: it specifies the skeleton build, and it is the
 **standing reference** future mechanics @-point to for *how to hook into the
@@ -74,7 +77,7 @@ amending this table.
 | 3 | `pay_wages`    | firms pay agreed wages               | `transfer` only              | wages (needs firms)               |
 | 4 | `goods_market` | agents buy goods, prices adjust      | `transfer` only              | needs-driven purchasing, pricing  |
 | 5 | `consume`      | goods consumed toward needs          | none                         | needs fulfillment                 |
-| 6 | `invest`       | expand capacity / take profit        | `transfer` only              | firm investment                   |
+| 6 | `invest`       | take profit / found & liquidate firms (capacity expansion still TODO) | `transfer` only              | firm investment                   |
 | 7 | `sinks`        | degradation, imports                 | `burn`, `transfer`→External  | demurrage, external purchases     |
 | 8 | `mint_phase`   | new money from reserve               | `mint` only                  | mint job, gold backing cap        |
 | 9 | *audit*        | conservation check                   | read-only                    | never gains behavior              |

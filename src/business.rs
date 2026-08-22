@@ -37,6 +37,15 @@ pub struct Business {
     /// Account key in [`Accounts`](crate::money::Accounts), allocated by
     /// `World::create_business` from the shared agent-id counter.
     pub id: AgentId,
+    /// The living agent who owns this business (firm-lifecycle spec) —
+    /// required, never optional: an ownerless firm is an undrainable
+    /// sink, the exact coffer pathology the phase-6 draw exists to cure.
+    /// Strictly distinct from `House.owners` (real-estate bookkeeping,
+    /// engaged by no rule). Written only at creation; validated by
+    /// `create_business`. The always-living invariant completes when
+    /// pack 2's forced liquidation lands in `remove_agent`; until then
+    /// the phase-6 draw carries a specified skip for a dangling owner.
+    pub owner: AgentId,
     /// The one good this business produces and sells (v1: single-product,
     /// single-node). Production chains are a future spec.
     pub product: Good,
@@ -105,6 +114,7 @@ mod tests {
         );
         let business = Business {
             id: AgentId(42),
+            owner: AgentId(7),
             product: Good::Food,
             price: Money::new(1),
             stock: 0,
@@ -138,6 +148,7 @@ mod tests {
         );
         let business = Business {
             id: AgentId(42),
+            owner: AgentId(7),
             product: Good::Food,
             price: Money::new(1),
             stock: 0,
@@ -148,6 +159,7 @@ mod tests {
         assert_eq!(business.wage_bill(), Money::new(59));
         let empty = Business {
             id: AgentId(43),
+            owner: AgentId(7),
             product: Good::Luxury,
             price: Money::new(5),
             stock: 0,
@@ -161,6 +173,7 @@ mod tests {
     fn owed_total_sums_the_arrears_ledger() {
         let mut business = Business {
             id: AgentId(42),
+            owner: AgentId(7),
             product: Good::Food,
             price: Money::new(1),
             stock: 0,
