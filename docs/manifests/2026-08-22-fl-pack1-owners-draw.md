@@ -147,8 +147,17 @@ in roster and inspect.
   are the only diffs since.
 - **2026-08-22** — **items 1–3 land** (one commit; the compile gate
   forces the widening + reorder + draw together: `owner` unread until
-  the draw exists). The compiler enumerated 27 forced call sites (the
-  spec's ~29 counted two inside since-shared fixture helpers); one
+  the draw exists). The compiler enumerated 29 forced call sites
+  (worldgen ×2, world.rs ×15, sim.rs ×12 — exactly the spec's estimate
+  and this manifest's arrival table). *(Corrected 2026-08-22 by the
+  post-pack-1 doc-accuracy review: this line first read "27 forced call
+  sites (the spec's ~29 counted two inside since-shared fixture
+  helpers)". Both halves were wrong — `a44385e` removes 29
+  `create_business(` call lines, none of them the definition, and the
+  two helper-internal sites are single forced lines already inside that
+  29, not double-counts. The review's own first pass propagated the 27
+  into the container manifest and the spec before re-measuring caught
+  it.)*; one
   arrival-test assertion (`world.agents.is_empty()` after a stalled
   pull) re-pinned to "only the fixture's landlord" — labor-test owners
   are spawned as inert on-premises landlords (workplace set, no role:
@@ -226,10 +235,10 @@ in roster and inspect.
     Curtain the quit actually fires FIRST, so "worker churn fires
     first" fails exactly where closure matters. *(Corrected
     2026-08-22 by the post-pack-1 doc-accuracy review: this entry and
-    the container's close entry both first read "0–3 ticks later",
-    which the tick values printed beside it do not support — the
-    spread is −1..+1, which strengthens the conclusion.)* Pack 2 must either make the trigger
-    magnitude-aware (persistence counted only above an arrears level —
+    the container's close entry both first put the spread at "0–3"
+    ticks, which the tick values printed beside it do not support — the
+    spread is −1..+1, which strengthens the conclusion.)* Pack 2 must
+    either make the trigger magnitude-aware (persistence counted only above an arrears level —
     the healthy rolling debt and frozen ~4-wages-per-quitter debt are
     separable by size per worker, not by total) or set the threshold
     above the measured 73 and accept slow shutters — measured options,

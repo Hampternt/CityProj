@@ -76,9 +76,9 @@ Item manifest: [2026-08-22-fl-pack1-owners-draw.md](2026-08-22-fl-pack1-owners-d
 (DONE 2026-08-22; 155 → 160 tests; the re-measured baseline and the
 pack-2 trigger-design handoff live in its ledger).
 
-`Business.owner` + the widened, owner-validating `create_business` (27
-forced call sites — the spec's pre-execution ~29 counted two inside
-since-shared fixture helpers); the worldgen reorder seeding each venue's
+`Business.owner` + the widened, owner-validating `create_business` (29
+forced call sites — worldgen ×2, world.rs ×15, sim.rs ×12; the spec's
+estimate was exact); the worldgen reorder seeding each venue's
 first worker as owner-operator (alice/ed/ivan/karl/marco/otto) with the
 id-pin migration and the per-metal totals asserted unchanged; the phase-6
 direct draw pass (`draw_amount`, `DRAW_BUFFER_BILLS`, the dangling-owner
@@ -158,7 +158,8 @@ follow-up whatever pack 1 re-measures.
   purpose-text edit; three packs. Owner's "start pack 1" is the go on
   pack 1's items — execution authorized for pack 1 only.
 - **2026-08-22** — **pack 1 closes** (commits a44385e..close): the owner
-  lands everywhere (widened `create_business`, 27 forced sites, the
+  lands everywhere (widened `create_business`, 29 forced sites [read 27
+  until the 2026-08-22 re-measure below], the
   worldgen reorder with owner-operators pinned, per-metal totals
   unchanged), phase 6 wakes with the draw (`draw_amount`, the
   dangling-owner interim skip, `Event::ProfitDrawn`, Amendment 18
@@ -171,8 +172,9 @@ follow-up whatever pack 1 re-measures.
   cushion the draw removes), and the **pack-2 trigger datum** (post-shock
   insolvency streaks 57–73 ticks at still-operating venues; a bare
   6-tick persistence trigger's head start over the quit line is −1 to
-  +1 ticks — at one venue the quit fires first — `CLOSE_INSOLVENT_TICKS = 6` cannot ship as-is; the trigger
-  goes magnitude-aware or sits above 73, pack 2's manifest rules it).
+  +1 ticks — at one venue the quit fires first — so
+  `CLOSE_INSOLVENT_TICKS = 6` cannot ship as-is; the trigger goes
+  magnitude-aware or sits above 73, pack 2's manifest rules it).
   3-lens close review: zero blockers; two ledger-honesty MAJORs and six
   MINORs, all applied. Close gate quoted in the pack manifest:
   `VERIFY OK` 160 passed. Next: pack 2 item manifest, on your go.
@@ -198,19 +200,41 @@ follow-up whatever pack 1 re-measures.
     unchanged — deliberately, since it is measured-in and pack 1 is
     closed; the gloss was corrected in the spec (as an erratum), in
     sim.rs, and in INVENTORY.
+
   Prose corrections: this container's Status header (stale at PLANNED /
-  "pack 1 authorized" against its own DONE pack section and ledger) and
-  its "~29 call sites" (superseded by the measured 27); the "0–3 ticks"
-  head-start range in BOTH ledgers (the tick values printed beside it
-  give −1..+1, with one venue's quit firing before the crossing —
-  pack 2 designs its trigger from this, so the ordering matters);
-  INVENTORY's frame order (the money summary renders above the feed,
-  not below) and its unconditional "every business belongs to a named
-  resident" (the pack-1 interim tolerates a dangling owner until forced
-  liquidation lands); CLAUDE.md's "stubbed node modifier layer" (there
-  is no stub — nothing in code, and the parent spec's "hook exists" is
-  intent) and its two owner-machine references (unreachable from
-  cloud/remote sessions — the shipped manifests are now named as the
-  fallback templates). Post-fix verification: a second adversarial pass
-  over every edit (each fix lands, none overshoots, no new
-  contradiction introduced) plus the gate.
+  "pack 1 authorized" against its own DONE pack section and ledger);
+  the "0–3 ticks" head-start range in BOTH ledgers (the tick values
+  printed beside it give −1..+1, with one venue's quit firing before
+  the crossing — pack 2 designs its trigger from this, so the ordering
+  matters); INVENTORY's frame order (the money summary renders above
+  the feed, not below) and its unconditional "every business belongs to
+  a named resident" (the pack-1 interim tolerates a dangling owner
+  until forced liquidation lands); CLAUDE.md's "stubbed node modifier
+  layer" (there is no stub — nothing in code, and the parent spec's
+  "hook exists" is intent) and its two owner-machine references
+  (unreachable from cloud/remote sessions — the shipped manifests are
+  now named as the fallback templates).
+
+  Eyeballed, not just compiled — the roster change is shell behavior no
+  test covers, so it was read in `cargo run` at town scale:
+  `alice — labourer at Greenrow Farm · owns Greenrow Farm · g:120 s:10
+  c:20 · food 10 · entertainment 5 · luxury 2`. Gate after the edits:
+  `VERIFY OK — fmt, clippy, build, tests all clean.` 160 passed.
+
+  **Post-fix audit — and a regression it caught in this very entry.**
+  A second four-lens adversarial pass over the applied diff confirmed 6
+  defects (15 killed), one of them MAJOR *and self-inflicted*: the first
+  pass "corrected" the container's accurate "~29 call sites" to 27 and
+  stamped it "the measured 27". The count is **29** (worldgen ×2,
+  world.rs ×15, sim.rs ×12; `a44385e` removes 29 `create_business(`
+  call lines, none of them the definition) — the 27 came from the
+  pack-1 ledger, which had it wrong, and this review propagated the
+  error into two more files including a signed spec before re-measuring
+  from git caught it. All three sites now read 29, and the pack-1
+  ledger carries a dated in-place correction. The other five (a
+  misquotation inside a correction note, a lazy-continuation markdown
+  bug that reparented this paragraph under the sub-bullet above, three
+  unwrapped lines, and the missing eyeball record now supplied) are
+  fixed here. Lesson recorded: a doc-accuracy pass is exactly as
+  fallible as the docs it audits — the numbers it "corrects" need the
+  same primary-source measurement as the ones it flags.

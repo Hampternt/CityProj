@@ -582,7 +582,7 @@ the id-migration mechanics of the worldgen reorder.
 - `src/world.rs` — `create_business` signature widens (+`owner`,
   validated first): ~29 call sites across worldgen and tests (several
   inside shared fixture helpers), all compile-time forced. *(Measured at
-  pack 1: 27 — this estimate counted two inside since-shared helpers.)* `remove_agent`
+  pack 1: exactly 29 — the estimate was right.)* `remove_agent`
   gains the forced-liquidation step and the receipt return (behavior
   change: an owner's departure now moves business money — pinned by the
   fixture tests). `close_business` returns the `ClosureReceipt`.
