@@ -467,7 +467,13 @@ mod tests {
                         }
                     }
                     Event::Quit { .. } => quits += 1,
-                    Event::ProfitDrawn { business, .. } => *drew.entry(*business).or_default() += 1,
+                    // t >= 20 like criterion 5: the t1–2 boot burst (the
+                    // seeded-wallet spending wave flowing through the
+                    // coffers) would satisfy an unguarded tally even for
+                    // a draw that broke after warm-up.
+                    Event::ProfitDrawn { business, .. } if t >= 20 => {
+                        *drew.entry(*business).or_default() += 1
+                    }
                     _ => {}
                 }
             }
@@ -538,9 +544,10 @@ mod tests {
         assert_eq!(quits, 0, "the tuned town fired {quits} spurious quits");
 
         // 6. (firm-lifecycle pack 1) profit flows: every venue drew at
-        //    least once across the soak — coffers recirculate to owners
-        //    instead of pooling (the fuse cure landed; magnitudes in the
-        //    pack-1 ledger).
+        //    least once AFTER warm-up — coffers recirculate to owners in
+        //    steady state instead of pooling (the fuse cure landed;
+        //    magnitudes in the pack-1 ledger; measured minimum ~4
+        //    post-warm-up draws at Longacre).
         for (house, business) in world.businesses() {
             assert!(
                 drew.get(&business.id).copied().unwrap_or(0) > 0,
@@ -654,12 +661,16 @@ mod tests {
     }
 
     /// The pack-4 soak (town-colony spec): 200 ticks from `town_world`
-    /// with every mechanic live. The measured breathing chain: the
+    /// with every mechanic live. The measured breathing chain
+    /// (re-measured under the firm-lifecycle draw — pack-1 ledger): the
     /// unemployed dis-save and the destitute leave (~t127 on, every
-    /// metal swept); the demand shock bites a venue's payroll; quits
-    /// open slots; the K-aged vacancy pulls grubstaked immigrants
-    /// (~t182 on) who are hired within a tick or two. The audit runs
-    /// inside every `tick`, so any §8 break panics the soak.
+    /// metal swept); the demand shock bites venue payrolls — earlier
+    /// and broader under the draw, since the coffer cushions that used
+    /// to absorb it are drawn down by design (quit churn from ~t134,
+    /// three venues, was ~t174 at one); quits open slots; the K-aged
+    /// vacancy pulls grubstaked immigrants (~t175 on, was ~t182) who
+    /// are hired within a tick or two. The audit runs inside every
+    /// `tick`, so any §8 break panics the soak.
     #[test]
     fn town_soak_population_moves_both_directions() {
         use crate::sim::{self, Event};

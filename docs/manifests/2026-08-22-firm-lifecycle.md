@@ -71,7 +71,9 @@ pricing, terrain, physical goods movement.
 
 ### Pack 1 — Owners and the draw
 
-Item manifest: [2026-08-22-fl-pack1-owners-draw.md](2026-08-22-fl-pack1-owners-draw.md).
+Item manifest: [2026-08-22-fl-pack1-owners-draw.md](2026-08-22-fl-pack1-owners-draw.md)
+(DONE 2026-08-22; 155 → 160 tests; the re-measured baseline and the
+pack-2 trigger-design handoff live in its ledger).
 
 `Business.owner` + the widened, owner-validating `create_business` (~29
 call sites, compile-forced); the worldgen reorder seeding each venue's
@@ -153,3 +155,22 @@ follow-up whatever pack 1 re-measures.
   adopted): unemployed-only founders; Amendment 18 spent on the
   purpose-text edit; three packs. Owner's "start pack 1" is the go on
   pack 1's items — execution authorized for pack 1 only.
+- **2026-08-22** — **pack 1 closes** (commits a44385e..close): the owner
+  lands everywhere (widened `create_business`, 27 forced sites, the
+  worldgen reorder with owner-operators pinned, per-metal totals
+  unchanged), phase 6 wakes with the draw (`draw_amount`, the
+  dangling-owner interim skip, `Event::ProfitDrawn`, Amendment 18
+  executed), the shell knows owners, and the re-measure sets the new
+  baseline: **the sink is dead** (coffer ≤ 3 bills + owed, now soak
+  criteria 5–6), **the fuse unmoved** (first departure t127, `NEAR_FULL`
+  21 — the cure is capital, not demand: owner income pools behind
+  `target_days` caps, the recorded expand-capacity seam), **quit churn
+  earlier and broader** (t174→t134, 2→3 venues, 11→26 quits — the
+  cushion the draw removes), and the **pack-2 trigger datum** (post-shock
+  insolvency streaks 57–73 ticks at still-operating venues; a bare
+  6-tick persistence trigger's head start over the quit line is 0–3
+  ticks — `CLOSE_INSOLVENT_TICKS = 6` cannot ship as-is; the trigger
+  goes magnitude-aware or sits above 73, pack 2's manifest rules it).
+  3-lens close review: zero blockers; two ledger-honesty MAJORs and six
+  MINORs, all applied. Close gate quoted in the pack manifest:
+  `VERIFY OK` 160 passed. Next: pack 2 item manifest, on your go.

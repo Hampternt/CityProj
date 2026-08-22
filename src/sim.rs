@@ -2029,7 +2029,12 @@ mod tests {
         // Inert owner-on-premises: workplace set, employed_role None —
         // both labor decides skip them (employed ⇒ no application,
         // roleless ⇒ no quit), `staff_in_role` ignores them, and payroll
-        // accrues them nothing — so the slot stays genuinely open.
+        // accrues them nothing — so the slot stays genuinely open. ONE
+        // caveat: produce counts staff via the workplace-based
+        // `employees_of`, so full-tick tests on this fixture produce at
+        // staff+1 — don't assert stock or Produced units here without
+        // accounting for it. (Off-premises is not an option: an
+        // unemployed landlord would apply for the open slot.)
         let landlord = world.spawn_agent("landlord", None, Some(house));
         let mut roles = HashMap::new();
         roles.insert(

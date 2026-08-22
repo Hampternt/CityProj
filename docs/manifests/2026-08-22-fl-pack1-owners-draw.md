@@ -1,6 +1,9 @@
 # Firm lifecycle — Pack 1: Owners and the draw
 
-**Status:** IN PROGRESS 2026-08-22.
+**Status:** DONE 2026-08-22 — all items landed, measured, and reviewed;
+close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 160
+passed (155 on arrival, +5). The re-measured baseline and the pack-2
+trigger-design handoff are recorded in the ledger below.
 **Container:** [2026-08-22-firm-lifecycle.md](2026-08-22-firm-lifecycle.md)
 **Spec contracts executed here:** `Business.owner`, the widened
 `World::create_business`, `draw_amount` + the phase-6 draw pass (with the
@@ -116,7 +119,7 @@ in roster and inspect.
   quoted in the ledger as the packs-2/3 baseline. Done: all four soaks
   green in `cargo test`; ledger carries the new baseline. Touches:
   src/engine/worldgen.rs, src/sim.rs (constants only, if retuned).
-- [ ] **5. Pack close.** `./scripts/verify.sh` green; 3-lens close review
+- [x] **5. Pack close.** `./scripts/verify.sh` green; 3-lens close review
   (spec-contract fidelity / §8 invariants / economy quality); ledger
   quotes real output + new test count; container entry updated; CLAUDE.md
   code-state section (phase 6 no longer a stub; Business gains owner);
@@ -157,48 +160,101 @@ in roster and inspect.
   asserted unchanged (gold 52148 / silver 300 / copper 600). Amendment
   18 executed in the 07-02 spec. New tests: owner-validation-first
   suite, the `draw_amount` unit suite, the draw pass + zero-draw
-  silence, the dangling-owner skip. Gates: `CHECK OK — fmt, clippy,
-  build clean.`; full suite 160 passed, 0 failed.
+  silence, the dangling-owner skip. Item 3 eyeballed at `cargo run`
+  (close-review-demanded record): the header reads
+  `pop 30 · employed 16 · unemployed 14 · businesses 6`; every venue
+  line names its owner (`sells food @2 · owner alice · …`); the feed
+  shows real draws — "Greenrow Farm paid alice 820g profit", "Karat &
+  Co paid marco 122g profit" (the t1–2 boot burst, see the re-measure
+  entry). Correction to item 2's wording: no `trace` module exists —
+  the exhaustive matches `ProfitDrawn` actually forced are
+  `update_history`, `render_feed`, and `render_event` in game_loop.rs
+  (pack 2's `Closed`/`LaidOff` checklist should name those three).
+  Gates: `CHECK OK — fmt, clippy, build clean.`; full suite 160
+  passed, 0 failed.
 - **2026-08-22** — **item 4: the re-measure (200-tick probe, run with
   --nocapture, probe then removed; permanent criteria 5–6 added to the
   100-tick soak).** THE NEW BASELINE packs 2–3 cite:
-  - **The sink is dead**: every coffer ≤ 3 bills + owed from t20
-    through t200 (now criterion 5, asserted every tick from 20).
-    Per-venue 200-tick draw totals: Greenrow 6951g, Longacre 3259g,
-    Gilt Curtain 3064g, Brass Bell 2282g, Karat 3676g, Silverthread
-    3080g — ~22.3k gold recirculated where coffers used to absorb
-    ~90g/tick. Every venue draws inside the 100-tick soak
-    (criterion 6).
+  - **The sink is dead**: every coffer ≤ 3 bills + owed — measured
+    through t200 by the probe; permanently asserted t20–t100 as
+    criterion 5 in the 100-tick soak. Per-venue 200-tick draw totals:
+    Greenrow 6951g, Longacre 3259g, Gilt Curtain 3064g, Brass Bell
+    2282g, Karat 3676g, Silverthread 3080g — ~22.3k gold recirculated
+    where coffers used to absorb ~90g/tick. Of that, ~2.4k is the t1–2
+    BOOT BURST (the seeded-wallet spending wave flowing straight
+    through coffers to owners — recycled seed, not the cured
+    steady-state sink); every soak criterion excludes that window, and
+    criterion 6 (every venue draws) counts from t20 for the same
+    reason (measured minimum: ~4 post-warm-up draws, Longacre).
   - **The fuse barely moved — the cure is capital, not demand**: first
     departure t127 (UNCHANGED from pack 4 — the caps analysis
     confirmed: owner income pools, the unemployed dis-save exactly as
-    before); first arrival t175 (was t182 — thinner coffers bring the
-    demand shock slightly earlier); min pop 25, final pop 26,
+    before); first arrival t175 (was t182); min pop 25, final pop 26,
     population still moves both directions; `NEAR_FULL` UNCHANGED at
     21 (max employed 21, held at t50). No constant retuned;
     `UNEMPLOYED_SAVINGS` band untouched; `DRAW_BUFFER_BILLS` FROZEN
     at 3 (healthy-window max sold-drought 2, one 1-tick arrears
     flicker of 11g at Longacre — three bills carry every measured
     drought).
+  - **The draw's largest behavioral change (close-review-measured —
+    this entry originally missed it): post-shock quit churn advanced
+    ~40 ticks and broadened.** Pre-draw the 200-tick town fires 11
+    quits at 2 venues from t174; under the draw, 26 quits at 3 venues
+    from t134 — both Entertainment venues now churn — because the
+    coffer cushions that used to absorb the demand shock (pre-draw
+    Gilt Curtain 719g, Karat 3652g at t200) are drawn down by design.
+    The qualitative soak criteria all still hold; the texture is
+    earlier and broader churn, recorded here as the baseline pack 2's
+    trigger tuning collides with directly.
   - **HANDED TO PACK 2 (trigger-design datum, measured here so its
-    manifest starts from fact):** post-fuse, insolvency persistence is
-    the NORMAL state of demand-losing venues — hand-to-mouth under the
+    manifest starts from fact; wording corrected by the close review's
+    own re-derivation):** post-fuse, insolvency persistence is the
+    NORMAL state of demand-losing venues — hand-to-mouth under the
     draw cap, max consecutive owed-ticks Longacre 73 / Brass Bell 60 /
     Gilt Curtain 57, peak owed_total 659g/1033g/569g (4.7–7.2 bills) —
-    while the t≤100 window is clean (max streak 1, peak 11g). The
-    spec's `CLOSE_INSOLVENT_TICKS = 6` provisional CANNOT survive
-    contact with the 200-tick town: a bare persistence trigger would
-    shutter three solvent venues around t130–140. Pack 2 must either
-    make the trigger magnitude-aware (persistence counted only above
-    an arrears level — the healthy rolling debt and a corpse's frozen
-    ~4-wages-per-quitter debt are separable by size per worker, not by
-    total) or set the threshold above the measured 73 and accept slow
-    shutters — measured options, its manifest's call, likely a spec
-    erratum either way. The healthy-town control pin as re-drafted
-    ("never reaches the threshold through the 100-tick soak, flicker
-    tolerated") holds against these numbers.
+    while the t≤100 window is clean (max streak 1, peak 11g). These
+    are not "solvent venues": all three are still-operating,
+    churn-surviving, and persistently insolvent — each ends t200
+    carrying frozen, unpayable ex-worker arrears (Longacre 509g over 5
+    entries, Brass Bell 889g over 9, Gilt Curtain 506g over 5). The
+    spec's `CLOSE_INSOLVENT_TICKS = 6` provisional CANNOT ship as-is,
+    and the review quantified how tight the race really is: the streak
+    crosses 6 at t133 (Longacre), t146 (Brass Bell), t149 (Gilt
+    Curtain), and each venue's FIRST QUIT lands 0–3 ticks later
+    (t134/t146/t148) — a bare persistence trigger's head start over
+    the quit line is nearly zero, so "worker churn fires first" fails
+    exactly where closure matters. Pack 2 must either make the trigger
+    magnitude-aware (persistence counted only above an arrears level —
+    the healthy rolling debt and frozen ~4-wages-per-quitter debt are
+    separable by size per worker, not by total) or set the threshold
+    above the measured 73 and accept slow shutters — measured options,
+    its manifest's call, likely a spec erratum either way. The
+    healthy-town control pin as re-drafted ("never reaches the
+    threshold through the 100-tick soak, flicker tolerated") holds
+    against these numbers.
   - Owner wallets at t200: alice 8446g, ed 4234g, ivan 3572g, karl
     2922g, marco 3373g, otto 2978g — the pooled founding capital
     pack 3 spends.
   Gates: full suite green with criteria 5–6 live; `VERIFY OK — fmt,
   clippy, build, tests all clean.` 160 passed, 0 failed.
+- **2026-08-22** — **pack closes.** 3-lens close review (spec-contract
+  fidelity / §8 invariants / economy quality): ZERO blockers; two MAJORs,
+  both ledger-honesty — the item-3 eyeball record was missing (now
+  above), and this ledger had missed the draw's largest behavioral
+  change, which the economy lens re-derived from scratch (the quit-churn
+  advance t174→t134, 2→3 venues, 11→26 quits — now its own bullet, and
+  the "three solvent venues" handoff wording corrected to
+  churn-surviving/persistently-insolvent with the measured streak-vs-quit
+  race quantified). Applied MINORs: criterion 6 warm-up-guarded (t≥20 —
+  the boot burst satisfied the unguarded tally vacuously), the stale
+  ~t182 soak comment → ~t175 with the churn note, the criterion-5
+  asserted-span wording (t20–t100 permanent; t200 by probe), the
+  boot-burst disclosure (~2.4k of the 22.3k), the `open_slot_business`
+  produce-counts-the-landlord caveat, and the no-trace-module
+  correction. Reviewers verified: every §8 movement rides `World::pay`,
+  the audit green across draws, the skip cannot mask a real error,
+  determinism holds (houses-order pass, no `HashMap` order reaches
+  behavior), Amendment 18's money-op column untouched, zero pack-2/3
+  leakage. Close gate: `VERIFY OK — fmt, clippy, build, tests all
+  clean.` 160 passed, 0 failed. Next: pack 2 item manifest, on your go —
+  starting from this ledger's trigger-design baseline.
