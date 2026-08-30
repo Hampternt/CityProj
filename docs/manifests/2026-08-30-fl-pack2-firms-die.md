@@ -269,7 +269,7 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   moves only in `invest`; increments while owed, resets on a clear tick).
   Done: `./scripts/check.sh` clean; `cargo test sim:: business::` quoted.
   Touches: src/business.rs, src/sim.rs, src/world.rs.
-- [ ] **2. `close_business` + the `ClosureReceipt`.** Per D3 and D5, in the
+- [x] **2. `close_business` + the `ClosureReceipt`.** Per D3 and D5, in the
   contract's exact order: validate (`UnknownHouse`, then `NoBusinessHere`)
   → collect-and-sort the ledger, settle `min(remaining coffer, owed)`
   ascending → `owed_to.clear()` (one call; removes zero-amount entries by

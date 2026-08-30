@@ -151,12 +151,53 @@ pub enum WorldError {
     UnknownHouse(HouseId),
     /// The house already hosts a business — at most one per house (v1).
     BusinessAlreadyExists(HouseId),
+    /// The house exists but hosts no business — the structural inverse of
+    /// [`BusinessAlreadyExists`](WorldError::BusinessAlreadyExists).
+    /// Refused by `close_business`.
+    #[allow(dead_code)] // constructed once phase 6 closes firms (pack-2 item 3)
+    NoBusinessHere(HouseId),
     /// Not a vacant residence: it has occupants or hosts a business —
     /// v1's entire vacancy rule (ownership plays no part). Refused by
     /// `immigrate`.
     HouseNotVacant(HouseId),
     /// The money core refused; wrapped unchanged.
     Money(MoneyError),
+}
+
+/// What one `close_business` actually moved, step by step (firm-lifecycle
+/// spec, pack 2). The **event-measurement mechanism**: balance deltas
+/// measured around the *whole* command cannot attribute flows that share
+/// a wallet, and the canonical case is the owner-as-creditor — every
+/// shipped owner is their venue's first seeded worker, so a dying firm
+/// settles its owner in step 1 AND sweeps them the residual in step 3,
+/// leaving `Settled` and `Closed.proceeds` underdetermined from outside.
+/// Each amount here is measured around its own internal `pay`; callers
+/// emit events FROM the receipt, never by re-deriving.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // no caller until phase 6 closes firms (pack-2 item 3)
+pub struct ClosureReceipt {
+    /// The dead firm's account id. Resolves to nothing once the command
+    /// returns — `is_known_account` scans the live `businesses()` set.
+    pub business: AgentId,
+    /// The freed house. Carried because `business` no longer resolves,
+    /// and because the house is what the shell can still name.
+    pub house: HouseId,
+    /// Who took the residual. Alive at every call site's emission point,
+    /// so the caller supplies the display name (no `String` here).
+    pub owner: AgentId,
+    /// Step 1: what each creditor was actually paid, ascending `AgentId`.
+    /// POSITIVE amounts only — the receipt means "what moved" (the
+    /// `apply_sinks_intent` `> ZERO` filter, applied at source). Written
+    /// -off remainders are silent: the preceding `PayrollShort`s already
+    /// told that story.
+    pub settlements: Vec<(AgentId, Money)>,
+    /// Step 2: everyone whose workplace this was, ascending `AgentId`
+    /// (`employees_of` order). They re-enter the applicant pool next tick.
+    pub laid_off: Vec<AgentId>,
+    /// Step 3: the per-metal residual swept to the owner — every
+    /// `Metal::ALL` entry in that order, **zeros included** (the
+    /// `Departed { took }` visible-zeros precedent, D3).
+    pub residual: Vec<(Metal, Money)>,
 }
 
 impl From<MoneyError> for WorldError {
@@ -341,6 +382,112 @@ impl World {
             .filter(|agent| agent.workplace == Some(house))
             .map(|agent| agent.id)
             .collect()
+    }
+
+    /// Liquidates the business at `house` — the closure command
+    /// (firm-lifecycle pack 2). Validates first: the house must exist
+    /// (`UnknownHouse`) and host a business (`NoBusinessHere`); `Err`
+    /// means nothing changed. Then, in order:
+    ///
+    /// 1. **Creditor settlement** — every `owed_to` entry, current AND
+    ///    former workers, keys explicitly sorted ascending `AgentId`
+    ///    (the ledger is a `HashMap`; the no-RNG guarantee is only as
+    ///    good as pinned iteration), each paid `min(remaining gold
+    ///    coffer, owed)`. Remainders are written off and the whole
+    ///    ledger is cleared — zero-amount entries included, since
+    ///    `pay_wages` inserts unconditionally and no entry may keep
+    ///    naming a dead firm.
+    /// 2. **Layoffs** — `vacate_workplace` for every `employees_of`,
+    ///    clearing `workplace` and `employed_role` together. They
+    ///    re-enter the applicant pool next tick.
+    /// 3. **Residual sweep** — every `Metal::ALL` balance to the
+    ///    **owner's** wallet. Liquidation proceeds belong to a living
+    ///    resident and stay in-node; `External` is the seam for money
+    ///    *leaving* the node, which this is not. Completeness is proven
+    ///    per-account by no-orphan assertions on the dead id — the
+    ///    totals-only audit cannot see a conservation-legal orphan.
+    /// 4. **Detach** — `house.business = None`, LAST, and mechanically
+    ///    so: [`is_known_account`](World::is_known_account) answers "is
+    ///    this a business id?" by scanning the live `businesses()` set,
+    ///    so detaching is a capability revocation — the instant it runs,
+    ///    every `pay` naming that id refuses and the `.expect()` idiom
+    ///    would panic. Afterwards the house — zero occupants, hosting
+    ///    nothing — satisfies the `immigrate` vacancy rule verbatim:
+    ///    closure manufactures landing pads by design.
+    ///
+    /// Atomic by construction after validation: every amount is
+    /// min-bounded by a live balance and both ids are known. The firm's
+    /// `stock` dies with its `Business` (pack-2 decision D6: the sim's
+    /// first goods sink — no invariant is touched, since goods carry no
+    /// conservation rule, and the physical-goods spec inherits the
+    /// question). Steady-state caller: phase 6's closure pass. Forced
+    /// caller: [`remove_agent`](World::remove_agent) (Amendment 19).
+    #[allow(dead_code)] // no caller until phase 6 closes firms (pack-2 item 3)
+    pub fn close_business(&mut self, house: HouseId) -> Result<ClosureReceipt, WorldError> {
+        let Some(existing) = self.house(house) else {
+            return Err(WorldError::UnknownHouse(house));
+        };
+        let Some(business) = existing.business.as_ref() else {
+            return Err(WorldError::NoBusinessHere(house));
+        };
+        let business_id = business.id;
+        let owner = business.owner;
+        // Collect the ledger out before any `pay`: holding a `&Business`
+        // across `self.pay` is E0502 (remove_agent's shape, mirrored).
+        // `AgentId` derives no `Ord`, so sort on the inner u32.
+        let mut debts: Vec<(AgentId, Money)> = business
+            .owed_to
+            .iter()
+            .map(|(&creditor, &owed)| (creditor, owed))
+            .collect();
+        debts.sort_by_key(|(creditor, _)| creditor.0);
+
+        let mut settlements = Vec::new();
+        for (creditor, owed) in debts {
+            let settlement = self.accounts.balance_of(business_id, Metal::Gold).min(owed);
+            if settlement > Money::ZERO {
+                self.pay(business_id, creditor, Metal::Gold, settlement)
+                    .expect("min-bounded by the live coffer, both ids validated");
+                settlements.push((creditor, settlement));
+            }
+        }
+        // Remainders written off; one clear also strips the zero-amount
+        // entries the settlement filter above never sees.
+        self.house_mut(house)
+            .expect("existence checked above")
+            .business
+            .as_mut()
+            .expect("existence checked above")
+            .owed_to
+            .clear();
+
+        let laid_off = self.employees_of(house);
+        for worker in &laid_off {
+            self.vacate_workplace(*worker)
+                .expect("collected from employees_of");
+        }
+
+        let mut residual = Vec::new();
+        for metal in Metal::ALL {
+            let balance = self.accounts.balance_of(business_id, metal);
+            residual.push((metal, balance)); // zeros included, D3
+            if balance > Money::ZERO {
+                self.pay(business_id, owner, metal, balance)
+                    .expect("min-bounded by the live balance, both ids validated");
+            }
+        }
+
+        self.house_mut(house)
+            .expect("existence checked above")
+            .business = None; // LAST — retires the account id
+        Ok(ClosureReceipt {
+            business: business_id,
+            house,
+            owner,
+            settlements,
+            laid_off,
+            residual,
+        })
     }
 
     /// Removes `agent` from the world — the emigration command
@@ -903,6 +1050,121 @@ mod tests {
             Money::new(5)
         );
         assert!(world.agent(leaver).is_none());
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn close_business_refuses_unknown_and_business_less_houses_changing_nothing() {
+        let mut world = World::new();
+        let empty = world.add_house("Empty", vec![]);
+        assert_eq!(
+            world.close_business(HouseId(99)),
+            Err(WorldError::UnknownHouse(HouseId(99)))
+        );
+        assert_eq!(
+            world.close_business(empty),
+            Err(WorldError::NoBusinessHere(empty))
+        );
+        // house checked first, then the business — and nothing moved
+        assert!(world.house(empty).unwrap().business.is_none());
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn close_business_settles_ascending_writes_off_and_sweeps_no_orphans() {
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        // The owner is ALSO a creditor — the case the ClosureReceipt
+        // exists for: settlement (step 1) and residual (step 3) share one
+        // wallet, so deltas around the whole command cannot attribute
+        // either flow. Spawned first, so they hold the lowest id and
+        // ascending order is observable against the later creditors.
+        let owner = world.spawn_agent("owner", None, Some(shop));
+        let hand = world.spawn_agent("hand", None, Some(shop));
+        let ghost = world.spawn_agent("ghost", None, None); // former worker
+        let business = world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        // 90g coffer against 150g of debt: the first two creditors are
+        // paid in full, the third takes what is left, nothing is negative.
+        world.accounts.mint(business, Metal::Gold, Money::new(90));
+        world.accounts.mint(business, Metal::Silver, Money::new(7));
+        // ...and copper stays zero, so the receipt's visible-zero shows.
+        {
+            let ledger = &mut world
+                .house_mut(shop)
+                .unwrap()
+                .business
+                .as_mut()
+                .unwrap()
+                .owed_to;
+            ledger.insert(owner, Money::new(40));
+            ledger.insert(hand, Money::new(30));
+            ledger.insert(ghost, Money::new(80));
+            // a zero-amount entry: pay_wages inserts unconditionally, and
+            // no entry may keep naming a dead firm (pack-4 precedent)
+            let stranger = AgentId(404);
+            ledger.insert(stranger, Money::ZERO);
+        }
+
+        let receipt = world.close_business(shop).unwrap();
+
+        // 1. ascending AgentId, positive amounts only, min-bounded
+        assert_eq!(
+            receipt.settlements,
+            vec![
+                (owner, Money::new(40)),
+                (hand, Money::new(30)),
+                (ghost, Money::new(20)), // 90 − 40 − 30: the rest written off
+            ],
+            "settlements must be ascending AgentId with the remainder written off"
+        );
+        // 2. everyone on the premises is off it, role cleared with it
+        assert_eq!(receipt.laid_off, vec![owner, hand]);
+        for worker in [owner, hand] {
+            let person = world.agent(worker).unwrap();
+            assert_eq!(person.workplace, None);
+            assert_eq!(person.employed_role, None);
+        }
+        // 3. every metal swept, zeros listed (D3 visible-zeros)
+        assert_eq!(
+            receipt.residual,
+            vec![
+                (Metal::Gold, Money::ZERO), // the coffer went to creditors
+                (Metal::Silver, Money::new(7)),
+                (Metal::Copper, Money::ZERO),
+            ]
+        );
+        // The owner's wallet is settlement PLUS proceeds — never
+        // "proceeds = owner delta", which conflates the two flows.
+        assert_eq!(
+            world.accounts.balance_of(owner, Metal::Gold),
+            Money::new(40)
+        );
+        assert_eq!(
+            world.accounts.balance_of(owner, Metal::Silver),
+            Money::new(7)
+        );
+        // 4. detached last, and NO ORPHAN on the dead id, per account —
+        // the totals-only audit cannot see a conservation-legal orphan
+        assert!(world.house(shop).unwrap().business.is_none());
+        for metal in Metal::ALL {
+            assert_eq!(
+                world.accounts.balance_of(business, metal),
+                Money::ZERO,
+                "orphan balance parked on the closed {business:?}"
+            );
+        }
+        // the freed house passes the immigration vacancy predicate
+        // verbatim: closure manufactures landing pads
+        assert!(world.occupants_of(shop).is_empty());
+        let newcomer = world.immigrate("Mara".to_string(), shop).unwrap();
+        assert_eq!(world.agent(newcomer).unwrap().home, Some(shop));
+        // and the retired id refuses money for good
+        assert_eq!(
+            world.pay(world.external_id, business, Metal::Gold, Money::new(1)),
+            Err(WorldError::UnknownAgent(business))
+        );
         world.accounts.audit();
     }
 
