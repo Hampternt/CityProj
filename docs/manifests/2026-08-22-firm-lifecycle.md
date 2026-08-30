@@ -2,7 +2,7 @@
 
 **Status:** IN FLIGHT — gate signed 2026-08-22; **pack 1 DONE**
 2026-08-22 (`VERIFY OK`, 160 passed); **pack 2 DONE** 2026-08-30
-(`VERIFY OK`, 168 passed). Pack 3 planned, on the owner's go.
+(`VERIFY OK`, 171 passed). Pack 3 planned, on the owner's go.
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-22-firm-lifecycle-design.md](../superpowers/specs/2026-08-22-firm-lifecycle-design.md)
 (approved 2026-08-22; drafted from a judged three-angle proposal panel —
@@ -96,7 +96,7 @@ visibly plateau at the buffer; owners named in roster and inspect.
 ### Pack 2 — Firms die
 
 Item manifest: [2026-08-30-fl-pack2-firms-die.md](2026-08-30-fl-pack2-firms-die.md)
-(DONE 2026-08-30; 160 → 168 tests; the re-measured baseline and the
+(DONE 2026-08-30; 160 → 171 tests; the re-measured baseline and the
 cascade finding live in its ledger).
 
 `Business.insolvent_ticks` (single writer: phase 6's write-back over the
@@ -248,3 +248,34 @@ follow-up whatever pack 1 re-measures.
   fixed here. Lesson recorded: a doc-accuracy pass is exactly as
   fallible as the docs it audits — the numbers it "corrects" need the
   same primary-source measurement as the ones it flags.
+- **2026-08-30** — **pack 2 closes** (commits 8d3a423..close): firms die.
+  `Business.insolvent_ticks` with the signed predicate and
+  `CLOSE_INSOLVENT_TICKS` retuned 6 → **12** and frozen (the pack-1
+  ledger's either/or dichotomy is recorded as refuted: arrears are
+  bimodal in persistence, so a bare counter separates the modes);
+  `close_business` + the `ClosureReceipt`; the phase-6 closure pass above
+  the draws; forced liquidation in `remove_agent` with Amendment 19 —
+  and the back-fill of Amendments 16–17, which had been recorded in the
+  07-02 header since 2026-08-21 but never applied to its table cells;
+  the Arrive arrears exclusion; the shell's closure narration, distress
+  display and freed-house view. The derivation was exact — closures
+  predicted at t140/t153/t156 landed on those ticks.
+  **THE FINDING PACK 3 MUST ANSWER: the closure cascade is total.**
+  Every venue dies (t140/t153/t156/t171/t172, the last at t201, one tick
+  past the soak horizon), leaving the town with no businesses at
+  population 4. Three of the six were already terminally insolvent under
+  pack 1 and merely met a threshold; **Karat & Co, Silverthread and
+  Greenrow were healthy — zero arrears across 200 ticks — and died of
+  the cascade.** Not a mistuning (no threshold that separates the two
+  arrears modes avoids it, and one above the measured 73-tick streaks
+  would make closure soak-invisible); it is the cost of the signed
+  "death before birth" sequence, and founding is its designed cure.
+  Flagged for owner acknowledgement: decision D8 accepted this shape in
+  advance, but the measured magnitude is far larger than D8 assumed.
+  Separately, the spec's NAMED re-cut proved unnecessary — the 200-tick
+  arrival criterion holds on pack-2 code, so nothing was weakened and
+  nothing moved to pack 3; recorded as an erratum. Five-lens close
+  review: zero blockers; 29 findings raised, 9 refuted, 20 applied —
+  both MAJORs were this ledger understating the cascade and
+  mis-attributing it. Close gate: `VERIFY OK — fmt, clippy, build, tests
+  all clean.` 171 passed, 0 failed. Next: pack 3, on your go.

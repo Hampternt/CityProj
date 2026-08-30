@@ -1,8 +1,12 @@
 # Firm lifecycle — Pack 2: Firms die
 
-**Status:** IN PROGRESS — drafted 2026-08-30 from the signed spec's
-Contracts, a fresh 200-tick measurement probe, and a judged four-angle
-design panel on the one genuinely open decision (the closure trigger).
+**Status:** DONE 2026-08-30 — all items landed, measured and reviewed;
+close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 171
+passed (160 on arrival, +11). Drafted from the signed spec's Contracts,
+a fresh 200-tick measurement probe, and a judged four-angle design panel
+on the one genuinely open decision (the closure trigger); closed after a
+five-lens adversarial review. The re-measured baseline and the closure
+cascade — the finding pack 3 must answer — are in the ledger below.
 **Container:** [2026-08-22-firm-lifecycle.md](2026-08-22-firm-lifecycle.md)
 **Spec contracts executed here:** `Business.insolvent_ticks` + the closure
 trigger, `World::close_business` (+ the `ClosureReceipt`), the phase-6
@@ -383,7 +387,7 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   departure ticks). Every number quoted in the ledger as the pack-3
   baseline. Done: all four soaks green; ledger carries the new baseline.
   Touches: src/engine/worldgen.rs, src/sim.rs (constants only, if retuned).
-- [ ] **8. Pack close.** `./scripts/verify.sh` green; multi-lens close
+- [x] **8. Pack close.** `./scripts/verify.sh` green; multi-lens close
   review; ledger quotes real output + the new test count; container entry
   updated; CLAUDE.md code-state section (phase 6 closes firms; `Business`
   gains `insolvent_ticks`; `remove_agent` force-liquidates); INVENTORY's
@@ -559,3 +563,40 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
 
   Pack gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 168
   passed, 0 failed (160 on arrival; +9 new, −1 retired).
+- **2026-08-30** — **pack closes.** Five-lens adversarial close review
+  (money invariants / spec-contract fidelity / determinism / test
+  quality / economy and ledger honesty), every finding re-verified
+  against the real code by an independent skeptic: **29 raised, 9
+  refuted, 20 confirmed. ZERO blockers.** Both MAJORs were ledger
+  honesty, not code:
+  - **The cascade is TOTAL and this ledger stopped one tick short of
+    saying so.** Greenrow Farm reads `insolvent_ticks == 12` at t200 and
+    closes at t201; measured to t300 the town holds zero businesses.
+    Every figure previously recorded was true inside the 200-tick window
+    and misleading outside it — "one surviving business" was the horizon,
+    not the outcome. Corrected in six places (this ledger, the spec
+    erratum, the constant's doc comment, the soak comment, CLAUDE.md,
+    INVENTORY).
+  - **The cascade was credited with three deaths that were not its
+    doing**, re-measured against a pack-1 baseline. Corrected above; the
+    finding is stronger for it.
+  Reviewers verified clean: every closure movement rides `World::pay`,
+  the audit runs unconditionally across 211 probe ticks without panic,
+  no amount escapes its min-bound, no orphan survives on either dead id,
+  detach-last is genuinely load-bearing, and determinism holds (houses
+  order everywhere, the settlement sort total, no `HashMap` order
+  reaching behaviour). Applied code findings: the two aggregated feed
+  lines still used the live-only address lookup (a firm closing that
+  tick rendered `(unknown business)` in exactly the aggregates most
+  likely to name it); `remove_agent`'s rustdoc never mentioned step 0,
+  the receipt return, or the exclusion its callers must apply; two
+  comments had stopped being true. Three tests added, **each
+  mutation-checked to fail without the code it pins** — the
+  closure-before-draws ordering (asserted twice in comments, tested
+  nowhere) and the two Arrive conjunct sites, which the single existing
+  test could not tell apart — plus an order-independent ascending
+  assertion on the settlements, since deleting `debts.sort_by_key` still
+  ran the suite green in 5 of 30 runs. Close gate: `VERIFY OK — fmt,
+  clippy, build, tests all clean.` **171 passed, 0 failed.** Next:
+  pack 3 (Firms are born), on the owner's go — starting from this
+  ledger's cascade as the thing founding has to reverse.
