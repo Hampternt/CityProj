@@ -483,7 +483,33 @@ Builder-enforced `SellerSnapshot` invariant, stated so the `Option`
 composes with the gates: `sellers >= 1` implies `cheapest_price` is
 `Some`; `sellers == 0` implies `None`.
 Pure entry choice (§8.6: reading market signals to decide entry IS market
-logic — the ranking mirror of `plan_application`). Scans in `Good::ALL`
+logic — the ranking mirror of `plan_application`).
+
+*(**Erratum A**, recorded 2026-08-30 during pack 3's planning: the SINGLE
+`Good::ALL` scan below is wrong and ships as TWO passes — tier 1
+accepting only `sellers == 0`, tier 2 only `sellers == 1` — returning the
+first hit, tier 1 first. Measured on the pack-2 200-tick town: because at
+most one founding lands per tick, a merely-scarce good outranks a dead
+one indefinitely. Entertainment holds ZERO sellers from t156 and
+qualifies on the unconditional branch from t157, yet Food (1 seller,
+price ≥ 4) outranks it across t143–t181, so Entertainment is never
+selected for 25 consecutive ticks; Luxury holds ZERO sellers from t172
+and is selected ZERO times in the remaining 89 ticks. That inverts this
+contract's own priority — "a dead sector must be recoverable" — so the
+erratum makes the code match the prose. Unchanged: the signature, both
+structs and the builder invariant, the `sellers < 2` carrying-capacity
+gate (now exactly the union of the two tiers), both gate predicates, the
+`Prospectus` price rule, and the `None` semantics. Each tier is still a
+`Good::ALL` scan, so the result stays pure, total, RNG-free and
+iteration-order-free. Rejected as larger divergences: more than one
+founding per tick (discards the one-arrival precedent's legible drain)
+and round-robin selection (adds cross-tick state to a pure fn). Recorded
+fallback, NOT built, should tier 1 prove a churn engine — a failed
+entrant leaves its sector at zero sellers, which re-qualifies it at the
+TOP of the ranking: a per-good post-closure cooldown suppressing tier 1
+for N ticks after that good's last `Closed`.)*
+
+Scans in `Good::ALL`
 order and returns the first good satisfying the founding gates:
 `sellers < 2` (the measured carrying capacity — founding never creates the
 third seller the container proved starves) AND either `sellers == 0`
@@ -492,7 +518,39 @@ Depart decide has no posted price and nobody can even emigrate; a dead
 sector must be recoverable) or `cheapest_price >= FOUND_SIGNAL(good)` (the
 scarcity gate: a lone survivor facing live demand sells out and ratchets
 up toward the signal; dead demand leaves its price falling to floor and
-nobody refounds into it — the anti-churn discriminator). `FOUND_SIGNAL`
+nobody refounds into it — the anti-churn discriminator).
+
+*(**Erratum B**, recorded 2026-08-30 during pack 3's planning: "dead
+demand leaves its price falling to floor and nobody refounds into it"
+predicts the wrong MECHANISM, and a price level alone cannot carry this
+discriminator. Measured on the pack-2 200-tick town, post-closure prices
+RISE correctly — the duopoly price war has already driven BOTH sellers to
+`PRICE_FLOOR` before either dies (Entertainment floored t137 against a
+first closure at t153; Luxury floored t159 against t171), so the survivor
+starts its ratchet AT the floor, where the proportional step degenerates
+to +1/tick while its own 12-tick fuse is already burning. Gilt Curtain
+lived 3 ticks alone and reached 3 against a signal of 5; Silverthread
+lived 1 tick at price 1 against a signal of 8; neither scarcity gate
+fires ONCE in 260 ticks. Worse, the level is directionless: at the floor
+a live sector and a dead one post the SAME number, and a COLLAPSING
+sector's price passes back down through any threshold (Food fell 26 → 1
+across t163–t184, satisfying a level-only gate throughout its own
+collapse). The scarcity gate therefore ships as a conjunction of a LEVEL
+test and a DIRECTION test: `cheapest_price >= FOUND_SIGNAL(good)` AND
+`sold_out_streak >= FOUND_SIGNAL_TICKS`. `SellerSnapshot` gains
+`sold_out_streak: u32` — the max over the good's live sellers, so
+`sellers == 0` implies 0 — fed by a new `Business.sold_out_ticks` whose
+SINGLE WRITER is phase 4's existing price write-back, sharing
+`adjust_price`'s own raise predicate through a lifted `market::sold_out`.
+`FOUND_SIGNAL` is re-derived with it, from viability rather than
+scarcity: `max(PRICE_FLOOR + 1, ceil(wage / production_rate))` = **2 / 2
+/ 3**, the price at which one staffer's output covers his own wage. A
+consequence stated rather than hidden: Luxury's scarcity tier is
+correctly unreachable — a sector whose survivor cannot post a
+wage-covering price has no room for an entrant — so Luxury is recovered
+only by tier 1. The provisional signals 4/5/8 below are superseded.)*
+
+`FOUND_SIGNAL`
 per-good constants alongside (provisional Food 4 / Entertainment 5 /
 Luxury 8 ≈ 2× seed prices; soak-tuned then frozen — and sized against
 **viability, not just scarcity**: the gate attests excess demand over ONE

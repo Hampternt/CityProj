@@ -58,7 +58,10 @@ new mechanics into the loop and money:
   liquidation in `remove_agent` means a live business always names a
   live owner, so the pack-1 dangling-owner draw skip is retired. Pack 2
   also added `insolvent_ticks`, the consecutive-arrears fuse phase 6
-  liquidates on (single writer: `invest`'s tail write-back).
+  liquidates on (single writer: `invest`'s tail write-back); pack 3
+  added `sold_out_ticks`, the scarcity-direction streak founding reads
+  (single writer: phase 4's price write-back, sharing `adjust_price`'s
+  own raise predicate through `market::sold_out`).
 - `src/goods.rs` — `Good` (closed consumable enum) + the 07-19 per-good
   constants table (consumption, weight, target days, production).
 - `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
@@ -69,7 +72,12 @@ new mechanics into the loop and money:
   `plan_application` (highest wage, skip arrears-owing employers, ties
   ascending business id then `Role::ALL` order) and `adjust_wage` +
   `stepped_wage` (raise on unfilled-and-affordable — affordability is
-  net of arrears — lower on a stale applicant queue, floor 1).
+  net of arrears — lower on a stale applicant queue, floor 1). Since
+  firm-lifecycle pack 3 a third band holds entry choice: `SellerSnapshot`
+  / `Prospectus` / `plan_founding` (two `Good::ALL` passes — existential
+  before scarcity — the scarcity tier conjoining a viability price level
+  and a sell-out streak) plus the per-good founding template and
+  `found_template`.
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
@@ -90,7 +98,11 @@ new mechanics into the loop and money:
   scans the live `businesses()` set, so detaching revokes the id) and
   the `NoBusinessHere` error, and gave `remove_agent` a step 0 that
   liquidates the leaver's own firms before the A17 settlement, returning
-  those receipts (Amendment 19).
+  those receipts (Amendment 19); pack 3 added `found_business` (the
+  `immigrate` wrapper precedent for firms — founder checked first, then
+  full vacancy, then `create_business`; money-free, so the stake is a
+  separate `pay` in the apply) and `is_fully_vacant`, which collects v1's
+  entire vacancy rule for its four readers.
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last, returning a `TickReport` of typed `Event`s (pure observation,
   Amendment 15); `goods_market` holds the worked decide→apply template;
@@ -116,7 +128,14 @@ new mechanics into the loop and money:
   `CLOSE_INSOLVENT_TICKS + 1` (12, frozen) arrears-ticks. `Event::Closed`
   / `Event::LaidOff` and both closure paths narrate from the
   `ClosureReceipt` via `emit_closure` — never from deltas around the
-  command, which cannot attribute flows sharing a wallet.
+  command, which cannot attribute flows sharing a wallet. Pack 3 put the
+  founding DECIDE at the very top of the phase (so this tick's own
+  closure is invisible to it and a refound is a t+1 event) and the Found
+  APPLY between the closures and the draws, giving the spec's full
+  ordering: decide → closures → founding → draws → counter write-back.
+  `Intent::Found` / `Event::Founded`; the founder self-hires, and
+  `capital` is read back from the new firm's balance rather than
+  assumed.
 - `src/terrain.rs` — world coordinates (`Point3`, 1 unit = 0.1 m) and the
   triangulated integer heightmap (`Terrain`, `elevation_at`); pure movement
   math (`grade`, `travel_time` + `SpeedProfile`) with its tuning constants
@@ -168,9 +187,9 @@ take effect next tick), 5 (consume — also the single writer of
 `DEPART_HUNGER_TICKS` and gold below the cheapest posted Food price —
 since pack 2 `remove_agent` first force-liquidates any firm the leaver
 owns (Amendment 19), then settles `min(coffer, owed)` per Amendment 17,
-sweeps every metal to External, and strips the leaver), and 6 (closure
-then the profit draw — firm-lifecycle packs 1–2; founding lands there
-as pack 3) have behavior; phase 8 and phase 7's demurrage/imports are
+sweeps every metal to External, and strips the leaver), and 6 (the full firm lifecycle — the founding decide, then closures,
+then the founding apply, then the profit draw, then the insolvency
+write-back) have behavior; phase 8 and phase 7's demurrage/imports are
 TODO stubs. The tick-time mint faucet is closed:
 worldgen's seed is the entire money supply and the audit pins it there.
 The shipped scenario is `town_world`. If you change structure, update
@@ -188,20 +207,26 @@ until the market layer can price non-gold metals (reference currency and
 exchange rates stay open questions there). The wage-payment/hiring work
 CLAUDE.md previously named as next landed as town-colony pack 3
 ([`docs/manifests/2026-08-21-tcs-pack3-labor-clears.md`](docs/manifests/2026-08-21-tcs-pack3-labor-clears.md)).
-The **firm lifecycle is in flight**
+The **firm lifecycle is DONE**
 ([`docs/manifests/2026-08-22-firm-lifecycle.md`](docs/manifests/2026-08-22-firm-lifecycle.md),
 spec
 [`docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md`](docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md),
 gate signed 2026-08-22): pack 1 (owners + the phase-6 profit draw)
 landed 2026-08-22, pack 2 (closure, forced liquidation, Amendment 19)
-2026-08-30; pack 3 (founding) follows on the owner's go. **Standing
-finding from pack 2's re-measure:** with firms able to die but not yet
-to be born, the shipped 200-tick trajectory cascades **totally** —
-every venue dies (t140/t153/t156/t171/t172, the last at t201, one tick
-past the soak horizon), leaving no businesses at all and population
-30 → 4. Three of those six were already terminally insolvent under
-pack 1 and merely met a threshold; the other three were healthy and died
-of the cascade. That is the cost of the signed
+and pack 3 (founding) 2026-08-30. The phoenix cycle runs — a venue dies,
+its house frees, a capitalized resident founds into the scarcity, the
+labor market restaffs it — and founding measurably answers the cascade
+closure alone created: over the 200-tick town, **5 live businesses and
+population 20 with founding, against 1 and 4 without**.
+
+**Standing finding, and the successor's problem, not this container's:**
+the town still declines. Founding slows the collapse without arresting
+it, because the residual is a **circulation** failure rather than a
+firm-count one — money is conserved, but `target_days` purchase caps
+make any wallet above the cap a sink that never returns, so the town
+starves beside its own gold (measured: 99% of the supply in one owner's
+wallet). Phase 7's demurrage/imports and phase 8's mint are the standing
+TODO stubs that address it. That is the cost of the signed
 "death before birth" sequence, not a mistuning (no threshold that
 separates the two arrears modes avoids it); pack 3's founding is the
 designed cure, and the 200-tick soak's floor is what it must raise.

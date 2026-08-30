@@ -89,18 +89,36 @@ The behaviors you can watch play out over successive ticks:
   ownerless. And a job standing open at a venue that owes back wages will
   no longer draw a newcomer to town.
 
-🚧 Firm lifecycle in flight
-(`docs/manifests/2026-08-22-firm-lifecycle.md`): founding — a capitalized
-resident opening a replacement venue into measured scarcity — lands as
-pack 3. Until it does, firms can die but not be born, and a long run
-does not merely thin out — it empties: on the shipped town every venue is
-gone by tick 201 and the population falls from thirty to four with them. That is the deliberate order of the
-work, not a defect, and founding is what turns it back around.
+- **New firms are born into scarcity.** When a good is down to one
+  seller whose shelf keeps clearing at a price that would cover a
+  worker's wage — or when a good has no seller at all, which is treated
+  as urgent and answered first — the first idle resident who can afford
+  it stakes three payrolls of their own gold into a new venue on a vacant
+  house, and hires themselves as its first worker. One founding a tick at
+  most, so the money moving is always legible. A founded venue is
+  deliberately smaller than a seeded one: the town's original firms
+  already slightly over-supplied it, and an entrant at full size would
+  restart the price war that killed the last one. The remaining seat goes
+  to the labour market the next day.
+
+  This completes the cycle the town needed — a venue fails, its address
+  frees up, someone with savings opens something new there, and the
+  unemployed go back to work. On the shipped town it is the difference
+  between a place that empties and one that keeps going: with founding,
+  five businesses and twenty residents at tick 200; without it, one
+  business and four.
+
+  What founding does *not* fix, and what a later milestone will: the town
+  still shrinks slowly. Money is never lost, but households only buy what
+  they need, so wealth pooling in a successful owner's hands never comes
+  back as anyone's wages — the town can starve beside its own gold. Coin
+  degradation, trade with the outside world, and minting are the unbuilt
+  mechanics that would put it back into circulation.
 
 Money is strictly conserved: each metal's total is fixed at whatever the
 world was seeded with, and the sim halts rather than continue if a tick ever
-fails to balance — arrivals, departures and liquidations included. Business
-founding, degradation sinks beyond emigration, and coin minting are not
+fails to balance — arrivals, departures, liquidations and foundings
+included. Degradation sinks beyond emigration, and coin minting, are not
 simulated yet — those ticks pass through untouched. A closed firm's unsold
 stock ceases to exist with it: goods, unlike money, carry no conservation
 rule, and where they physically go is a question the future goods-movement
@@ -153,7 +171,10 @@ written are the map exports. Quality gates: `scripts/check.sh` (item) and
 
 ---
 
-*Previous: town colony sim closed 2026-08-21
+*Previous: firm lifecycle closed 2026-08-30
+(`docs/manifests/2026-08-22-firm-lifecycle.md`) — owners and the profit
+draw, closure and forced liquidation, and founding, folded into the
+entries above. Before that: town colony sim closed 2026-08-21
 (`docs/manifests/2026-08-21-town-colony-sim.md`) — the narrated town
 console, the phase-1 labor market, and migration through External, folded
 into the entries above. Before that: multi-metal money, closed 2026-08-20

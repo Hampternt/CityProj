@@ -1,8 +1,10 @@
 # Firm lifecycle — Pack 3: Firms are born
 
-**Status:** IN PROGRESS — drafted 2026-08-30 from the signed spec's
-Contracts, a 260-tick gate-reachability probe on the pack-2 trajectory,
-and a judged four-angle design panel.
+**Status:** DONE 2026-08-30 — all items landed, measured and frozen;
+close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 190
+passed (171 on arrival, +19). Drafted from the signed spec's Contracts,
+a 260-tick gate-reachability probe on the pack-2 trajectory, and a
+judged four-angle design panel. **This pack closes the container.**
 **Container:** [2026-08-22-firm-lifecycle.md](2026-08-22-firm-lifecycle.md)
 **Spec contracts executed here:** `market::plan_founding` (+
 `SellerSnapshot`, `Prospectus`, `FOUND_SIGNAL` and the founding template),
@@ -285,7 +287,7 @@ address it — a successor container, not this one.
   some firing tick — otherwise carry it forward PROVISIONAL and say so).
   Any retune re-runs item 8. Done: `./scripts/verify.sh` green; ledger
   carries the numbers. Touches: src/market.rs, src/sim.rs (constants only).
-- [ ] **10. Pack and container close.** Errata A and B appended to the
+- [x] **10. Pack and container close.** Errata A and B appended to the
   spec at the point of the wrong sentences; CLAUDE.md structure update;
   the INVENTORY 🚧 pointer folded into a real entry — **the container's
   definition of merged**; both ledgers closed with the measured
@@ -321,3 +323,82 @@ address it — a successor container, not this one.
   the payroll-coverage derivation and the sell-out-streak observable
   grafted, and a uniform signal of 2 and a headcount of 1 killed as
   numerically unsound.
+
+- **2026-08-30** — **items 1–10 land; the pack and the container close.**
+
+  **FOUNDING ANSWERS THE CASCADE.** The 200-tick soak, same seed, with
+  founding absent and present:
+
+  | | pack 2 | pack 3 |
+  |---|---|---|
+  | live businesses at t200 | 1 | **5** |
+  | population at t200 | 4 | **20** |
+  | minimum population | 1 | **20** |
+
+  Closures [140, 153, 156, 179, 182, 199]; births Food [142],
+  Entertainment [155, 157], Luxury [180, 184] — every seeded death
+  answered within 1–5 ticks, and **no founded firm closes inside the
+  horizon**, so the anti-churn criterion holds with room. The full-cycle
+  chain is observed, not assumed: the house freed at t156 was founded
+  into at t157 and hired into at t158.
+
+  **What the pre-implementation probe changed, and what the
+  post-implementation measurements changed again.** The probe found the
+  signed gates blocked three ways and produced two errata (the two-tier
+  existential-first scan; the level-AND-direction scarcity gate with
+  `FOUND_SIGNAL` re-derived from payroll viability to 2/2/3). Both are
+  recorded in the spec. Then the code itself corrected two more beliefs:
+
+  - **The founding window is tc+1..tc+4, not tc+2..tc+4.** The decide
+    cannot see this tick's own closure (it runs at the top of phase 6),
+    but it CAN see this tick's sell-out streak, because phase 4 wrote it
+    earlier in the same tick. Mechanism, not tuning.
+  - **`FOUND_SIGNAL_TICKS`'s planned freeze rule was refuted.** "Freeze
+    strictly above the longest streak posted by a survivor that then
+    closed" gives 4; a 300-tick sweep shows raising it makes *both*
+    churn and survival worse (t300 population 10 / 6 / 6 / 7 at 2 / 3 /
+    4 / 6). A longer requirement does not filter dying sectors, it just
+    delays every founding into a poorer town. **Frozen at 2 on
+    measurement, against the rule.**
+
+  **The headcount trade, recorded rather than buried.** A 300-tick sweep:
+  headcount 1 → t300 population 2 (and no open slot, so the full-cycle
+  `Hired` is unsatisfiable); **2 → 10, anti-churn HOLDS**; 3 → 18,
+  anti-churn FAILS; 4 → 17. Bigger entrants nearly double the surviving
+  town, because in this economy employment matters more than supply
+  balance — which contradicts D4's own reasoning. But headcount 3 breaks
+  a signed acceptance criterion outright ("entertainment churned: founded
+  t155, then 3 deaths within 100 ticks"), and a town of 18 sustained by
+  constant firm death and rebirth is not obviously healthier than a
+  stable 10. **2 ships**; the table is in the constant's doc comment for
+  whoever revisits the expand-capacity seam.
+
+  **`FOUNDER_RESERVE` stays PROVISIONAL** — it never bound at any tick a
+  founding fired, so the soaks hold no evidence for any value, and a
+  constant nothing has exercised should not be stamped frozen.
+
+  **The 200-tick migration soak's arrival criterion is re-cut here** —
+  the re-cut the spec predicted for pack 2 and pack 2 measured as
+  unnecessary. It lands in pack 3 for a *different and better* reason
+  than predicted: not "quits create only arrears-carrying vacancies", but
+  **founding creates jobs and the town's own unemployed take them within
+  a tick or two**, so no vacancy survives the `VACANCY_PULL_TICKS` wait.
+  Zero arrivals in 300 ticks with 2–3 houses standing vacant throughout —
+  premises are not the blocker, an aged clean slot is. That is the pull
+  rule working as designed: importing a stranger is for demand the
+  residents cannot meet. The criterion is restated over both answers a
+  town can give a shock (`Founded` or `Arrived`), which is the spec's own
+  full-cycle wording, not a weakened pack-4 assertion.
+
+  **WHAT THIS PACK DOES NOT CLAIM, per D7.** The town still declines:
+  t300 leaves 10 residents and 3 businesses, and found→close churn sets
+  in after ~t236 and accelerates. Founding slows the collapse; it does
+  not arrest it. The residual is a **circulation** failure, not a
+  firm-count one — money is conserved, but `target_days` purchase caps
+  make any wallet above the cap a sink that never returns, so the town
+  starves beside its own gold. Phase 7's demurrage/imports and phase 8's
+  mint are the standing TODO stubs that address it, and they belong to a
+  successor container.
+
+  Close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` **190
+  passed, 0 failed** (171 on arrival).

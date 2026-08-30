@@ -1,9 +1,9 @@
 # Firm lifecycle (container)
 
-**Status:** IN FLIGHT — gate signed 2026-08-22; **pack 1 DONE**
-2026-08-22 (`VERIFY OK`, 160 passed); **pack 2 DONE** 2026-08-30
-(`VERIFY OK`, 171 passed); **pack 3 IN PROGRESS** from 2026-08-30 (the
-owner's go).
+**Status:** **DONE 2026-08-30** — all three packs landed; close gate
+`VERIFY OK — fmt, clippy, build, tests all clean.` **190 passed**
+(155 at the container's start, +35). Pack 1 2026-08-22 (160), pack 2
+2026-08-30 (171), pack 3 2026-08-30 (190).
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-22-firm-lifecycle-design.md](../superpowers/specs/2026-08-22-firm-lifecycle-design.md)
 (approved 2026-08-22; drafted from a judged three-angle proposal panel —
@@ -121,10 +121,12 @@ inspects as a vacant residence.
 ### Pack 3 — Firms are born
 
 Item manifest: [2026-08-30-fl-pack3-firms-are-born.md](2026-08-30-fl-pack3-firms-are-born.md)
-(IN PROGRESS from 2026-08-30). A pre-implementation probe found the signed
-founding gates blocked three independent ways on the pack-2 trajectory —
-two errata follow (existential-before-scarcity ranking, and a
-level-AND-direction scarcity gate).
+(DONE 2026-08-30; 171 → 190 tests; the founding measurements and the two
+constant sweeps live in its ledger). A pre-implementation probe found the
+signed founding gates blocked three independent ways on the pack-2
+trajectory — two errata followed (existential-before-scarcity ranking,
+and a level-AND-direction scarcity gate with `FOUND_SIGNAL` re-derived
+from payroll viability).
 
 `market::plan_founding` + the founding template (FOUND_PRICE/wage/
 headcount per good) + `FOUND_SIGNAL`; `Intent::Found` (one per tick,
@@ -284,3 +286,50 @@ follow-up whatever pack 1 re-measures.
   both MAJORs were this ledger understating the cascade and
   mis-attributing it. Close gate: `VERIFY OK — fmt, clippy, build, tests
   all clean.` 171 passed, 0 failed. Next: pack 3, on your go.
+- **2026-08-30** — **pack 3 closes, and with it the container.** Firms
+  are born: `market::plan_founding` with the founding template,
+  `Intent::Found` on the decide→apply template, `World::found_business`
+  and the separate capital stake, the founder self-hire, and
+  `Event::Founded`. Phase 6 now runs the full lifecycle in the spec's
+  order — decide, closures, founding, draws, counter write-back.
+
+  **The container's goal is met where it can be measured.** Over the
+  200-tick town, founding turns pack 2's emptied husk into a living
+  town: **5 live businesses and population 20, against 1 and 4** without
+  it, with every seeded death answered within 1–5 ticks and the full
+  phoenix chain observed (house freed t156 → founded into t157 → hired
+  t158). Zero found→close churn inside the horizon.
+
+  **Two spec errata**, both forced by measuring before building: the
+  single `Good::ALL` scan starves dead sectors (a merely-scarce good
+  outranked a seller-less one for 25 consecutive ticks), so the scan is
+  two-tier, existential first; and a price LEVEL alone cannot
+  discriminate scarcity from collapse (the duopoly price war floors both
+  sellers *before* either dies, and a collapsing sector's price passes
+  back down through any threshold), so the scarcity gate conjoins a
+  viability level with a sell-out-streak direction test.
+
+  **Two planning rules the data refuted**, both recorded in the code
+  rather than quietly dropped: `FOUND_SIGNAL_TICKS`'s a-priori freeze
+  rule (raising it makes churn *and* survival worse — frozen at 2 on the
+  sweep, against the rule), and D4's reasoning that a bigger entrant
+  would recreate the price war (bigger entrants nearly double the
+  surviving town — headcount 2 still ships, because 3 breaks the signed
+  anti-churn criterion, and that trade is now a table in the constant's
+  doc comment).
+
+  **The honest residual, which closes this container rather than
+  extending it.** The town still declines — t300 leaves 10 residents and
+  3 businesses, with churn accelerating after ~t236. Founding slows the
+  collapse; it does not arrest it. The cause is not firm count but
+  **circulation**: money is conserved, yet `target_days` purchase caps
+  make any wallet above the cap a sink that never returns, so the town
+  starves beside its own gold (99% of the supply measured in one owner's
+  wallet). Phase 7's demurrage and imports and phase 8's mint are the
+  standing TODO stubs that address it — a successor container's work,
+  named here so it is inherited rather than rediscovered.
+
+  Container close gate: `VERIFY OK — fmt, clippy, build, tests all
+  clean.` 190 passed, 0 failed. CLAUDE.md updated and the INVENTORY 🚧
+  pointer folded into a real entry — the container's definition of
+  merged.
