@@ -225,7 +225,7 @@ address it — a successor container, not this one.
   audit clean); and the stake seam succeeding immediately after. Done:
   `./scripts/check.sh` clean; `cargo test world::` quoted. Touches:
   src/world.rs.
-- [ ] **5. Phase 6's founding.** `Intent::Found { founder, house, good,
+- [x] **5. Phase 6's founding.** `Intent::Found { founder, house, good,
   price }`; `Event::Founded { business, founder, house, good, price,
   capital }`; a private `seller_snapshots` shared by the decide and the
   apply's re-check; `decide_founding` as `invest`'s first statement, above

@@ -292,7 +292,6 @@ fn cheapest_offer(good: Good, budget: Money, offers: &[Offer], remaining: &[u32]
 /// MAX over the good's live sellers — one seller clearing its shelf is
 /// enough to call the sector scarce.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 pub struct SellerSnapshot {
     pub good: Good,
     pub sellers: u32,
@@ -302,7 +301,6 @@ pub struct SellerSnapshot {
 
 /// The entry decision: what to sell and at what price.
 #[derive(Debug, PartialEq, Eq)]
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 pub struct Prospectus {
     pub good: Good,
     pub price: Money,
@@ -311,7 +309,6 @@ pub struct Prospectus {
 /// What a founded firm looks like, per good. Deliberately smaller than a
 /// worldgen venue (see `FOUNDING_TEMPLATE`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 pub struct FoundTemplate {
     pub price: Money,
     pub wage: Money,
@@ -349,7 +346,6 @@ pub struct FoundTemplate {
 /// hidden: a sector whose lone survivor cannot post a wage-covering
 /// price has no room for an entrant, so its scarcity tier is correctly
 /// unreachable and only the existential tier can recover it.
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 const FOUNDING_TEMPLATE: [(Good, Money, Money, u32, Money); 3] = [
     (Good::Food, Money::new(2), Money::new(35), 2, Money::new(2)),
     (
@@ -374,14 +370,12 @@ const FOUNDING_TEMPLATE: [(Good, Money, Money, u32, Money); 3] = [
 /// pack-3 planning probe, which recorded prices rather than sell-through.
 /// The pack's re-measure item freezes it strictly above the longest
 /// streak posted by a survivor that then closed.
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 const FOUND_SIGNAL_TICKS: u32 = 2;
 
 /// This good's founding template. The accessor exists so the numbers
 /// stay in market.rs (§8.6) while sim.rs builds the `RoleSlot` and the
 /// capital stake from them — widening `Prospectus` to carry them would
 /// put the founding template in the plan struct instead.
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 pub fn found_template(good: Good) -> FoundTemplate {
     let (_, price, wage, headcount, _) = FOUNDING_TEMPLATE
         .iter()
@@ -396,7 +390,6 @@ pub fn found_template(good: Good) -> FoundTemplate {
 
 /// The price at or above which this good's lone survivor signals room
 /// for a second seller.
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 fn found_signal(good: Good) -> Money {
     let (.., signal) = FOUNDING_TEMPLATE
         .iter()
@@ -425,7 +418,6 @@ fn found_signal(good: Good) -> Money {
 /// gate, split by priority: founding never creates the third seller the
 /// town measured cannot be carried. Pure, total, and iteration-order-free
 /// — the winner is the same whatever order `snapshots` arrives in.
-#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
 pub fn plan_founding(snapshots: &[SellerSnapshot]) -> Option<Prospectus> {
     for good in Good::ALL {
         if snapshots

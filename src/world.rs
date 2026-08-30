@@ -645,7 +645,6 @@ impl World {
     /// caps it against the live wallet. Writes no agent field either —
     /// the founder does not move in, and their self-hire is a separate
     /// `assign_workplace`. `Err` means nothing changed.
-    #[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
     pub fn found_business(
         &mut self,
         founder: AgentId,

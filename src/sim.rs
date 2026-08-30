@@ -3,9 +3,10 @@
 //! contract table. The conservation audit (§8.3) is unconditionally last.
 
 use crate::agent::{Agent, AgentId};
+use crate::business::RoleSlot;
 use crate::goods::Good;
 use crate::housing::HouseId;
-use crate::market::{self, JobOffer, Offer};
+use crate::market::{self, JobOffer, Offer, SellerSnapshot};
 use crate::metal::Metal;
 use crate::money::Money;
 use crate::role::Role;
@@ -48,6 +49,18 @@ pub enum Intent {
     /// hunger past the threshold and too poor to buy a single unit of
     /// Food. Apply is `World::remove_agent` — settle, sweep, remove.
     Depart { agent: AgentId },
+    /// An unemployed resident stakes their own capital into a new venue
+    /// (phase 6's founding rule, pack 3). Planned against the phase-start
+    /// snapshot, at most ONE per tick (the one-arrival precedent: a
+    /// legible wallet drain and a deterministic pass). `house` is the
+    /// premises, never a home — the founder does not move in. Apply
+    /// re-checks every fact and dies cleanly if any moved.
+    Found {
+        founder: AgentId,
+        house: HouseId,
+        good: Good,
+        price: Money,
+    },
 }
 
 /// One observable thing a phase did this tick, for the shell to narrate.
@@ -170,6 +183,19 @@ pub enum Event {
     /// implication (their debt, if any, was settled or written off in
     /// the same command). They re-enter the applicant pool next tick.
     LaidOff { agent: AgentId, business: AgentId },
+    /// Phase 6 (firm-lifecycle pack 3): an unemployed resident founded a
+    /// firm and self-hired into it. `capital` is READ BACK from the new
+    /// firm's balance after the stake, never assumed — so the event
+    /// cannot lie about a stake that failed (the balance-delta
+    /// precedent). One per tick at most.
+    Founded {
+        business: AgentId,
+        founder: AgentId,
+        house: HouseId,
+        good: Good,
+        price: Money,
+        capital: Money,
+    },
     /// Phase 7 apply (pack 4): an agent emigrated, every balance swept
     /// to External (settlement included). Carries BOTH the id (tests
     /// and soaks harvest it — names are not enforced unique) and the
@@ -306,6 +332,24 @@ pub(crate) fn insolvent_now(owed_total: Money) -> bool {
 /// criterion is the tripwire. `pub(crate)` so that soak and the shell
 /// name this same constant (the `DRAW_BUFFER_BILLS` precedent).
 pub(crate) const CLOSE_INSOLVENT_TICKS: u32 = 12;
+
+/// Wage bills of capital a founder stakes into a new firm — the
+/// `WAGE_BILLS_SEEDED` precedent, so a founded firm is funded exactly
+/// like a worldgen one. Structurally forced rather than tuned: at
+/// `capital == wage_bill × DRAW_BUFFER_BILLS` with no arrears the new
+/// firm's coffer sits EXACTLY at `draw_amount`'s buffer, so it draws
+/// zero on its founding tick and the stake cannot round-trip to the
+/// founder inside the same phase 6. Changing either constant without
+/// the other breaks that; a test pins them equal.
+const FOUND_CAPITAL_BILLS: u32 = 3;
+
+/// Gold a founder keeps back for themselves — nobody founds themselves
+/// destitute. PROVISIONAL: the pack-3 planning probe found it
+/// non-binding at every tick the gate fired (the marginal founders held
+/// thousands), and no value above zero is satisfiable in the measured
+/// capital drought, so the pack's re-measure freezes it only if it ever
+/// actually binds.
+const FOUNDER_RESERVE: Money = Money::new(200);
 
 /// Consecutive hungry ticks before a destitute agent gives up on the
 /// town (phase 7's push rule, pack 4). Soak-tuned, then frozen.
@@ -669,7 +713,7 @@ fn apply_labor_intent(
                 home,
             });
         }
-        Intent::Buy { .. } | Intent::Depart { .. } => {
+        Intent::Buy { .. } | Intent::Depart { .. } | Intent::Found { .. } => {
             unreachable!("the labor apply only receives phase-1 intents")
         }
     }
@@ -948,7 +992,8 @@ fn apply_goods_intent(
         Intent::TakeJob { .. }
         | Intent::Quit { .. }
         | Intent::Arrive { .. }
-        | Intent::Depart { .. } => {
+        | Intent::Depart { .. }
+        | Intent::Found { .. } => {
             unreachable!("the goods apply only receives phase-4 intents")
         }
     }
@@ -1007,7 +1052,143 @@ fn draw_amount(coffer: Money, wage_bill: Money, owed_total: Money) -> Money {
 /// purchase caps mean owner income mostly pools (the recorded
 /// expand-capacity seam), so the pack-1 re-measure pins what actually
 /// moves rather than assuming.
+/// Each good's market as the founding decide sees it. Built `Good::ALL`
+/// outer × `businesses()` inner, so the order is pinned twice over and
+/// `market::plan_founding`'s builder invariant holds by construction:
+/// zero sellers yields `None` and a zero streak. The streak is the MAX
+/// over the good's live sellers — one seller clearing its shelf is
+/// enough to call the sector scarce.
+fn seller_snapshots(world: &World) -> Vec<SellerSnapshot> {
+    Good::ALL
+        .iter()
+        .map(|&good| {
+            let mut sellers = 0;
+            let mut cheapest_price: Option<Money> = None;
+            let mut sold_out_streak = 0;
+            for (_, business) in world.businesses().filter(|(_, b)| b.product == good) {
+                sellers += 1;
+                cheapest_price = Some(match cheapest_price {
+                    Some(current) => current.min(business.price),
+                    None => business.price,
+                });
+                sold_out_streak = sold_out_streak.max(business.sold_out_ticks);
+            }
+            SellerSnapshot {
+                good,
+                sellers,
+                cheapest_price,
+                sold_out_streak,
+            }
+        })
+        .collect()
+}
+
+/// Phase 6's founding decide (pure, pack 3): the market names a good,
+/// the roster names a founder, the houses name premises — or nobody
+/// founds. At most ONE per tick.
+///
+/// Founder rule: the first UNEMPLOYED agent in `world.agents` order
+/// (ascending id) whose gold covers the stake plus their own reserve.
+/// Unemployed-only is the gate's signed ruling — founding turns a
+/// dis-saver into an earner, the one channel in this milestone that
+/// relieves the fuse. Recorded cost, measured by the pack-3 probe: it
+/// also makes the wallet holding 99% of the town's gold — an EMPLOYED
+/// owner drawing a monopolist's rent — ineligible to found.
+fn decide_founding(world: &World) -> Option<Intent> {
+    let snapshot: &World = world;
+    let prospectus = market::plan_founding(&seller_snapshots(snapshot))?;
+    let template = market::found_template(prospectus.good);
+    let capital = template
+        .wage
+        .times(template.headcount * FOUND_CAPITAL_BILLS);
+    let bar = capital.plus(FOUNDER_RESERVE);
+    let founder = snapshot.agents.iter().find(|agent| {
+        agent.workplace.is_none() && snapshot.accounts.balance_of(agent.id, Metal::Gold) >= bar
+    })?;
+    let house = snapshot
+        .houses
+        .iter()
+        .find(|house| snapshot.is_fully_vacant(house.id))?;
+    Some(Intent::Found {
+        founder: founder.id,
+        house: house.id,
+        good: prospectus.good,
+        price: prospectus.price,
+    })
+}
+
+/// Phase 6's founding apply (pack 3). Kill-only live re-checks mirroring
+/// stale Buys — every one collapsed to an owned scalar before any `&mut`
+/// — then the three commands in a forced order: `found_business` (which
+/// makes the id a known account), the capital stake, the self-hire.
+fn apply_found_intent(world: &mut World, intent: Intent, report: &mut TickReport) {
+    let Intent::Found {
+        founder,
+        house,
+        good,
+        price,
+    } = intent
+    else {
+        unreachable!("the founding apply only receives phase-6 intents")
+    };
+    let template = market::found_template(good);
+    let capital = template
+        .wage
+        .times(template.headcount * FOUND_CAPITAL_BILLS);
+    // Re-checks: the founder must still exist and still be unemployed,
+    // still afford the stake and their reserve, the premises must still
+    // be vacant, and the sector must still have room. Any of them moving
+    // kills the intent cleanly, with nothing half-founded.
+    let eligible = world.agent(founder).is_some_and(|person| {
+        person.workplace.is_none()
+            && world.accounts.balance_of(founder, Metal::Gold) >= capital.plus(FOUNDER_RESERVE)
+    });
+    let room = seller_snapshots(world)
+        .iter()
+        .any(|snapshot| snapshot.good == good && snapshot.sellers < 2);
+    if !eligible || !world.is_fully_vacant(house) || !room {
+        return;
+    }
+    let mut roles = HashMap::new();
+    roles.insert(
+        Role::Labourer,
+        RoleSlot {
+            wage: template.wage,
+            headcount: template.headcount,
+            unfilled_ticks: 0,
+        },
+    );
+    let Ok(business) = world.found_business(founder, house, good, price, roles) else {
+        return; // re-checked above — dies cleanly regardless
+    };
+    // The stake cannot fail after the re-check: `found_business` is
+    // money-free and nothing runs between it and this pay. The branch is
+    // still written, mirroring the grubstake's honesty about its own
+    // failure mode — and the self-hire still runs, so a penniless firm is
+    // STAFFED and dies the normal payroll-arrears death rather than
+    // standing forever as a trigger-proof empty vacancy magnet.
+    let _ = world.pay(founder, business, Metal::Gold, capital);
+    let _ = world.assign_workplace(founder, house, Role::Labourer);
+    report.events.push(Event::Founded {
+        business,
+        founder,
+        house,
+        good,
+        price,
+        // read back, never assumed: a fresh firm starts at zero, so its
+        // balance IS whatever the stake actually moved
+        capital: world.accounts.balance_of(business, Metal::Gold),
+    });
+}
+
 fn invest(world: &mut World, report: &mut TickReport) {
+    // (0) The founding DECIDE, before anything moves — the phase-start
+    // snapshot. A firm closing THIS tick still counts as a seller here,
+    // so a refound is deliberately a t+1 event: the latency is
+    // conservative and can only delay a founding, never cause a
+    // premature one.
+    let founding = decide_founding(world);
+
     // (1) Closures, FIRST, from the phase-start snapshot, houses order.
     // Above the draws collect so "a closing firm never draws" is
     // structural rather than a guard that could rot — and above the
@@ -1027,6 +1208,13 @@ fn invest(world: &mut World, report: &mut TickReport) {
             .map(|person| person.name.clone())
             .unwrap_or_else(|| "(unknown agent)".to_string());
         emit_closure(&receipt, &owner_name, report);
+    }
+
+    // (2) The founding APPLY — after the closures whose freed houses it
+    // may take, before the draws, so a firm founded this tick sits
+    // exactly at its buffer and draws zero (see FOUND_CAPITAL_BILLS).
+    if let Some(intent) = founding {
+        apply_found_intent(world, intent, report);
     }
 
     let draws: Vec<(AgentId, AgentId, Money)> = world
@@ -1242,7 +1430,8 @@ fn apply_sinks_intent(world: &mut World, intent: Intent, report: &mut TickReport
         Intent::Buy { .. }
         | Intent::TakeJob { .. }
         | Intent::Quit { .. }
-        | Intent::Arrive { .. } => {
+        | Intent::Arrive { .. }
+        | Intent::Found { .. } => {
             unreachable!("the sinks apply only receives phase-7 intents")
         }
     }
@@ -1956,6 +2145,281 @@ mod tests {
         let mut report = TickReport::default();
         invest(&mut world, &mut report);
         assert_eq!(report.events, vec![]);
+        world.accounts.audit();
+    }
+
+    /// Two healthy sellers of every good EXCEPT Food, so the existential
+    /// tier stays shut and only Food's scarcity tier can fire. Then one
+    /// Food seller that has sold out long enough to signal scarcity, an
+    /// idle capitalized founder, and a vacant house — the minimum shape
+    /// in which founding fires, and the reason a founding fixture cannot
+    /// simply omit the goods it does not care about: an absent good has
+    /// zero sellers, which tier 1 refounds unconditionally.
+    fn founding_ready(founder_gold: Money) -> (World, HouseId, AgentId) {
+        let mut world = World::new();
+        for (index, good) in [Good::Entertainment, Good::Luxury].into_iter().enumerate() {
+            for side in 0..2 {
+                landlord_owner_business(
+                    &mut world,
+                    &format!("filler{index}{side}"),
+                    good,
+                    Money::new(2),
+                    Money::new(30),
+                    1,
+                    &format!("keeper{index}{side}"),
+                );
+            }
+        }
+        let (seller, _s, _boss) = landlord_owner_business(
+            &mut world,
+            "Seller",
+            Good::Food,
+            Money::new(9),
+            Money::new(35),
+            1,
+            "boss",
+        );
+        world
+            .house_mut(seller)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .sold_out_ticks = 9;
+        let vacant = world.add_house("5 Weir Cottage", vec![]);
+        let founder = world.spawn_agent("mira", None, None);
+        world.accounts.mint(founder, Metal::Gold, founder_gold);
+        (world, vacant, founder)
+    }
+
+    #[test]
+    fn founding_stakes_self_hires_and_draws_nothing_that_tick() {
+        let (mut world, vacant, founder) = founding_ready(Money::new(5000));
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+
+        let business = world
+            .house(vacant)
+            .unwrap()
+            .business
+            .as_ref()
+            .expect("the vacant house should now host the founded firm");
+        let capital = market::found_template(Good::Food)
+            .wage
+            .times(market::found_template(Good::Food).headcount * FOUND_CAPITAL_BILLS);
+        assert_eq!(business.owner, founder);
+        assert_eq!(business.product, Good::Food);
+        // Enters AT market — the survivor's live price, not the template's.
+        assert_eq!(business.price, Money::new(9));
+        let firm = business.id;
+        assert_eq!(world.accounts.balance_of(firm, Metal::Gold), capital);
+        assert_eq!(
+            report.events,
+            vec![Event::Founded {
+                business: firm,
+                founder,
+                house: vacant,
+                good: Good::Food,
+                price: Money::new(9),
+                capital,
+            }],
+            "a founding narrates once and draws NOTHING the same tick"
+        );
+        // The founder self-hired: the firm produces next tick, and one
+        // seat is left for the labor market.
+        let person = world.agent(founder).unwrap();
+        assert_eq!(person.workplace, Some(vacant));
+        assert_eq!(person.employed_role, Some(Role::Labourer));
+        assert_eq!(world.employees_of(vacant).len(), 1);
+        assert_eq!(
+            world
+                .house(vacant)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .roles[&Role::Labourer]
+                .headcount,
+            2
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn found_capital_sits_exactly_at_the_draw_buffer() {
+        // Structural, not a coincidence: a firm staked at
+        // wage_bill × FOUND_CAPITAL_BILLS with no arrears holds exactly
+        // draw_amount's buffer, so the stake cannot round-trip to the
+        // founder as a dividend inside the same phase 6.
+        assert_eq!(FOUND_CAPITAL_BILLS, DRAW_BUFFER_BILLS);
+        for good in Good::ALL {
+            let template = market::found_template(good);
+            let bill = template.wage.times(template.headcount);
+            let capital = bill.times(FOUND_CAPITAL_BILLS);
+            assert_eq!(
+                draw_amount(capital, bill, Money::ZERO),
+                Money::ZERO,
+                "{good}: a freshly founded firm must draw nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn founding_dies_cleanly_on_every_stale_re_check() {
+        let capital = Money::new(210);
+        let bar = capital.plus(FOUNDER_RESERVE);
+        // (a) the founder cannot afford the stake and their reserve
+        let (mut world, vacant, _f) = founding_ready(bar.minus(Money::new(1)));
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert!(world.house(vacant).unwrap().business.is_none());
+        assert_eq!(report.events, vec![]);
+        // exactly at the bar, it fires — so (a) really tested the bound
+        let (mut world, vacant, _f) = founding_ready(bar);
+        invest(&mut world, &mut TickReport::default());
+        assert!(world.house(vacant).unwrap().business.is_some());
+
+        // (b) the sector already has room filled — two sellers
+        let (mut world, vacant, _f) = founding_ready(Money::new(5000));
+        let (_second, _b, _o) = landlord_owner_business(
+            &mut world,
+            "Rival",
+            Good::Food,
+            Money::new(9),
+            Money::new(35),
+            1,
+            "rival",
+        );
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert!(world.house(vacant).unwrap().business.is_none());
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Founded { .. }))
+        );
+
+        // (c) no vacant premises
+        let (mut world, vacant, _f) = founding_ready(Money::new(5000));
+        world.spawn_agent("squatter", Some(vacant), None);
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert!(world.house(vacant).unwrap().business.is_none());
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Founded { .. }))
+        );
+
+        // (d) the founder is employed
+        let (mut world, vacant, founder) = founding_ready(Money::new(5000));
+        let elsewhere = world.add_house("Elsewhere", vec![]);
+        world
+            .assign_workplace(founder, elsewhere, Role::Labourer)
+            .ok();
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert!(world.house(vacant).unwrap().business.is_none());
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Founded { .. }))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn at_most_one_founding_per_tick_by_ascending_founder() {
+        // Two dead sectors and three capitalized idle residents: exactly
+        // one firm is born, by the lowest-id founder, into the first good
+        // in Good::ALL order that qualifies.
+        let mut world = World::new();
+        // Entertainment alive with two sellers, so only Food and Luxury
+        // qualify — and Food is scanned first.
+        for name in ["a", "b"] {
+            landlord_owner_business(
+                &mut world,
+                name,
+                Good::Entertainment,
+                Money::new(2),
+                Money::new(36),
+                1,
+                name,
+            );
+        }
+        world.add_house("5 Weir Cottage", vec![]);
+        world.add_house("6 Weir Cottage", vec![]);
+        let first = world.spawn_agent("early", None, None);
+        let second = world.spawn_agent("later", None, None);
+        for who in [first, second] {
+            world.accounts.mint(who, Metal::Gold, Money::new(5000));
+        }
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        let founded: Vec<&Event> = report
+            .events
+            .iter()
+            .filter(|e| matches!(e, Event::Founded { .. }))
+            .collect();
+        assert_eq!(founded.len(), 1, "at most one founding per tick");
+        assert!(matches!(
+            founded[0],
+            Event::Founded { founder, good, .. } if *founder == first && *good == Good::Food
+        ));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn the_decide_reads_the_phase_start_snapshot_so_a_refound_is_next_tick() {
+        // A firm closing THIS tick is still a seller when the decide
+        // runs, so its sector cannot be refounded in the same phase.
+        // Deliberate: the latency can only delay a founding.
+        let (mut world, vacant, _f) = founding_ready(Money::new(5000));
+        let (doomed, _d, _o) = landlord_owner_business(
+            &mut world,
+            "Doomed",
+            Good::Food,
+            Money::new(9),
+            Money::new(35),
+            1,
+            "goner",
+        );
+        world
+            .house_mut(doomed)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .insolvent_ticks = CLOSE_INSOLVENT_TICKS;
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert!(
+            report
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Closed { .. })),
+            "the doomed venue should close this tick"
+        );
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Founded { .. })),
+            "two sellers at phase-6 start means no room — the refound waits"
+        );
+        // Next tick, with one seller left, it fires.
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+        assert!(
+            report
+                .events
+                .iter()
+                .any(|e| matches!(e, Event::Founded { .. }))
+        );
+        assert!(world.house(vacant).unwrap().business.is_some());
         world.accounts.audit();
     }
 

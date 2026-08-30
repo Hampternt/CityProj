@@ -86,6 +86,8 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
             Event::LaidOff { agent, .. } => Some(*agent),
             // profit is the owner's story — so is the end of the firm
             Event::ProfitDrawn { owner, .. } | Event::Closed { owner, .. } => Some(*owner),
+            // ...and the start of one is the founder's
+            Event::Founded { founder, .. } => Some(*founder),
             // the leaver's id resolves to nothing once they are gone
             Event::Produced { .. }
             | Event::PriceMoved { .. }
@@ -225,6 +227,9 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     // aggregate. A phase-7 forced liquidation therefore still reads
     // before its own `Departed` line down in `leavers`.
     let mut closures = Vec::new();
+    // Then this tick's founding, if any — phase 6's internal order is
+    // closures, then the birth, then the draws.
+    let mut foundings = Vec::new();
     // Phase-6 draws land between hunger and the leavers, per phase order.
     let mut draws = Vec::new();
     // Phase-7 departures close the feed, in event order (settlements
@@ -249,6 +254,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
             Event::Closed { .. } | Event::LaidOff { .. } => {
                 closures.push(render_event(world, &dead, event))
             }
+            Event::Founded { .. } => foundings.push(render_event(world, &dead, event)),
             Event::Produced { .. } => produced.push(render_event(world, &dead, event)),
             Event::WagePaid {
                 business, amount, ..
@@ -303,6 +309,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     lines.extend(moves);
     lines.extend(hungry);
     lines.extend(closures);
+    lines.extend(foundings);
     lines.extend(draws);
     lines.extend(leavers);
     lines
@@ -420,6 +427,21 @@ fn render_event(world: &World, dead: &DeadThisTick, event: &Event) -> String {
             "{} settled {amount}g of back wages with {}",
             business_label(world, dead, *business),
             agent_label(world, dead, *agent),
+        ),
+        Event::Founded {
+            founder,
+            house,
+            good,
+            price,
+            capital,
+            ..
+        } => format!(
+            "{} founded a venue at {} selling {good} @{price}g (staked {capital}g)",
+            agent_name(world, *founder),
+            world
+                .house(*house)
+                .map(|house| house.address.clone())
+                .unwrap_or_else(|| "(unknown house)".to_string()),
         ),
         Event::LaidOff { agent, business } => format!(
             "{} was laid off by {}",
