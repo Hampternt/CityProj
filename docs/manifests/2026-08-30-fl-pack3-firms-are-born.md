@@ -183,7 +183,7 @@ address it — a successor container, not this one.
 
 ## Items
 
-- [ ] **1. `Business.sold_out_ticks` and its single writer.** The field
+- [x] **1. `Business.sold_out_ticks` and its single writer.** The field
   with its doc contract (single writer = phase 4's price write-back;
   increment on the raise predicate, reset on a lower, HOLD on
   `offered == 0`); seeded 0 by `create_business`; the write-back extended

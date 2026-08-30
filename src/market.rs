@@ -42,6 +42,16 @@ const STEP_DIVISOR: u64 = 10;
 /// Prices never fall below this, so they can always recover upward.
 const PRICE_FLOOR: Money = Money::new(1);
 
+/// Did this shelf sell out? `adjust_price`'s own raise predicate, lifted
+/// so the firm-founding scarcity signal (pack 3) reads the SAME test the
+/// price ratchet does — a re-spelled copy would agree today and diverge
+/// silently the first time `RAISE_THRESHOLD` is tuned. `offered == 0` is
+/// "no signal", never a sell-out. Integer cross-multiplication, no floats
+/// (§8.1). Callers guarantee `sold <= offered`.
+pub fn sold_out(offered: u32, sold: u32) -> bool {
+    offered > 0 && u64::from(sold) * RAISE_THRESHOLD.1 >= u64::from(offered) * RAISE_THRESHOLD.0
+}
+
 /// Per-business Walrasian tâtonnement (§8.6): sold out → raise, didn't
 /// sell → lower, one proportional step per tick, saturating at
 /// `PRICE_FLOOR`. Pure and total. `offered == 0` is "no signal", not
@@ -52,10 +62,11 @@ pub fn adjust_price(price: Money, offered: u32, sold: u32) -> Money {
         return price;
     }
     let step = Money::new(1).max(price.divided_by(STEP_DIVISOR));
+    if sold_out(offered, sold) {
+        return price.plus(step);
+    }
     let (sold, offered) = (u64::from(sold), u64::from(offered));
-    if sold * RAISE_THRESHOLD.1 >= offered * RAISE_THRESHOLD.0 {
-        price.plus(step)
-    } else if sold * LOWER_THRESHOLD.1 < offered * LOWER_THRESHOLD.0 {
+    if sold * LOWER_THRESHOLD.1 < offered * LOWER_THRESHOLD.0 {
         // price would land below the floor if we subtract the step, so clamp to floor
         if price > step.plus(PRICE_FLOOR) {
             price.minus(step)

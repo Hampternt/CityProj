@@ -350,6 +350,7 @@ impl World {
             roles,
             owed_to: HashMap::new(),
             insolvent_ticks: 0,
+            sold_out_ticks: 0,
         });
         Ok(id)
     }

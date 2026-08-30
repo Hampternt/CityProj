@@ -90,6 +90,22 @@ pub struct Business {
     /// single `PayrollShort` tick flickers the counter to 1 even for a
     /// venue that fully repays next tick.
     pub insolvent_ticks: u32,
+    /// Consecutive ticks this business SOLD OUT its offered shelf — the
+    /// scarcity *direction* signal firm founding reads (pack 3). SINGLE
+    /// WRITER: phase 4's price write-back, which already holds the
+    /// offered stock and the units sold, so the streak and the price
+    /// ratchet cannot disagree — both call `market::sold_out`. Increment
+    /// on a sell-out, reset to 0 on any other real signal, and HOLD when
+    /// `offered == 0` (`adjust_price`'s documented "no signal", not poor
+    /// sales). Seeded 0 by `World::create_business`.
+    ///
+    /// Why founding needs it: a price LEVEL alone cannot tell a scarce
+    /// sector from a collapsing one. At `PRICE_FLOOR` a live sector and a
+    /// dead one post the same number, and a collapsing sector's price
+    /// passes back down through any threshold on its way to the floor
+    /// (measured, pack-3 probe: Food fell 26 → 1 over t163–t184 while
+    /// satisfying a level-only gate throughout its own collapse).
+    pub sold_out_ticks: u32,
 }
 
 impl Business {
@@ -145,6 +161,7 @@ mod tests {
             roles,
             owed_to: HashMap::new(),
             insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         assert_eq!(business.roles[&Role::Engineer].wage, Money::new(12));
         assert_eq!(business.roles[&Role::Engineer].headcount, 2);
@@ -180,6 +197,7 @@ mod tests {
             roles,
             owed_to: HashMap::new(),
             insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         // 12×2 + 7×5
         assert_eq!(business.wage_bill(), Money::new(59));
@@ -192,6 +210,7 @@ mod tests {
             roles: HashMap::new(),
             owed_to: HashMap::new(),
             insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         assert_eq!(empty.wage_bill(), Money::ZERO);
     }
@@ -207,6 +226,7 @@ mod tests {
             roles: HashMap::new(),
             owed_to: HashMap::new(),
             insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         assert_eq!(business.owed_total(), Money::ZERO);
         business.owed_to.insert(AgentId(1), Money::new(30));

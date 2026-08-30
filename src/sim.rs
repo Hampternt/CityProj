@@ -853,13 +853,26 @@ fn goods_market(world: &mut World, report: &mut TickReport) {
                 to: adjusted,
             });
         }
-        world
+        let business = world
             .house_mut(house_id)
             .expect("snapshotted from businesses()")
             .business
             .as_mut()
-            .expect("snapshotted from businesses()")
-            .price = adjusted;
+            .expect("snapshotted from businesses()");
+        business.price = adjusted;
+        // This loop is `sold_out_ticks`'s SINGLE WRITER (pack 3). It reads
+        // the same `market::sold_out` the ratchet above just used, so the
+        // streak can never disagree with the price move. An empty shelf
+        // is "no signal" and holds the streak rather than breaking it —
+        // a sold-out seller that produces nothing next tick has not
+        // stopped being scarce.
+        business.sold_out_ticks = if offer.stock == 0 {
+            business.sold_out_ticks
+        } else if market::sold_out(offer.stock, units) {
+            business.sold_out_ticks.saturating_add(1)
+        } else {
+            0
+        };
     }
 }
 
@@ -1722,6 +1735,93 @@ mod tests {
             .as_ref()
             .unwrap()
             .insolvent_ticks
+    }
+
+    /// Reads the scarcity-direction streak (pack 3) off a live business.
+    fn sold_out_ticks(world: &World, house: HouseId) -> u32 {
+        world
+            .house(house)
+            .unwrap()
+            .business
+            .as_ref()
+            .unwrap()
+            .sold_out_ticks
+    }
+
+    #[test]
+    fn sold_out_ticks_accumulates_resets_and_holds_on_an_empty_shelf() {
+        let mut world = World::new();
+        let (house, farm, _owner) = landlord_owner_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(5),
+            1,
+            "boss",
+        );
+        let buyer = world.spawn_agent("b", None, None);
+        world.accounts.mint(buyer, Metal::Gold, Money::new(1000));
+
+        // A thin shelf the buyer clears: sold out, two ticks running.
+        for expected in 1..=2 {
+            set_stock(&mut world, house, 1);
+            let mut report = TickReport::default();
+            goods_market(&mut world, &mut report);
+            assert_eq!(sold_out_ticks(&world, house), expected);
+        }
+        // An EMPTY shelf is "no signal" — the streak holds, it does not
+        // break. A sold-out seller that produces nothing next tick has
+        // not stopped being scarce.
+        set_stock(&mut world, house, 0);
+        let mut report = TickReport::default();
+        goods_market(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 2, "empty shelf must hold");
+        // A fat shelf the buyer cannot clear is a real signal, and it is
+        // not a sell-out: the streak resets.
+        set_stock(&mut world, house, 500);
+        let mut report = TickReport::default();
+        goods_market(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 0);
+        let _ = farm;
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn sold_out_ticks_has_a_single_writer() {
+        // Phase 4's price write-back and nothing else — the discipline
+        // `insolvent_ticks` and `unfilled_ticks` already keep.
+        let mut world = World::new();
+        let (house, farm, _owner) = landlord_owner_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(5),
+            1,
+            "boss",
+        );
+        let buyer = world.spawn_agent("b", None, None);
+        world.accounts.mint(buyer, Metal::Gold, Money::new(1000));
+        world.accounts.mint(farm, Metal::Gold, Money::new(1000));
+        set_stock(&mut world, house, 1);
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 0, "phase 1 must not write");
+        produce(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 0, "phase 2 must not write");
+        pay_wages(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 0, "phase 3 must not write");
+        set_stock(&mut world, house, 1); // produce added to the shelf
+        goods_market(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 1, "phase 4 IS the writer");
+        consume(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 1, "phase 5 must not write");
+        invest(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 1, "phase 6 must not write");
+        sinks(&mut world, &mut report);
+        assert_eq!(sold_out_ticks(&world, house), 1, "phase 7 must not write");
+        world.accounts.audit();
     }
 
     #[test]
