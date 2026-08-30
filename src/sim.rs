@@ -213,6 +213,23 @@ const QUIT_ARREARS_BILLS: u32 = 3;
 /// worldgen soak asserts the coffer bound against the same constant.
 pub(crate) const DRAW_BUFFER_BILLS: u32 = 3;
 
+/// A business is *insolvent this tick* when it ends the tick owing
+/// anyone anything. Pure and scalar-taking like [`draw_amount`], for two
+/// reasons: it gives the boundary a unit-test home outside the sim, and
+/// it makes the sim and worldgen's soak criterion name ONE symbol — a
+/// soak that re-spelled this predicate would agree today and diverge
+/// silently the first time it is tuned, which is a false green rather
+/// than a failure.
+///
+/// Deliberately reads the `owed_total()` FIELD, never `PayrollShort`
+/// events: a venue with no live staff accrues nothing and emits neither
+/// `WagePaid` nor `PayrollShort` ever again, so an event-keyed trigger
+/// would be permanently blind to exactly the zombie closure must kill
+/// (measured on a forced fixture, pack-2 probe).
+pub(crate) fn insolvent_now(owed_total: Money) -> bool {
+    owed_total > Money::ZERO
+}
+
 /// Consecutive hungry ticks before a destitute agent gives up on the
 /// town (phase 7's push rule, pack 4). Soak-tuned, then frozen.
 const DEPART_HUNGER_TICKS: u8 = 5;
@@ -920,6 +937,31 @@ fn invest(world: &mut World, report: &mut TickReport) {
             amount: draw,
         });
     }
+
+    // The insolvency fuse (pack 2), LAST inside the phase and collected
+    // AFTER any closures, so it never reaches through a detached house
+    // and a closed firm's counter dies with its `Business`. This is the
+    // single writer of `Business.insolvent_ticks`; the closure pass
+    // reads it from the NEXT tick's phase-start snapshot, which is the
+    // one tick of designed latency documented on the field. Same
+    // collect-then-`house_mut` shape as `produce` (no `businesses_mut`).
+    let marks: Vec<(HouseId, bool)> = world
+        .businesses()
+        .map(|(house, business)| (house.id, insolvent_now(business.owed_total())))
+        .collect();
+    for (house_id, insolvent) in marks {
+        let business = world
+            .house_mut(house_id)
+            .expect("collected from businesses()")
+            .business
+            .as_mut()
+            .expect("collected from businesses()");
+        business.insolvent_ticks = if insolvent {
+            business.insolvent_ticks.saturating_add(1)
+        } else {
+            0
+        };
+    }
 }
 
 /// Phase 7: degradation, imports, and — since pack 4 — emigration.
@@ -1457,6 +1499,99 @@ mod tests {
             draw_amount(Money::new(500), bill, Money::new(50)),
             Money::new(30)
         );
+    }
+
+    /// Reads the insolvency fuse (pack 2) off a live business.
+    fn insolvent_ticks(world: &World, house: HouseId) -> u32 {
+        world
+            .house(house)
+            .unwrap()
+            .business
+            .as_ref()
+            .unwrap()
+            .insolvent_ticks
+    }
+
+    #[test]
+    fn insolvent_now_is_strict_at_zero() {
+        // The predicate is strict-positive: owing nothing is solvent,
+        // owing one coin is not. Chosen over a magnitude level because
+        // frozen arrears never grow again, so any `> N × bill` gate
+        // leaves a venue frozen just under it immortal (pack-2 probe).
+        assert!(!insolvent_now(Money::ZERO));
+        assert!(insolvent_now(Money::new(1)));
+        assert!(insolvent_now(Money::new(1033)));
+    }
+
+    #[test]
+    fn insolvent_ticks_counts_consecutive_arrears_ticks_and_resets_on_a_clear_one() {
+        let mut world = World::new();
+        let (house, farm, worker) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(20),
+            "w",
+        );
+        // Broke coffer: phase 3 accrues the wage and pays none of it.
+        for expected in 1..=3 {
+            let mut report = TickReport::default();
+            pay_wages(&mut world, &mut report);
+            invest(&mut world, &mut report);
+            assert_eq!(
+                insolvent_ticks(&world, house),
+                expected,
+                "counter should climb while the ledger stays owed"
+            );
+        }
+        assert!(owed(&world, house, worker) > Money::ZERO);
+        // Fund the coffer: next phase 3 clears the whole ledger, and the
+        // write-back resets — one clear tick, not a decrement.
+        world.accounts.mint(farm, Metal::Gold, Money::new(500));
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report);
+        invest(&mut world, &mut report);
+        assert_eq!(owed(&world, house, worker), Money::ZERO);
+        assert_eq!(insolvent_ticks(&world, house), 0);
+    }
+
+    #[test]
+    fn insolvent_ticks_has_a_single_writer() {
+        // Every other live phase must leave the counter alone — the
+        // field's SINGLE WRITER contract, pinned the way `hunger`'s is.
+        let mut world = World::new();
+        let (house, farm, _) = staffed_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(1),
+            Money::new(20),
+            "w",
+        );
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report); // accrues arrears, pays nothing
+        assert_eq!(insolvent_ticks(&world, house), 0, "phase 3 must not write");
+        labor_market(&mut world, &mut report);
+        assert_eq!(insolvent_ticks(&world, house), 0, "phase 1 must not write");
+        produce(&mut world, &mut report);
+        assert_eq!(insolvent_ticks(&world, house), 0, "phase 2 must not write");
+        goods_market(&mut world, &mut report);
+        assert_eq!(insolvent_ticks(&world, house), 0, "phase 4 must not write");
+        consume(&mut world, &mut report);
+        assert_eq!(insolvent_ticks(&world, house), 0, "phase 5 must not write");
+        invest(&mut world, &mut report);
+        assert_eq!(insolvent_ticks(&world, house), 1, "phase 6 IS the writer");
+        sinks(&mut world, &mut report);
+        assert_eq!(insolvent_ticks(&world, house), 1, "phase 7 must not write");
+        // ...and a business created mid-run starts the discipline at 0.
+        let other = world.add_house("Other", vec![]);
+        let owner = world.spawn_agent("o", None, None);
+        world
+            .create_business(other, owner, Good::Luxury, Money::new(2), HashMap::new())
+            .expect("fresh house, spawned owner");
+        assert_eq!(insolvent_ticks(&world, other), 0);
+        let _ = farm;
     }
 
     #[test]

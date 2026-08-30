@@ -66,6 +66,30 @@ pub struct Business {
     /// Entries are removed at zero — an empty map means fully paid.
     /// Bookkeeping only, never a negative balance (§8.2/§8.5).
     pub owed_to: HashMap<AgentId, Money>,
+    /// Consecutive ticks ending in arrears (`owed_total() > ZERO`) — the
+    /// fuse phase 6 liquidates on (firm-lifecycle pack 2). SINGLE
+    /// WRITER: the write-back at the tail of `sim::invest`, over the
+    /// LIVE `businesses()` set AFTER that tick's closures (and, from
+    /// pack 3, after the Found apply) — never a stale snapshot that
+    /// would reach through a detached house. Seeded 0 by
+    /// `World::create_business` (the [`RoleSlot::unfilled_ticks`]
+    /// discipline); a closed firm's counter dies with its `Business`,
+    /// never reset.
+    ///
+    /// Read once, at the TOP of phase 6, from the phase-START snapshot —
+    /// so the counter crosses at tick t's write-back and the firm closes
+    /// at t+1's phase 6. That one tick of latency is designed, not
+    /// incidental: the effective fuse is `CLOSE_INSOLVENT_TICKS + 1`
+    /// arrears-ticks. Correctness depends on that write-last /
+    /// read-phase-start ordering — do not reorder the blocks inside
+    /// `invest`.
+    ///
+    /// Note what this is NOT: same-tick revenue cannot clear the ledger.
+    /// Arrears created at phase 3 pay down only at the NEXT tick's phase
+    /// 3 (phase-4 revenue lands in the coffer, never on the ledger), so a
+    /// single `PayrollShort` tick flickers the counter to 1 even for a
+    /// venue that fully repays next tick.
+    pub insolvent_ticks: u32,
 }
 
 impl Business {
@@ -120,6 +144,7 @@ mod tests {
             stock: 0,
             roles,
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
         };
         assert_eq!(business.roles[&Role::Engineer].wage, Money::new(12));
         assert_eq!(business.roles[&Role::Engineer].headcount, 2);
@@ -154,6 +179,7 @@ mod tests {
             stock: 0,
             roles,
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
         };
         // 12×2 + 7×5
         assert_eq!(business.wage_bill(), Money::new(59));
@@ -165,6 +191,7 @@ mod tests {
             stock: 0,
             roles: HashMap::new(),
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
         };
         assert_eq!(empty.wage_bill(), Money::ZERO);
     }
@@ -179,6 +206,7 @@ mod tests {
             stock: 0,
             roles: HashMap::new(),
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
         };
         assert_eq!(business.owed_total(), Money::ZERO);
         business.owed_to.insert(AgentId(1), Money::new(30));

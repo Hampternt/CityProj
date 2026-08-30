@@ -253,12 +253,14 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
 
 ## Items
 
-- [ ] **1. The counter and its predicate.** `Business.insolvent_ticks: u32`
+- [x] **1. The counter and its predicate.** `Business.insolvent_ticks: u32`
   (doc: single writer, live-set-after-closures, the one-tick latency, and
-  "do not reorder inside `invest`"); `insolvent_now(owed_total) -> bool`
-  and `CLOSE_INSOLVENT_TICKS: u32 = 12`, both `pub(crate)`, beside
-  `draw_amount` in sim.rs with the measured justification in the doc
-  comment; the write-back appended as the LAST block of `invest`, copying
+  "do not reorder inside `invest`"); `insolvent_now(owed_total) -> bool`,
+  `pub(crate)`, beside `draw_amount` in sim.rs.
+  **`CLOSE_INSOLVENT_TICKS` moves to item 3**, where its first consumer
+  lands: the constant has no non-test reader until the closure pass, and
+  `clippy -D warnings` rejects a dead one (`#[cfg(test)]` use does not
+  count for the bin target). The write-back appended as the LAST block of `invest`, copying
   `produce`'s collect-then-`house_mut` template (no `businesses_mut` — four
   phases already mutate `Business` fields that way). All five `Business`
   literals gain `insolvent_ticks: 0`. Tests:
