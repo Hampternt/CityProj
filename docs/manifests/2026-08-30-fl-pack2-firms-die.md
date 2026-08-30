@@ -288,7 +288,9 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   vacancy predicate, audit green; plus the two `Err` paths changing
   nothing. Done: `./scripts/check.sh` clean; `cargo test world:: money::`
   quoted. Touches: src/world.rs.
-- [ ] **3. Phase 6 kills.** The closure pass at the TOP of `invest`, from
+- [x] **3. Phase 6 kills.** *(Landed with item 4 — see that item: deleting
+  the dangling-owner skip opens a real panic window that only forced
+  liquidation closes, so the two could not ship apart.)* The closure pass at the TOP of `invest`, from
   the phase-start snapshot, houses order, one `close_business` per doomed
   house — placed above the draws collect so "a closing firm never draws" is
   structural rather than a guard that can rot. `Event::Closed { business,
@@ -308,7 +310,7 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   becomes a quit-first test with an empty `LaidOff` vector, still green,
   proving less. Done: `./scripts/check.sh` clean; `cargo test sim::`
   quoted. Touches: src/sim.rs, src/engine/game_loop.rs.
-- [ ] **4. Forced liquidation (Amendment 19).** `remove_agent` gains step 0
+- [x] **4. Forced liquidation (Amendment 19).** `remove_agent` gains step 0
   after validation and before the A17 settlement — collect
   `Vec<HouseId>` of houses whose business's owner is the leaver (the
   snapshot is mandatory: iterating `businesses()` while calling
@@ -338,7 +340,7 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   criterion), and any third the compiler surfaces. Done:
   `./scripts/check.sh` clean; `cargo test world:: sim::` quoted. Touches:
   src/world.rs, src/sim.rs, docs/superpowers/specs/2026-07-02-*.md.
-- [ ] **5. The pull stops recruiting into deadbeats.** One conjunct,
+- [x] **5. The pull stops recruiting into deadbeats.** One conjunct,
   `business.owed_total() == Money::ZERO`, in the OUTER closure of both the
   Arrive decide's `slot_aged` scan and the apply's `still_hiring` re-check.
   Test: `arrive_pull_skips_arrears_carrying_venues` — an aged slot at an

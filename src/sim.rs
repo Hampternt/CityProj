@@ -9,7 +9,7 @@ use crate::market::{self, JobOffer, Offer};
 use crate::metal::Metal;
 use crate::money::Money;
 use crate::role::Role;
-use crate::world::World;
+use crate::world::{ClosureReceipt, World};
 use std::collections::HashMap;
 
 /// What an agent wants to do, decided in a pure pass and executed in an
@@ -136,15 +136,40 @@ pub enum Event {
         name: String,
         home: HouseId,
     },
-    /// Phase 7 apply (Amendment 17): a business settled what its coffer
-    /// covered of a leaver's back wages, immediately before their sweep.
-    /// The written-off remainder is silent bookkeeping — the preceding
-    /// `PayrollShort`s already told that story.
+    /// A business settled arrears outside payroll — what its coffer
+    /// covered, whole or partial. Two sources since pack 2: phase 7's
+    /// Amendment-17 settlement immediately before a leaver's sweep, and
+    /// `close_business`'s creditor pass, which reaches FORMER workers
+    /// too (they are settled but not laid off). The written-off
+    /// remainder is silent bookkeeping — the preceding `PayrollShort`s
+    /// already told that story.
     Settled {
         business: AgentId,
         agent: AgentId,
         amount: Money,
     },
+    /// Phase 6, or phase 7's forced liquidation (firm-lifecycle pack 2):
+    /// a business was liquidated. Carries `house` because the business
+    /// id resolves to nothing afterward, and `owner_name` because in the
+    /// forced path the owner id does too (the `Departed` name-carrying
+    /// precedent, applied to both dead-id classes). `proceeds` lists
+    /// every `Metal::ALL` entry in that order, zeros included (D3
+    /// visible-zeros). The money story is told by the accompanying
+    /// `Settled`s and by `proceeds`; sourced from the `ClosureReceipt`,
+    /// never re-derived.
+    Closed {
+        business: AgentId,
+        house: HouseId,
+        owner: AgentId,
+        owner_name: String,
+        proceeds: Vec<(Metal, Money)>,
+    },
+    /// Phase 6, or phase 7's forced liquidation (firm-lifecycle pack 2):
+    /// a worker's employer was liquidated under them. Distinct from
+    /// `Quit` — pushed, not walked: no volition, and no arrears
+    /// implication (their debt, if any, was settled or written off in
+    /// the same command). They re-enter the applicant pool next tick.
+    LaidOff { agent: AgentId, business: AgentId },
     /// Phase 7 apply (pack 4): an agent emigrated, every balance swept
     /// to External (settlement included). Carries BOTH the id (tests
     /// and soaks harvest it — names are not enforced unique) and the
@@ -229,6 +254,42 @@ pub(crate) const DRAW_BUFFER_BILLS: u32 = 3;
 pub(crate) fn insolvent_now(owed_total: Money) -> bool {
     owed_total > Money::ZERO
 }
+
+/// Consecutive insolvent ticks a firm carries before phase 6 liquidates
+/// it. An arrears-**persistence** trigger, deliberately not an arrears
+/// level: the quit rule caps per-worker debt near four wages and
+/// post-quit arrears freeze, so persistence is the one signal that stays
+/// reachable. Soak-tuned 2026-08-30 (the spec ships 6 as provisional and
+/// prescribes "the observed per-venue maximum … and the threshold frozen
+/// above it"), then frozen.
+///
+/// Measured, 200-tick `town_world` under the pack-1 draw:
+/// - **healthy t≤100** — max streak 1 (Longacre's isolated one-tick
+///   2–11g flickers against a 140g bill); three venues never accrue a
+///   coin in 200 ticks. 12 clears the observed maximum by 11.
+/// - **doomed** — terminal streaks 73 / 60 / 57, i.e. 6.1× / 5.0× / 4.75×
+///   this fuse; every doomed venue dies with room.
+/// - **ordering** — the write-back is last and closure reads the
+///   phase-start snapshot, so a firm crossing at tick t closes at t+1:
+///   closure tick = 128+k / 141+k / 144+k against first quits t134 /
+///   t146 / t148. A strict one-tick lead over the quit needs k ≥ 7
+///   (Longacre binding). At 12: closures t140 / t153 / t156, slack
+///   +6 / +7 / +8. (The spec's provisional 6 closes Longacre on its own
+///   quit tick — a within-tick tie, phase 1 before phase 6, so not an
+///   ordering failure but zero slack.)
+///
+/// Mnemonic: 12 = 3 × (`QUIT_ARREARS_BILLS` + 1), three nominal quit
+/// cycles — but the nominal 4-tick cycle assumes a full-bill shortfall
+/// and the measured horizon is 6 / 5 / 4, so the measurement, not the
+/// mnemonic, is the justification.
+///
+/// STANDING OBLIGATION: the healthy flicker moved 0 → 1 when pack 1's
+/// draw thinned coffers. Any future pack that touches coffers (a larger
+/// `DRAW_BUFFER_BILLS`, demurrage, imports) must re-measure the healthy
+/// max streak and re-freeze this; the 100-tick soak's zero-closure
+/// criterion is the tripwire. `pub(crate)` so that soak and the shell
+/// name this same constant (the `DRAW_BUFFER_BILLS` precedent).
+pub(crate) const CLOSE_INSOLVENT_TICKS: u32 = 12;
 
 /// Consecutive hungry ticks before a destitute agent gives up on the
 /// town (phase 7's push rule, pack 4). Soak-tuned, then frozen.
@@ -347,13 +408,24 @@ fn labor_market(world: &mut World, report: &mut TickReport) {
     // at most ONE arrival per tick, so the External drain stays legible
     // and the pass deterministic. The newcomer is named from the fixed
     // table by the World counter.
+    // The arrears conjunct (pack 2) sits in the OUTER closure, so a
+    // deadbeat's aged slot never justifies an arrival at all: the town
+    // stops importing strangers for employers who don't pay. A RULE, not
+    // a race — `unfilled_ticks` ages independently of arrears (boot
+    // openings age from tick 1), so no closure timing could protect an
+    // immigrant from a venue whose slot aged before its insolvency began.
+    // Recorded residual: once arrived, a newcomer owes nothing, so next
+    // tick's `plan_application` can still match them INTO an
+    // arrears-carrying venue — the same exposure every resident
+    // non-creditor has. This fixes the importing, not the matching.
     let slot_aged = snapshot.businesses().any(|(_, business)| {
-        Role::ALL.iter().any(|role| {
-            business
-                .roles
-                .get(role)
-                .is_some_and(|slot| slot.unfilled_ticks >= VACANCY_PULL_TICKS)
-        })
+        business.owed_total() == Money::ZERO
+            && Role::ALL.iter().any(|role| {
+                business
+                    .roles
+                    .get(role)
+                    .is_some_and(|slot| slot.unfilled_ticks >= VACANCY_PULL_TICKS)
+            })
     });
     if slot_aged
         && snapshot
@@ -553,13 +625,17 @@ fn apply_labor_intent(
             // by this tick's hires kills the arrival (the boot cascade
             // races the pull; measured, review-caught) — and the home
             // re-validates inside the command.
+            // The re-check inherits the same arrears conjunct: a venue
+            // that owes back wages cannot CONFIRM an arrival either, so
+            // an intent decided on a clean venue's aged slot dies cleanly
+            // if only deadbeat headcount remains by apply time.
             let still_hiring = world.businesses().any(|(house, business)| {
-                Role::ALL.iter().any(|&role| {
-                    business
-                        .roles
-                        .get(&role)
-                        .is_some_and(|slot| slot.headcount > staff_in_role(world, house.id, role))
-                })
+                business.owed_total() == Money::ZERO
+                    && Role::ALL.iter().any(|&role| {
+                        business.roles.get(&role).is_some_and(|slot| {
+                            slot.headcount > staff_in_role(world, house.id, role)
+                        })
+                    })
             });
             if !still_hiring {
                 return;
@@ -903,6 +979,27 @@ fn draw_amount(coffer: Money, wage_bill: Money, owed_total: Money) -> Money {
 /// expand-capacity seam), so the pack-1 re-measure pins what actually
 /// moves rather than assuming.
 fn invest(world: &mut World, report: &mut TickReport) {
+    // (1) Closures, FIRST, from the phase-start snapshot, houses order.
+    // Above the draws collect so "a closing firm never draws" is
+    // structural rather than a guard that could rot — and above the
+    // counter write-back so a closed firm's counter dies with it.
+    let doomed: Vec<HouseId> = world
+        .businesses()
+        .filter(|(_, business)| business.insolvent_ticks >= CLOSE_INSOLVENT_TICKS)
+        .map(|(house, _)| house.id)
+        .collect();
+    for house in doomed {
+        let receipt = world
+            .close_business(house)
+            .expect("collected from businesses()");
+        // The owner outlives a steady-state closure, so the name resolves.
+        let owner_name = world
+            .agent(receipt.owner)
+            .map(|person| person.name.clone())
+            .unwrap_or_else(|| "(unknown agent)".to_string());
+        emit_closure(&receipt, &owner_name, report);
+    }
+
     let draws: Vec<(AgentId, AgentId, Money)> = world
         .businesses()
         .map(|(_, business)| {
@@ -921,13 +1018,12 @@ fn invest(world: &mut World, report: &mut TickReport) {
         if draw == Money::ZERO {
             continue;
         }
-        // Pack-1 interim tolerance (spec, draw contract — retired by
-        // pack 2's forced liquidation): an owner removed by emigration
-        // before `remove_agent` knows about firms leaves a dangling id;
-        // the draw skips cleanly, no transfer, no event.
-        if world.agent(owner).is_none() {
-            continue;
-        }
+        // The pack-1 dangling-owner skip is RETIRED here: forced
+        // liquidation (item 4) closes an emigrating owner's firms inside
+        // `remove_agent`, so a live business always names a live owner
+        // and this `pay` cannot meet a ghost. The invariant is pinned by
+        // test, not defended by a branch — a silent skip would leave
+        // money pooling in a firm nothing can drain.
         world
             .pay(business, owner, Metal::Gold, draw)
             .expect("min-bounded by the live coffer, both ids validated");
@@ -962,6 +1058,40 @@ fn invest(world: &mut World, report: &mut TickReport) {
             0
         };
     }
+}
+
+/// Narrates one liquidation FROM its receipt, in causal order:
+/// settlements, then layoffs, then the closure itself. Amounts are never
+/// re-derived — deltas around the whole command cannot attribute flows
+/// that share a wallet, which is exactly what the owner-as-creditor case
+/// does (see [`ClosureReceipt`]). Shared by phase 6's closure pass and
+/// phase 7's forced liquidation, so both paths narrate identically.
+///
+/// `owner_name` is passed in rather than looked up, because the forced
+/// path cannot look it up: `remove_agent` returns its receipts only after
+/// the leaver — who IS the owner there — is gone. Phase 6 reads the live
+/// agent; phase 7 supplies the name it cloned before the command.
+fn emit_closure(receipt: &ClosureReceipt, owner_name: &str, report: &mut TickReport) {
+    for &(agent, amount) in &receipt.settlements {
+        report.events.push(Event::Settled {
+            business: receipt.business,
+            agent,
+            amount,
+        });
+    }
+    for &agent in &receipt.laid_off {
+        report.events.push(Event::LaidOff {
+            agent,
+            business: receipt.business,
+        });
+    }
+    report.events.push(Event::Closed {
+        business: receipt.business,
+        house: receipt.house,
+        owner: receipt.owner,
+        owner_name: owner_name.to_string(),
+        proceeds: receipt.residual.clone(),
+    });
 }
 
 /// Phase 7: degradation, imports, and — since pack 4 — emigration.
@@ -1016,10 +1146,20 @@ fn apply_sinks_intent(world: &mut World, intent: Intent, report: &mut TickReport
             // report exactly what the command moved, never a
             // re-derivation that could drift.
             let name = person.name.clone();
+            // The around-the-command delta recipe is valid ONLY where an
+            // account has a single flow inside the command. Since
+            // Amendment 19, a firm the leaver OWNS is liquidated inside
+            // `remove_agent`: its coffer is drained by settlements to
+            // every creditor plus the residual sweep, so `before − after`
+            // would be the whole coffer and would surface as one bogus
+            // A17 `Settled` to the leaver. Those firms narrate from their
+            // receipts instead, so they are excluded here.
             let creditors: Vec<(AgentId, Money)> = world
                 .businesses()
                 .filter(|(_, business)| {
-                    business.owed_to.get(&agent).copied().unwrap_or(Money::ZERO) > Money::ZERO
+                    business.owner != agent
+                        && business.owed_to.get(&agent).copied().unwrap_or(Money::ZERO)
+                            > Money::ZERO
                 })
                 .map(|(_, business)| {
                     (
@@ -1032,8 +1172,16 @@ fn apply_sinks_intent(world: &mut World, intent: Intent, report: &mut TickReport
                 .iter()
                 .map(|&metal| (metal, world.accounts.balance_of(world.external_id, metal)))
                 .collect();
-            if world.remove_agent(agent).is_err() {
+            // The receipts MUST be bound: `.is_err()` here would compile
+            // unchanged and silently discard every forced liquidation,
+            // giving a green build that narrates no closure at all.
+            let Ok(receipts) = world.remove_agent(agent) else {
                 return; // existence checked above — dies cleanly regardless
+            };
+            // Causal order: the liquidations, then the A17 settlement of
+            // OTHER firms' debts, then the departure itself.
+            for receipt in &receipts {
+                emit_closure(receipt, &name, report);
             }
             for (business, before) in creditors {
                 let amount = before.minus(world.accounts.balance_of(business, Metal::Gold));
@@ -1501,6 +1649,51 @@ mod tests {
         );
     }
 
+    /// A venue whose owner is NOT on its payroll — the separation
+    /// `staffed_business` cannot give (it makes its sole worker the
+    /// owner, so every "a worker departs" test built on it is secretly
+    /// an owner-emigration test once forced liquidation lands). The
+    /// owner is the inert on-premises landlord of `open_slot_business`:
+    /// workplace set, `employed_role` None, so both labor decides skip
+    /// them, `staff_in_role` ignores them and payroll accrues them
+    /// nothing. Off-premises is NOT an option — an unemployed landlord
+    /// would apply for their own open slot and the vacancy would never
+    /// age. Same caveat as `open_slot_business`: `produce` counts staff
+    /// via the workplace-based `employees_of`, so full-tick tests on
+    /// this fixture produce at staff+1.
+    fn landlord_owner_business(
+        world: &mut World,
+        address: &str,
+        product: Good,
+        price: Money,
+        wage: Money,
+        headcount: u32,
+        owner_name: &str,
+    ) -> (HouseId, AgentId, AgentId) {
+        let house = world.add_house(address, vec![]);
+        let owner = world.spawn_agent(owner_name, None, Some(house));
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage,
+                headcount,
+                unfilled_ticks: 0,
+            },
+        );
+        let business = world
+            .create_business(house, owner, product, price, roles)
+            .expect("fresh house, spawned owner");
+        (house, business, owner)
+    }
+
+    /// Spawns a worker straight into `house`'s Labourer slot.
+    fn hire_at(world: &mut World, house: HouseId, name: &str) -> AgentId {
+        let worker = world.spawn_agent(name, None, Some(house));
+        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
+        worker
+    }
+
     /// Reads the insolvency fuse (pack 2) off a live business.
     fn insolvent_ticks(world: &World, house: HouseId) -> u32 {
         world
@@ -1648,29 +1841,173 @@ mod tests {
     }
 
     #[test]
-    fn draw_skips_a_dangling_owner_cleanly() {
-        // The pack-1 interim rule (spec, draw contract): an owner removed
-        // before pack 2's forced liquidation leaves a dangling id — the
-        // draw skips, no transfer, no event, no panic. Retired when
-        // remove_agent learns to liquidate.
+    fn closure_fires_on_persistence_and_narrates_from_the_receipt() {
+        // The doomed venue that dies with its staff STILL EMPLOYED, so
+        // the layoffs are observable. The shortfall is deliberately tiny:
+        // per worker per tick it must satisfy s ≤ 3w/(k+1) — three bills
+        // is the quit bar (`QUIT_ARREARS_BILLS`) and the venue survives
+        // k+1 payroll ticks — or the workers walk first and this silently
+        // becomes a quit test with an empty LaidOff vector, still green,
+        // proving less. Here w = 40 and s = 2.
+        //
+        // `labor_market` is deliberately NOT run: its wage write-back
+        // would move the bill under the arithmetic above. The quit path
+        // is pinned separately by `closure_fires_after_quits_freeze_the_
+        // ledger`.
         let mut world = World::new();
-        let (_, farm, worker) = staffed_business(
+        let (house, venue, owner) = landlord_owner_business(
             &mut world,
-            "Farm",
-            Good::Food,
-            Money::new(1),
-            Money::new(35),
-            "f",
+            "The Brass Bell",
+            Good::Entertainment,
+            Money::new(3),
+            Money::new(40),
+            2,
+            "karl",
         );
-        world.accounts.mint(farm, Metal::Gold, Money::new(150));
-        world.remove_agent(worker).unwrap(); // the owner emigrates
+        let first = hire_at(&mut world, house, "a");
+        let second = hire_at(&mut world, house, "b");
+
+        // Twelve ticks of very nearly making payroll: 78g against an 80g
+        // bill, so exactly one worker ends each tick 2g short.
+        for tick in 1..=CLOSE_INSOLVENT_TICKS {
+            world.accounts.mint(venue, Metal::Gold, Money::new(78));
+            let mut report = TickReport::default();
+            pay_wages(&mut world, &mut report);
+            invest(&mut world, &mut report);
+            assert_eq!(insolvent_ticks(&world, house), tick);
+            assert!(
+                world.house(house).unwrap().business.is_some(),
+                "must not close before the fuse burns down"
+            );
+        }
+        // The thirteenth tick: the counter is AT the threshold when phase
+        // 6 reads the phase-start snapshot — one tick of designed latency
+        // after it crossed.
+        world.accounts.mint(venue, Metal::Gold, Money::new(78));
+        let mut report = TickReport::default();
+        pay_wages(&mut world, &mut report);
+        // Phase-4 revenue lands AFTER payroll — the one way a venue
+        // carrying arrears can hold gold at phase 6. Enough to clear the
+        // ledger and leave 12g over.
+        let arrears = world
+            .house(house)
+            .unwrap()
+            .business
+            .as_ref()
+            .unwrap()
+            .owed_total();
+        world
+            .accounts
+            .mint(venue, Metal::Gold, arrears.plus(Money::new(12)));
         let mut report = TickReport::default();
         invest(&mut world, &mut report);
-        assert_eq!(report.events, vec![]);
+
+        // Neither worker was ever close to walking out.
+        assert!(arrears < Money::new(40).times(QUIT_ARREARS_BILLS));
+        // Settlements first, then the layoffs, then the closure itself.
         assert_eq!(
-            world.accounts.balance_of(farm, Metal::Gold),
-            Money::new(150)
+            report.events,
+            vec![
+                Event::Settled {
+                    business: venue,
+                    agent: second, // the only creditor: `first` is paid in full
+                    amount: arrears,
+                },
+                // ascending AgentId, and the on-premises landlord counts:
+                // closure clears EVERY workplace pointing at the venue,
+                // owner included, so nobody is left working at a firm
+                // that no longer exists
+                Event::LaidOff {
+                    agent: owner,
+                    business: venue,
+                },
+                Event::LaidOff {
+                    agent: first,
+                    business: venue,
+                },
+                Event::LaidOff {
+                    agent: second,
+                    business: venue,
+                },
+                Event::Closed {
+                    business: venue,
+                    house,
+                    owner,
+                    owner_name: "karl".to_string(),
+                    proceeds: vec![
+                        (Metal::Gold, Money::new(12)),
+                        (Metal::Silver, Money::ZERO),
+                        (Metal::Copper, Money::ZERO),
+                    ],
+                },
+            ],
+            "closure narrates settlements, then layoffs, then the death"
         );
+        // karl pockets 12g; the firm is gone and holds nothing.
+        assert_eq!(
+            world.accounts.balance_of(owner, Metal::Gold),
+            Money::new(12)
+        );
+        assert!(world.house(house).unwrap().business.is_none());
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(venue, metal), Money::ZERO);
+        }
+        // The landlord-owner is laid off with everyone else, so nobody is
+        // left standing in a firm that no longer exists.
+        for worker in [first, second, owner] {
+            assert_eq!(world.agent(worker).unwrap().workplace, None);
+        }
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn closure_fires_after_quits_freeze_the_ledger() {
+        // The reachability proof an arrears-LEVEL gate cannot give: a
+        // worker walks out, their entry freezes (pay_wages iterates
+        // current employees only), the deadbeat exclusion keeps them from
+        // reapplying — and the venue is left owing a debt no mechanic can
+        // ever pay down. Persistence is the one signal that still fires.
+        let mut world = World::new();
+        let (house, venue, _owner) = landlord_owner_business(
+            &mut world,
+            "Doomed",
+            Good::Entertainment,
+            Money::new(3),
+            Money::new(20),
+            1,
+            "boss",
+        );
+        let worker = hire_at(&mut world, house, "w");
+        let mut quit_tick = None;
+        let mut closed_tick = None;
+        for tick in 1..=(CLOSE_INSOLVENT_TICKS + 1) {
+            let mut report = TickReport::default();
+            labor_market(&mut world, &mut report);
+            pay_wages(&mut world, &mut report);
+            invest(&mut world, &mut report);
+            for event in &report.events {
+                match event {
+                    Event::Quit { .. } => quit_tick = Some(tick),
+                    Event::Closed { .. } => closed_tick = Some(tick),
+                    _ => {}
+                }
+            }
+        }
+        // The cheaper correction fires first — by a wide margin at this
+        // shortfall size, which is the ordering the trigger is tuned for.
+        let quit = quit_tick.expect("the worker never walked out");
+        let closed = closed_tick.expect("the venue never closed");
+        assert!(
+            quit < closed,
+            "worker churn must precede closure (quit t{quit}, closed t{closed})"
+        );
+        assert!(world.house(house).unwrap().business.is_none());
+        // Nothing was left to pay the frozen debt with, and the ex-worker
+        // keeps whatever payroll managed before the coffer ran dry.
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(venue, metal), Money::ZERO);
+        }
+        assert!(world.agent(worker).is_some(), "a quitter stays in town");
         world.accounts.audit();
     }
 
@@ -2605,16 +2942,190 @@ mod tests {
     }
 
     #[test]
-    fn settlement_is_narrated_before_the_departure() {
+    fn owner_emigration_forces_liquidation_no_orphans_on_either_id() {
+        // Amendment 19's path, unreachable in the shipped town (its owners
+        // are employed and solvent), so it is proven here or it ships
+        // untested. The leaver is simultaneously the owner AND a creditor
+        // of their own firm — the underdetermined-flow case the
+        // ClosureReceipt exists for: their wallet delta is settlement
+        // PLUS proceeds, and no delta taken around the whole command can
+        // separate the two.
         let mut world = World::new();
-        let (farm_house, farm, worker) = staffed_business(
+        // A surviving Food seller, so phase 7 has a price to judge
+        // destitution against and someone to owe the leaver money.
+        let (_bakery_house, bakery, _baker) = landlord_owner_business(
+            &mut world,
+            "Bakery",
+            Good::Food,
+            Money::new(5),
+            Money::new(10),
+            1,
+            "baker",
+        );
+        // The leaver owns the mill and works there — the shipped
+        // owner-operator shape.
+        let mill_house = world.add_house("Mill", vec![]);
+        let leaver = world.spawn_agent("mira", None, Some(mill_house));
+        world.agent_mut(leaver).unwrap().employed_role = Some(Role::Labourer);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(20),
+                headcount: 2,
+                unfilled_ticks: 0,
+            },
+        );
+        let mill = world
+            .create_business(mill_house, leaver, Good::Luxury, Money::new(4), roles)
+            .expect("fresh house, spawned owner");
+        let hand = hire_at(&mut world, mill_house, "hand");
+        world.accounts.mint(mill, Metal::Gold, Money::new(50));
+        world.accounts.mint(mill, Metal::Silver, Money::new(6));
+        {
+            let ledger = &mut world
+                .house_mut(mill_house)
+                .unwrap()
+                .business
+                .as_mut()
+                .unwrap()
+                .owed_to;
+            ledger.insert(leaver, Money::new(40));
+            ledger.insert(hand, Money::new(30));
+        }
+        // ...and an unrelated firm owes the leaver too, so the pure
+        // Amendment-17 path still runs alongside the liquidation.
+        world.accounts.mint(bakery, Metal::Gold, Money::new(100));
+        world
+            .house_mut(_bakery_house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::new(25));
+        world.agent_mut(leaver).unwrap().hunger = DEPART_HUNGER_TICKS;
+
+        let external_before = world.accounts.balance_of(world.external_id, Metal::Gold);
+        let mut report = TickReport::default();
+        sinks(&mut world, &mut report);
+
+        assert_eq!(
+            report.events,
+            vec![
+                // step 0, from the receipt: creditors ascending — the
+                // owner takes 40 of the 50g coffer, the hand the rest
+                Event::Settled {
+                    business: mill,
+                    agent: leaver,
+                    amount: Money::new(40),
+                },
+                Event::Settled {
+                    business: mill,
+                    agent: hand,
+                    amount: Money::new(10),
+                },
+                Event::LaidOff {
+                    agent: leaver,
+                    business: mill,
+                },
+                Event::LaidOff {
+                    agent: hand,
+                    business: mill,
+                },
+                Event::Closed {
+                    business: mill,
+                    house: mill_house,
+                    owner: leaver,
+                    // the id resolves to nothing by emission time — this
+                    // is why the event carries the name
+                    owner_name: "mira".to_string(),
+                    proceeds: vec![
+                        (Metal::Gold, Money::ZERO), // creditors took it all
+                        (Metal::Silver, Money::new(6)),
+                        (Metal::Copper, Money::ZERO),
+                    ],
+                },
+                // then Amendment 17, for the firm the leaver does NOT own
+                Event::Settled {
+                    business: bakery,
+                    agent: leaver,
+                    amount: Money::new(25),
+                },
+                // 40 own-arrears + 25 A17 + 6s of liquidation proceeds
+                Event::Departed {
+                    agent: leaver,
+                    name: "mira".to_string(),
+                    took: vec![
+                        (Metal::Gold, Money::new(65)),
+                        (Metal::Silver, Money::new(6)),
+                        (Metal::Copper, Money::ZERO),
+                    ],
+                },
+            ],
+            "forced liquidation narrates in causal order, from the receipts"
+        );
+        // No BOGUS A17 Settled for the mill: without the owned-firm
+        // exclusion the snapshot would report its whole 50g coffer delta
+        // as one settlement to the leaver.
+        assert_eq!(
+            report
+                .events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::Settled {
+                        business, amount, ..
+                    } if *business == mill && *amount == Money::new(50)
+                ))
+                .count(),
+            0
+        );
+        // Both dead ids are empty on every metal — the per-account proof
+        // the totals-only audit cannot make.
+        for dead in [mill, leaver] {
+            for metal in Metal::ALL {
+                assert_eq!(
+                    world.accounts.balance_of(dead, metal),
+                    Money::ZERO,
+                    "orphan balance parked on {dead:?}"
+                );
+            }
+        }
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            external_before.plus(Money::new(65))
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Silver),
+            Money::new(6)
+        );
+        // The hand keeps their partial settlement and their freedom.
+        assert_eq!(world.accounts.balance_of(hand, Metal::Gold), Money::new(10));
+        assert_eq!(world.agent(hand).unwrap().workplace, None);
+        // The freed house is a landing pad.
+        assert!(world.house(mill_house).unwrap().business.is_none());
+        assert!(world.occupants_of(mill_house).is_empty());
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn settlement_is_narrated_before_the_departure() {
+        // The leaver must NOT own the firm, or this stops pinning
+        // Amendment 17 and becomes a forced-liquidation test (which
+        // `owner_emigration_forces_liquidation_no_orphans_on_either_id`
+        // covers separately).
+        let mut world = World::new();
+        let (farm_house, farm, _owner) = landlord_owner_business(
             &mut world,
             "Farm",
             Good::Food,
             Money::new(2),
             Money::new(35),
-            "f",
+            1,
+            "boss",
         );
+        let worker = hire_at(&mut world, farm_house, "f");
         world.accounts.mint(farm, Metal::Gold, Money::new(20));
         world
             .house_mut(farm_house)
@@ -2904,19 +3415,94 @@ mod tests {
     }
 
     #[test]
-    fn departed_workers_slot_ages_into_a_pull() {
-        // the full chain at unit granularity: a worker departs, their
-        // slot opens and ages, the pull answers, the newcomer takes the
-        // very job the leaver freed
+    fn arrive_pull_skips_arrears_carrying_venues() {
+        // The pack-4 handoff, resolved by rule: an aged slot at a venue
+        // that owes back wages pulls nobody. Same slot, ledger clear —
+        // it pulls. The recorded deadbeat-recruitment bug, closed.
+        // Two slots, one filled: the vacancy ages while the venue owes
+        // its sitting worker. Everyone in this world is employed, so no
+        // local applicant can beat the pull and mask the rule under test.
         let mut world = World::new();
-        let (_, farm, worker) = staffed_business(
+        let (house, _venue, _owner) = landlord_owner_business(
             &mut world,
             "Farm",
             Good::Food,
             Money::new(2),
             Money::new(35),
-            "f",
+            2,
+            "boss",
         );
+        let worker = hire_at(&mut world, house, "w");
+        world.add_house("5 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(500));
+        world
+            .house_mut(house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(worker, Money::new(1)); // one coin is enough
+
+        for _ in 0..=VACANCY_PULL_TICKS {
+            let mut report = TickReport::default();
+            labor_market(&mut world, &mut report);
+            assert!(
+                !report
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::Arrived { .. })),
+                "a venue owing back wages must not pull a newcomer"
+            );
+        }
+        // The slot HAS aged — it is the arrears, not the age, refusing.
+        assert!(
+            world.house(house).unwrap().business.as_ref().unwrap().roles[&Role::Labourer]
+                .unfilled_ticks
+                >= VACANCY_PULL_TICKS
+        );
+        // Clear the ledger and the very same slot pulls.
+        world
+            .house_mut(house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .clear();
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert!(
+            report
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Arrived { .. })),
+            "the same aged slot must pull once the venue owes nothing"
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn departed_workers_slot_ages_into_a_pull() {
+        // the full chain at unit granularity: a worker departs, their
+        // slot opens and ages, the pull answers, the newcomer takes the
+        // very job the leaver freed
+        // The owner is the venue's inert landlord, NOT the leaver: were
+        // the leaver the owner, forced liquidation would detach the venue
+        // at the moment of departure and no slot would be left to age.
+        let mut world = World::new();
+        let (farm_house, farm, _owner) = landlord_owner_business(
+            &mut world,
+            "Farm",
+            Good::Food,
+            Money::new(2),
+            Money::new(35),
+            1,
+            "boss",
+        );
+        let worker = hire_at(&mut world, farm_house, "f");
         let cottage = world.add_house("5 Weir Cottage", vec![]);
         world
             .accounts

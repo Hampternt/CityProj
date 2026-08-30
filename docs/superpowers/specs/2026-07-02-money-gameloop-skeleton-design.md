@@ -4,10 +4,19 @@
 [2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md) ·
 `tick` contract, phase-fn shape, and phase-table rows 1/7 amended by
 [2026-08-21-town-colony-sim-design.md](2026-08-21-town-colony-sim-design.md)
-Am. 15–17 · row 6's purpose text amended by
+Am. 15–17 · row 6's purpose text and row 7's money ops amended by
 [2026-08-22-firm-lifecycle-design.md](2026-08-22-firm-lifecycle-design.md)
-Am. 18 (its Am. 19, row 7's forced-liquidation money ops, executes with
-that container's pack 2)
+Am. 18–19
+
+> **Correction, 2026-08-30 (firm-lifecycle pack 2).** Amendments 16 and 17
+> were recorded in this header from 2026-08-21 but never applied to the
+> table itself: row 1's money-ops cell still read "none" and row 7's still
+> read "`burn`, `transfer`→External", while the code followed both and the
+> town-colony pack-4 ledger called Am. 16 "executed". Am. 18 (2026-08-22)
+> did edit its cell in place, which is the convention. Both cells are
+> back-filled here, in the same edit that executes Am. 19 — which amends
+> row 7 and could not otherwise be written onto a cell still missing
+> Am. 17's text.
 
 This spec does double duty: it specifies the skeleton build, and it is the
 **standing reference** future mechanics @-point to for *how to hook into the
@@ -72,13 +81,13 @@ amending this table.
 
 | # | Phase          | Purpose                              | Money ops allowed            | Future mechanic lands here        |
 |---|----------------|--------------------------------------|------------------------------|-----------------------------------|
-| 1 | `labor_market` | match hires, adjust wage offers      | none                         | firms + labor market              |
+| 1 | `labor_market` | match hires, adjust wage offers      | `transfer` External→agent, immigration grubstake only | firms + labor market              |
 | 2 | `produce`      | labor + inputs → goods               | none                         | firm production                   |
 | 3 | `pay_wages`    | firms pay agreed wages               | `transfer` only              | wages (needs firms)               |
 | 4 | `goods_market` | agents buy goods, prices adjust      | `transfer` only              | needs-driven purchasing, pricing  |
 | 5 | `consume`      | goods consumed toward needs          | none                         | needs fulfillment                 |
 | 6 | `invest`       | take profit / found & liquidate firms (capacity expansion still TODO) | `transfer` only              | firm investment                   |
-| 7 | `sinks`        | degradation, imports                 | `burn`, `transfer`→External  | demurrage, external purchases     |
+| 7 | `sinks`        | degradation, imports                 | `burn`, `transfer`→External; `transfer` business→departing agent, arrears settlement only, immediately preceding that agent's sweep to External; forced-liquidation transfers when the departing agent owns a business — business→creditor arrears settlements and business→departing-owner per-metal residual — immediately preceding that owner's Amendment-17 settlement and sweep | demurrage, external purchases     |
 | 8 | `mint_phase`   | new money from reserve               | `mint` only                  | mint job, gold backing cap        |
 | 9 | *audit*        | conservation check                   | read-only                    | never gains behavior              |
 

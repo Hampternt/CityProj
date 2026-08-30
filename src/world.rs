@@ -154,7 +154,6 @@ pub enum WorldError {
     /// The house exists but hosts no business — the structural inverse of
     /// [`BusinessAlreadyExists`](WorldError::BusinessAlreadyExists).
     /// Refused by `close_business`.
-    #[allow(dead_code)] // constructed once phase 6 closes firms (pack-2 item 3)
     NoBusinessHere(HouseId),
     /// Not a vacant residence: it has occupants or hosts a business —
     /// v1's entire vacancy rule (ownership plays no part). Refused by
@@ -174,7 +173,6 @@ pub enum WorldError {
 /// Each amount here is measured around its own internal `pay`; callers
 /// emit events FROM the receipt, never by re-deriving.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // no caller until phase 6 closes firms (pack-2 item 3)
 pub struct ClosureReceipt {
     /// The dead firm's account id. Resolves to nothing once the command
     /// returns — `is_known_account` scans the live `businesses()` set.
@@ -422,7 +420,6 @@ impl World {
     /// conservation rule, and the physical-goods spec inherits the
     /// question). Steady-state caller: phase 6's closure pass. Forced
     /// caller: [`remove_agent`](World::remove_agent) (Amendment 19).
-    #[allow(dead_code)] // no caller until phase 6 closes firms (pack-2 item 3)
     pub fn close_business(&mut self, house: HouseId) -> Result<ClosureReceipt, WorldError> {
         let Some(existing) = self.house(house) else {
             return Err(WorldError::UnknownHouse(house));
@@ -507,11 +504,36 @@ impl World {
     /// validation no internal transfer can fail — every amount is
     /// min-bounded by a live balance and both ids are known — so the
     /// command is atomic by construction.
-    pub fn remove_agent(&mut self, agent: AgentId) -> Result<(), WorldError> {
+    pub fn remove_agent(&mut self, agent: AgentId) -> Result<Vec<ClosureReceipt>, WorldError> {
         if self.agent(agent).is_none() {
             return Err(WorldError::UnknownAgent(agent));
         }
-        // Settlement (Amendment 17): businesses in houses order.
+        // Step 0 (Amendment 19): the leaver's own firms are liquidated
+        // FIRST — before the A17 settlement, so any debt those firms owe
+        // the leaver is paid by `close_business`'s own creditor pass and
+        // the proceeds ride the sweep below. The `Vec<HouseId>` snapshot
+        // is mandatory: iterating `businesses()` while calling
+        // `close_business` is E0502. It is also safe against
+        // mutation-during-iteration, since closing only detaches houses
+        // already named in it. The leaver is still a known account here
+        // (removal is last), so the residual `pay` to them succeeds.
+        let owned: Vec<HouseId> = self
+            .businesses()
+            .filter(|(_, business)| business.owner == agent)
+            .map(|(house, _)| house.id)
+            .collect();
+        let mut receipts = Vec::new();
+        for house in owned {
+            receipts.push(
+                self.close_business(house)
+                    .expect("collected from businesses()"),
+            );
+        }
+        // Settlement (Amendment 17): businesses in houses order. Firms
+        // closed in step 0 are already detached, so they cannot be
+        // double-settled here — no exclusion filter is needed at this
+        // site (the one the spec mandates belongs to the CALLER's
+        // creditors snapshot, which is taken before the command).
         let debts: Vec<(HouseId, AgentId, Money)> = self
             .businesses()
             .filter_map(|(house, business)| {
@@ -551,7 +573,7 @@ impl World {
             house.owners.retain(|&owner| owner != agent);
         }
         self.agents.retain(|person| person.id != agent);
-        Ok(())
+        Ok(receipts)
     }
 
     /// The migration-gated arrival command (town-colony pack 4) — a

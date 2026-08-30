@@ -74,6 +74,7 @@ pub fn run() {
 /// Folds one tick's events into each starring agent's last-3 buffer.
 /// Business-only events (production, price moves) star nobody.
 fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, report: &TickReport) {
+    let dead = dead_business_addresses(world, report);
     for event in &report.events {
         let starring = match event {
             Event::Hired { agent, .. } | Event::Quit { agent, .. } => Some(*agent),
@@ -81,8 +82,10 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
             Event::WagePaid { worker, .. } | Event::PayrollShort { worker, .. } => Some(*worker),
             Event::Sold { buyer, .. } => Some(*buyer),
             Event::WentHungry { agent } => Some(*agent),
-            // profit is the owner's story
-            Event::ProfitDrawn { owner, .. } => Some(*owner),
+            // losing your employer is your story, not the firm's
+            Event::LaidOff { agent, .. } => Some(*agent),
+            // profit is the owner's story — so is the end of the firm
+            Event::ProfitDrawn { owner, .. } | Event::Closed { owner, .. } => Some(*owner),
             // the leaver's id resolves to nothing once they are gone
             Event::Produced { .. }
             | Event::PriceMoved { .. }
@@ -95,7 +98,7 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
             if lines.len() == 3 {
                 lines.remove(0);
             }
-            lines.push(render_event(world, event));
+            lines.push(render_event(world, &dead, event));
         }
         // a leaver's buffer is unreachable once they're gone — drop it
         // so churny long runs don't leak dead entries
@@ -193,6 +196,7 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
 /// order). Presentation only: events stay granular for tests and the
 /// inspect buffer.
 fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
+    let dead = dead_business_addresses(world, report);
     // (business, workers paid, total gold)
     let mut wages: Vec<(AgentId, u32, Money)> = Vec::new();
     // (business, good, snapshot price, units, buyers)
@@ -204,6 +208,11 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     let mut shorts = Vec::new();
     let mut moves = Vec::new();
     let mut hungry = Vec::new();
+    // Phase-6 closures land before the draws (phase-6 internal order),
+    // and stay individual lines — a death is never routine enough to
+    // aggregate. A phase-7 forced liquidation therefore still reads
+    // before its own `Departed` line down in `leavers`.
+    let mut closures = Vec::new();
     // Phase-6 draws land between hunger and the leavers, per phase order.
     let mut draws = Vec::new();
     // Phase-7 departures close the feed, in event order (settlements
@@ -214,11 +223,14 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
             Event::Hired { .. }
             | Event::Quit { .. }
             | Event::WageMoved { .. }
-            | Event::Arrived { .. } => labor.push(render_event(world, event)),
+            | Event::Arrived { .. } => labor.push(render_event(world, &dead, event)),
             Event::Settled { .. } | Event::Departed { .. } => {
-                leavers.push(render_event(world, event))
+                leavers.push(render_event(world, &dead, event))
             }
-            Event::Produced { .. } => produced.push(render_event(world, event)),
+            Event::Closed { .. } | Event::LaidOff { .. } => {
+                closures.push(render_event(world, &dead, event))
+            }
+            Event::Produced { .. } => produced.push(render_event(world, &dead, event)),
             Event::WagePaid {
                 business, amount, ..
             } => {
@@ -229,7 +241,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
                     wages.push((*business, 1, *amount));
                 }
             }
-            Event::PayrollShort { .. } => shorts.push(render_event(world, event)),
+            Event::PayrollShort { .. } => shorts.push(render_event(world, &dead, event)),
             Event::Sold {
                 business,
                 good,
@@ -247,9 +259,9 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
                     sales.push((*business, *good, *price, *units, 1));
                 }
             }
-            Event::PriceMoved { .. } => moves.push(render_event(world, event)),
-            Event::WentHungry { .. } => hungry.push(render_event(world, event)),
-            Event::ProfitDrawn { .. } => draws.push(render_event(world, event)),
+            Event::PriceMoved { .. } => moves.push(render_event(world, &dead, event)),
+            Event::WentHungry { .. } => hungry.push(render_event(world, &dead, event)),
+            Event::ProfitDrawn { .. } => draws.push(render_event(world, &dead, event)),
         }
     }
     let mut lines = labor;
@@ -271,6 +283,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     }
     lines.extend(moves);
     lines.extend(hungry);
+    lines.extend(closures);
     lines.extend(draws);
     lines.extend(leavers);
     lines
@@ -279,7 +292,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
 /// One feed line for one event. The match is exhaustive on purpose — a
 /// new `Event` variant fails compilation here instead of silently missing
 /// from the feed. All feed amounts are gold this milestone, rendered `35g`.
-fn render_event(world: &World, event: &Event) -> String {
+fn render_event(world: &World, dead: &HashMap<AgentId, String>, event: &Event) -> String {
     match event {
         Event::Quit {
             agent,
@@ -288,7 +301,7 @@ fn render_event(world: &World, event: &Event) -> String {
         } => format!(
             "{} quit {} (still owed {owed}g)",
             agent_name(world, *agent),
-            business_address(world, *business),
+            business_label(world, dead, *business),
         ),
         Event::Hired {
             agent,
@@ -298,7 +311,7 @@ fn render_event(world: &World, event: &Event) -> String {
         } => format!(
             "{} hired at {} as {role} @ {wage}g",
             agent_name(world, *agent),
-            business_address(world, *business),
+            business_label(world, dead, *business),
         ),
         Event::WageMoved {
             business,
@@ -309,7 +322,7 @@ fn render_event(world: &World, event: &Event) -> String {
             let verb = if to > from { "raised" } else { "lowered" };
             format!(
                 "{} {verb} {role} wages to {to}g",
-                business_address(world, *business)
+                business_label(world, dead, *business)
             )
         }
         Event::Produced {
@@ -318,7 +331,7 @@ fn render_event(world: &World, event: &Event) -> String {
             units,
         } => format!(
             "{} produced {units} {good}",
-            business_address(world, *business)
+            business_label(world, dead, *business)
         ),
         Event::WagePaid {
             business,
@@ -326,7 +339,7 @@ fn render_event(world: &World, event: &Event) -> String {
             amount,
         } => format!(
             "{} paid {} {amount}g",
-            business_address(world, *business),
+            business_label(world, dead, *business),
             agent_name(world, *worker),
         ),
         Event::PayrollShort {
@@ -335,7 +348,7 @@ fn render_event(world: &World, event: &Event) -> String {
             remaining,
         } => format!(
             "{} still owes {} {remaining}g in wages",
-            business_address(world, *business),
+            business_label(world, dead, *business),
             agent_name(world, *worker),
         ),
         Event::Sold {
@@ -347,7 +360,7 @@ fn render_event(world: &World, event: &Event) -> String {
         } => format!(
             "{} bought {units} {good} @ {price}g from {}",
             agent_name(world, *buyer),
-            business_address(world, *business),
+            business_label(world, dead, *business),
         ),
         Event::PriceMoved {
             business,
@@ -358,7 +371,7 @@ fn render_event(world: &World, event: &Event) -> String {
             let verb = if to > from { "raised" } else { "lowered" };
             format!(
                 "{} {verb} {good} to {to}g",
-                business_address(world, *business)
+                business_label(world, dead, *business)
             )
         }
         Event::WentHungry { agent } => {
@@ -370,7 +383,7 @@ fn render_event(world: &World, event: &Event) -> String {
             amount,
         } => format!(
             "{} paid {} {amount}g profit",
-            business_address(world, *business),
+            business_label(world, dead, *business),
             agent_name(world, *owner),
         ),
         Event::Arrived { name, home, .. } => format!(
@@ -384,8 +397,37 @@ fn render_event(world: &World, event: &Event) -> String {
             business, amount, ..
         } => format!(
             "{} paid out {amount}g of back wages to a leaver",
-            business_address(world, *business),
+            business_label(world, dead, *business),
         ),
+        Event::LaidOff { agent, business } => format!(
+            "{} was laid off by {}",
+            agent_name(world, *agent),
+            business_label(world, dead, *business),
+        ),
+        Event::Closed {
+            house,
+            owner_name,
+            proceeds,
+            ..
+        } => {
+            let address = world
+                .house(*house)
+                .map(|house| house.address.clone())
+                .unwrap_or_else(|| "(unknown house)".to_string());
+            let taken: Vec<String> = proceeds
+                .iter()
+                .filter(|(_, amount)| *amount > crate::money::Money::ZERO)
+                .map(|(metal, amount)| format!("{amount}{}", metal_tag(*metal)))
+                .collect();
+            if taken.is_empty() {
+                format!("{address} closed — nothing left for {owner_name}")
+            } else {
+                format!(
+                    "{address} closed — {owner_name} pockets {}",
+                    taken.join(" ")
+                )
+            }
+        }
         Event::Departed { name, took, .. } => {
             let holdings: Vec<String> = took
                 .iter()
@@ -399,6 +441,37 @@ fn render_event(world: &World, event: &Event) -> String {
             }
         }
     }
+}
+
+/// Every business this report saw CLOSE, mapped to the address it traded
+/// from. A closed firm drops out of `businesses()` the instant it detaches,
+/// so its `Settled` and `LaidOff` lines — emitted in the same tick — would
+/// otherwise render as `(unknown business)`. Built once per report, so
+/// intra-tick event order never affects resolution.
+fn dead_business_addresses(world: &World, report: &TickReport) -> HashMap<AgentId, String> {
+    report
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Closed {
+                business, house, ..
+            } => world
+                .house(*house)
+                .map(|house| (*business, house.address.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A business id as a label: its live address, else the address it traded
+/// from before closing this tick, else the honest fallback.
+fn business_label(world: &World, dead: &HashMap<AgentId, String>, id: AgentId) -> String {
+    world
+        .businesses()
+        .find(|(_, business)| business.id == id)
+        .map(|(house, _)| house.address.clone())
+        .or_else(|| dead.get(&id).cloned())
+        .unwrap_or_else(|| "(unknown business)".to_string())
 }
 
 /// A business has no name of its own — it renders as its house's address.
