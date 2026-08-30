@@ -31,7 +31,9 @@ criteria and frozen; the manifests record every measured deviation.
 `roster` lists every agent on a line — job, wallet, pantry. Typing an
 agent's name inspects one person (balances, home, workplace, goods, hunger,
 and the last three feed lines they starred in); typing a business's address
-inspects the business. Inspection output waits for Enter, so it can
+inspects the business, including how far along its insolvency fuse has
+burned. An address whose business has closed still inspects — as the vacant
+residence it has become. Inspection output waits for Enter, so it can
 actually be read before the next redraw.
 
 ## What a tick does
@@ -69,23 +71,40 @@ The behaviors you can watch play out over successive ticks:
   pays its gold above a retained safety buffer — three payrolls deep, plus
   every coin of back wages it still owes — to its owner, narrated in the
   feed. Creditors therefore always sit ahead of the owner, though a venue
-  earning well enough to cover both still pays out. An owner who leaves
-  town leaves their venue's draws suspended until closure lands.
-  Coffers no longer pool without bound; the owner's wealth does, which is
-  the capital the coming founding mechanic spends.
+  earning well enough to cover both still pays out. Coffers no longer pool
+  without bound; the owner's wealth does, which is the capital the coming
+  founding mechanic spends.
+- **Failing firms die.** A business that ends a tick owing back wages is
+  carrying a lit fuse, shown in the feed as its distress count; carry it
+  long enough and the venue liquidates. Its creditors — current and former
+  workers alike — are paid in turn from whatever the coffer holds, oldest
+  resident first, and what it cannot cover is written off. The staff are
+  laid off and rejoin the labour pool the next day, every metal left in the
+  coffers goes to the owner, and the address becomes a vacant residence
+  that a newcomer can move into. The fuse is set well above anything a
+  healthy venue ever reaches: in the tuned town nothing closes at all, and
+  a worker walking out over unpaid wages — the cheaper correction —
+  reliably comes first. An owner who leaves town takes their firms with
+  them: those liquidate on the way out, so no business is ever left
+  ownerless. And a job standing open at a venue that owes back wages will
+  no longer draw a newcomer to town.
 
 🚧 Firm lifecycle in flight
-(`docs/manifests/2026-08-22-firm-lifecycle.md`): closure (a persistently
-insolvent venue liquidates — back wages settled, staff laid off, the
-residual to its owner, the freed house a landing pad) and founding (a
-capitalized resident opens a replacement venue into measured scarcity)
-land as packs 2–3; the profit draw above was pack 1.
+(`docs/manifests/2026-08-22-firm-lifecycle.md`): founding — a capitalized
+resident opening a replacement venue into measured scarcity — lands as
+pack 3. Until it does, firms can die but not be born, and a long run
+thins out: on the shipped town five of six venues are gone by tick 172
+and the population falls with them. That is the deliberate order of the
+work, not a defect, and founding is what turns it back around.
 
 Money is strictly conserved: each metal's total is fixed at whatever the
 world was seeded with, and the sim halts rather than continue if a tick ever
-fails to balance — arrivals and departures included. Business closure and
+fails to balance — arrivals, departures and liquidations included. Business
 founding, degradation sinks beyond emigration, and coin minting are not
-simulated yet — those ticks pass through untouched.
+simulated yet — those ticks pass through untouched. A closed firm's unsold
+stock ceases to exist with it: goods, unlike money, carry no conservation
+rule, and where they physically go is a question the future goods-movement
+work inherits.
 
 - **Coins of three metals** rather than one abstract unit: every balance is
   held per metal (the shell shows them as `g:.. s:.. c:..`) and the

@@ -54,8 +54,11 @@ new mechanics into the loop and money:
   per-worker `owed_to` wage-arrears ledger. Since firm-lifecycle pack 1
   every `Business` names a living `owner` (required, validated at
   creation, strictly distinct from the still-rule-inert `House.owners`);
-  the always-living invariant completes when pack 2's forced liquidation
-  lands — until then phase 6's draw skips a dangling owner by contract.
+  since pack 2 the always-living invariant is complete — forced
+  liquidation in `remove_agent` means a live business always names a
+  live owner, so the pack-1 dangling-owner draw skip is retired. Pack 2
+  also added `insolvent_ticks`, the consecutive-arrears fuse phase 6
+  liquidates on (single writer: `invest`'s tail write-back).
 - `src/goods.rs` — `Good` (closed consumable enum) + the 07-19 per-good
   constants table (consumption, weight, target days, production).
 - `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
@@ -80,7 +83,14 @@ new mechanics into the loop and money:
   counter); firm-lifecycle pack 1 widened `create_business` with the
   validated `owner` param (checked first — reserved/business/ghost ids
   refuse; the 07-13 "wrap, don't widen" precedent is distinguished in
-  that spec: an un-widened path would manufacture ownerless firms).
+  that spec: an un-widened path would manufacture ownerless firms);
+  pack 2 added `close_business` (settle ascending → clear the ledger →
+  lay off → per-metal residual to the OWNER → detach LAST, returning a
+  `ClosureReceipt`; detach is last *mechanically* — `is_known_account`
+  scans the live `businesses()` set, so detaching revokes the id) and
+  the `NoBusinessHere` error, and gave `remove_agent` a step 0 that
+  liquidates the leaver's own firms before the A17 settlement, returning
+  those receipts (Amendment 19).
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
   last, returning a `TickReport` of typed `Event`s (pure observation,
   Amendment 15); `goods_market` holds the worked decide→apply template;
@@ -99,6 +109,14 @@ new mechanics into the loop and money:
   frozen) full-staffing bills plus `owed_total()`, net of arrears by
   contract — to its owner, `Event::ProfitDrawn`, under row 6's
   "transfer only" (Amendment 18 touched only that row's purpose text).
+  Pack 2 put a closure pass ABOVE it (so a closing firm structurally
+  cannot draw) and the `insolvent_ticks` write-back BELOW it, giving one
+  tick of designed latency: the counter crosses at tick t's write-back
+  and the firm closes at t+1's phase 6, so the effective fuse is
+  `CLOSE_INSOLVENT_TICKS + 1` (12, frozen) arrears-ticks. `Event::Closed`
+  / `Event::LaidOff` and both closure paths narrate from the
+  `ClosureReceipt` via `emit_closure` — never from deltas around the
+  command, which cannot attribute flows sharing a wallet.
 - `src/terrain.rs` — world coordinates (`Point3`, 1 unit = 0.1 m) and the
   triangulated integer heightmap (`Terrain`, `elevation_at`); pure movement
   math (`grade`, `travel_time` + `SpeedProfile`) with its tuning constants
@@ -122,12 +140,14 @@ new mechanics into the loop and money:
   totals unchanged by the reorder — gold 52148 / silver 300 / copper
   600). The three town soaks live here — the 100-tick pinned-criteria
   soak (zero quits asserted; since pack 1 also the coffer-at-buffer
-  bound from t20 and every-venue-draws), the 50-tick employment soak
-  (`NEAR_FULL` = 21 of 30, the measured ceiling — re-measured unchanged
-  under the draw), and the 200-tick migration soak (population moves
-  both directions, arrivals answering the demand shock, per-account
-  no-orphan sweeps; re-measured under the draw: first departure t127
-  unchanged, first arrival t175).
+  bound from t20 and every-venue-draws; since pack 2 criterion 7's
+  zero-closures pin, which needs a hand-written vanish-detector because
+  worldgen's `match event` arms end `_ => {}` and force nothing), the
+  50-tick employment soak (`NEAR_FULL` = 21 of 30, unchanged under both
+  packs), and the 200-tick migration soak (population moves both
+  directions, arrivals answering the demand shock, per-account no-orphan
+  sweeps — every inherited criterion still holds under closure, and
+  pack 2 added a deliberately loose cascade floor for pack 3 to raise).
 - `src/engine/game_loop.rs` — interactive shell only (Enter advances a
   tick, `roster` lists agents, a name or business address inspects,
   `map` exports map.json, q quits): town header, aggregated per-tick
@@ -144,13 +164,14 @@ staff), 3 (wages from business coffers, shortfalls carried as `owed_to`
 arrears and repaid when revenue returns), 4 (goods market via
 `Intent::Buy`, then per-business `adjust_price` write-back — new prices
 take effect next tick), 5 (consume — also the single writer of
-`Agent.hunger`), and 7 (emigration only: `Intent::Depart` when hunger ≥
+`Agent.hunger`), and 7 (emigration: `Intent::Depart` when hunger ≥
 `DEPART_HUNGER_TICKS` and gold below the cheapest posted Food price —
-`remove_agent` settles `min(coffer, owed)` per Amendment 17, sweeps
-every metal to External, and strips the leaver), and 6 (the profit
-draw — firm-lifecycle pack 1; closure and founding land there as that
-container's packs 2–3) have behavior; phase 8 and phase 7's
-demurrage/imports are TODO stubs. The tick-time mint faucet is closed:
+since pack 2 `remove_agent` first force-liquidates any firm the leaver
+owns (Amendment 19), then settles `min(coffer, owed)` per Amendment 17,
+sweeps every metal to External, and strips the leaver), and 6 (closure
+then the profit draw — firm-lifecycle packs 1–2; founding lands there
+as pack 3) have behavior; phase 8 and phase 7's demurrage/imports are
+TODO stubs. The tick-time mint faucet is closed:
 worldgen's seed is the entire money supply and the audit pins it there.
 The shipped scenario is `town_world`. If you change structure, update
 this section.
@@ -172,8 +193,14 @@ The **firm lifecycle is in flight**
 spec
 [`docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md`](docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md),
 gate signed 2026-08-22): pack 1 (owners + the phase-6 profit draw)
-landed 2026-08-22; packs 2 (closure, Amendment 19) and 3 (founding)
-follow on the owner's go.
+landed 2026-08-22, pack 2 (closure, forced liquidation, Amendment 19)
+2026-08-30; pack 3 (founding) follows on the owner's go. **Standing
+finding from pack 2's re-measure:** with firms able to die but not yet
+to be born, the shipped 200-tick trajectory cascades — five of six
+venues gone by t172, population 30 → 4. That is the cost of the signed
+"death before birth" sequence, not a mistuning (no threshold that
+separates the two arrears modes avoids it); pack 3's founding is the
+designed cure, and the 200-tick soak's floor is what it must raise.
 
 The terrain playground landed on 2026-08-15 —
 [`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)

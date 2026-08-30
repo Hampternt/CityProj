@@ -1,8 +1,8 @@
 # Firm lifecycle (container)
 
 **Status:** IN FLIGHT — gate signed 2026-08-22; **pack 1 DONE**
-2026-08-22 (`VERIFY OK`, 160 passed); **pack 2 IN PROGRESS** from
-2026-08-30 (the owner's go). Pack 3 planned, on the owner's go.
+2026-08-22 (`VERIFY OK`, 160 passed); **pack 2 DONE** 2026-08-30
+(`VERIFY OK`, 168 passed). Pack 3 planned, on the owner's go.
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-22-firm-lifecycle-design.md](../superpowers/specs/2026-08-22-firm-lifecycle-design.md)
 (approved 2026-08-22; drafted from a judged three-angle proposal panel —
@@ -92,9 +92,8 @@ visibly plateau at the buffer; owners named in roster and inspect.
 ### Pack 2 — Firms die
 
 Item manifest: [2026-08-30-fl-pack2-firms-die.md](2026-08-30-fl-pack2-firms-die.md)
-(IN PROGRESS from 2026-08-30; the closure trigger settled by a fresh
-200-tick probe + a judged four-angle panel — the signed predicate stands,
-`CLOSE_INSOLVENT_TICKS` retunes 6 → 12, one erratum).
+(DONE 2026-08-30; 160 → 168 tests; the re-measured baseline and the
+cascade finding live in its ledger).
 
 `Business.insolvent_ticks` (single writer: phase 6's write-back over the
 live set); `World::close_business` returning the `ClosureReceipt`
