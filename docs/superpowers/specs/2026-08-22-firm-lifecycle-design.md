@@ -320,13 +320,39 @@ while owed, reset to 0 when clear; worldgen seeds 0 (the
 counter dies with it, a just-founded firm records its first measurement
 (0) this tick — never a stale snapshot list that would reach through
 detached houses. Closure fires when the phase-start snapshot shows
-`insolvent_ticks >= CLOSE_INSOLVENT_TICKS` (6 provisional, in sim.rs
-beside the fn) — an arrears-**persistence** trigger, deliberately not an
+`insolvent_ticks >= CLOSE_INSOLVENT_TICKS` (6 provisional at signing;
+retuned to **12** by pack 2 — see the erratum below; in sim.rs beside the
+fn) — an arrears-**persistence** trigger, deliberately not an
 arrears level: the quit rule caps per-worker debt near four wages and
 post-quit arrears freeze, so persistence is the one signal that stays
-reachable. On deep (total-shortfall) trajectories the threshold sits
-beyond the ~4-tick quit horizon, so worker churn — the cheaper
-correction — fires first; a **slow-bleed** venue (revenue persistently a
+reachable. On deep (total-shortfall) trajectories the threshold must sit
+beyond the measured quit horizon, so worker churn — the cheaper
+correction — fires first. *(Erratum, recorded 2026-08-30 during pack 2's
+soak tuning: this sentence first read "the threshold sits beyond the
+~4-tick quit horizon". The "~4" came from reading `QUIT_ARREARS_BILLS`
+against a full-bill-per-tick shortfall. Measured on the 200-tick town
+under the pack-1 draw, shortfalls are partial and the horizon in counter
+units — the value `insolvent_ticks` holds at the phase-start snapshot of
+the tick the first worker quits — is **6** at Longacre Farm (arrears
+onset t128, first quit t134), **5** at The Brass Bell (t141 → t146) and
+**4** at Gilt Curtain Theater (t144 → t148): right at Gilt Curtain,
+understated at the other two. The ordering claim is therefore a tuning
+CONSTRAINT on `CLOSE_INSOLVENT_TICKS`, not a property of the rule.
+Because the write-back is last inside phase 6 and closure reads the
+phase-start snapshot, a firm crossing at tick t closes at t+1, so the
+closure tick is 128+k / 141+k / 144+k and a strict one-tick lead requires
+**k ≥ 7** (Longacre binding). The provisional 6 does not violate the
+ordering outright — it closes Longacre at t134, the same tick as its
+quit, and the quit decide is phase 1 while the closure pass is phase 6,
+so the quit still fires first within the tick — but it leaves that venue
+**zero ticks of slack**, on a trajectory closure itself perturbs. That is
+why 6 cannot ship. Pack 2 retunes `CLOSE_INSOLVENT_TICKS` to **12**
+(provisional at that value until its own re-measure item freezes it):
+healthy 100-tick window max counter 1, doomed terminal streaks
+73 / 60 / 57, closures t140 / t153 / t156 against quits t134 / t146 /
+t148 — slack +6 / +7 / +8. The rule, the strict-positive predicate, the single writer,
+the slow-bleed clause and the healthy-town clause are unchanged; only the
+horizon figure and the constant were wrong.)* A **slow-bleed** venue (revenue persistently a
 few coins short of the bill) crosses the persistence threshold before any
 worker's arrears cross the quit line and is liquidated *without* churn — a
 deliberate design decision stated here, not an oversight: persistent
