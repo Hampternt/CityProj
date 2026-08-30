@@ -196,8 +196,12 @@ gate signed 2026-08-22): pack 1 (owners + the phase-6 profit draw)
 landed 2026-08-22, pack 2 (closure, forced liquidation, Amendment 19)
 2026-08-30; pack 3 (founding) follows on the owner's go. **Standing
 finding from pack 2's re-measure:** with firms able to die but not yet
-to be born, the shipped 200-tick trajectory cascades — five of six
-venues gone by t172, population 30 → 4. That is the cost of the signed
+to be born, the shipped 200-tick trajectory cascades **totally** —
+every venue dies (t140/t153/t156/t171/t172, the last at t201, one tick
+past the soak horizon), leaving no businesses at all and population
+30 → 4. Three of those six were already terminally insolvent under
+pack 1 and merely met a threshold; the other three were healthy and died
+of the cascade. That is the cost of the signed
 "death before birth" sequence, not a mistuning (no threshold that
 separates the two arrears modes avoids it); pack 3's founding is the
 designed cure, and the 200-tick soak's floor is what it must raise.

@@ -93,8 +93,8 @@ The behaviors you can watch play out over successive ticks:
 (`docs/manifests/2026-08-22-firm-lifecycle.md`): founding — a capitalized
 resident opening a replacement venue into measured scarcity — lands as
 pack 3. Until it does, firms can die but not be born, and a long run
-thins out: on the shipped town five of six venues are gone by tick 172
-and the population falls with them. That is the deliberate order of the
+does not merely thin out — it empties: on the shipped town every venue is
+gone by tick 201 and the population falls from thirty to four with them. That is the deliberate order of the
 work, not a defect, and founding is what turns it back around.
 
 Money is strictly conserved: each metal's total is fixed at whatever the

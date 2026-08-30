@@ -241,10 +241,10 @@ pub(crate) const DRAW_BUFFER_BILLS: u32 = 3;
 /// A business is *insolvent this tick* when it ends the tick owing
 /// anyone anything. Pure and scalar-taking like [`draw_amount`], for two
 /// reasons: it gives the boundary a unit-test home outside the sim, and
-/// it makes the sim and worldgen's soak criterion name ONE symbol — a
-/// soak that re-spelled this predicate would agree today and diverge
-/// silently the first time it is tuned, which is a false green rather
-/// than a failure.
+/// it gives the write-back one definition instead of an inline
+/// comparison. No cross-module consumer today: the 100-tick soak's
+/// criterion 7 asserts on the COUNTER this predicate writes and on
+/// `CLOSE_INSOLVENT_TICKS`, never on the predicate itself.
 ///
 /// Deliberately reads the `owed_total()` FIELD, never `PayrollShort`
 /// events: a venue with no live staff accrues nothing and emits neither
@@ -280,13 +280,19 @@ pub(crate) fn insolvent_now(owed_total: Money) -> bool {
 ///   (The spec's provisional 6 closes Longacre on its own quit tick — a
 ///   within-tick tie, phase 1 before phase 6, so not an ordering failure
 ///   but zero slack.)
-/// - **cascade, recorded** — closure is not free: Longacre's four
-///   laid-off workers join the dis-saving pool, and five of six venues
-///   are gone by t172. That is the cost of landing "firms die" before
-///   "firms are born", not a mistuning — no threshold inside the range
-///   that separates the two arrears modes avoids it, and one above the
-///   measured 73-tick streaks would make closure soak-invisible
-///   instead. Pack 3's founding is the designed cure.
+/// - **cascade, recorded** — closure is not free, and the cascade is
+///   TOTAL: every venue dies, the last at t201 (one tick past the
+///   200-tick soak's horizon), after which the town holds no businesses
+///   at all. Measured against a pack-1 baseline, only three of the six
+///   deaths are the cascade's own: Longacre / Brass Bell / Gilt Curtain
+///   already carry 73 / 60 / 57-tick terminal arrears streaks with
+///   closure absent and simply never die, whereas Karat & Co,
+///   Silverthread and Greenrow carry ZERO arrears for 200 ticks there
+///   and die only under closure's layoffs. That is the cost of landing
+///   "firms die" before "firms are born", not a mistuning — no
+///   threshold inside the range that separates the two arrears modes
+///   avoids it, and one above the measured 73-tick streaks would make
+///   closure soak-invisible instead. Pack 3's founding is the cure.
 ///
 /// Mnemonic: 12 = 3 × (`QUIT_ARREARS_BILLS` + 1), three nominal quit
 /// cycles — but the nominal 4-tick cycle assumes a full-bill shortfall
@@ -1118,10 +1124,13 @@ fn sinks(world: &mut World, report: &mut TickReport) {
     // start — one write-back step ahead of the price this tick's failed
     // purchase saw, stock ignored (a sold-out seller's price still
     // counts). Deterministic either way; recorded in the manifest. No
-    // Food market means no destitution test (no price to be below —
-    // unreachable in shipped worlds); the guard scopes the DECIDE, not
-    // the phase, so future phase-7 mechanics (demurrage, imports)
-    // appended below stay unconditionally reached.
+    // Food market means no destitution test (no price to be below).
+    // Since pack 2 that is REACHABLE in the shipped town rather than
+    // hypothetical: the closure cascade eventually kills the last Food
+    // seller (measured t201, one tick past the 200-tick soak), after
+    // which nobody can be judged destitute at all. The guard scopes the
+    // DECIDE, not the phase, so future phase-7 mechanics (demurrage,
+    // imports) appended below stay unconditionally reached.
     let cheapest_food = snapshot
         .businesses()
         .filter(|(_, business)| business.product == Good::Food)
@@ -1967,6 +1976,212 @@ mod tests {
         for worker in [first, second, owner] {
             assert_eq!(world.agent(worker).unwrap().workplace, None);
         }
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn a_closing_firm_never_draws() {
+        // Pins the ordering the closure pass is placed for. The doomed
+        // venue is ALSO above its draw buffer — reachable, because
+        // phase-4 revenue lands after phase 3 carried the debt — so a
+        // closure pass sitting BELOW the draws collect would pay its
+        // owner a dividend out of money the creditors are owed, and then
+        // liquidate. Comments claimed this was structural; nothing tested
+        // it until now.
+        let mut world = World::new();
+        let (house, venue, owner) = landlord_owner_business(
+            &mut world,
+            "Doomed",
+            Good::Entertainment,
+            Money::new(3),
+            Money::new(10),
+            1,
+            "boss",
+        );
+        // Fuse already burnt down, and a coffer far above 3 bills + owed.
+        world
+            .house_mut(house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .insolvent_ticks = CLOSE_INSOLVENT_TICKS;
+        world
+            .house_mut(house)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(owner, Money::new(5));
+        world.accounts.mint(venue, Metal::Gold, Money::new(500));
+        assert!(
+            draw_amount(Money::new(500), Money::new(10), Money::new(5)) > Money::ZERO,
+            "the fixture must be draw-eligible, or this proves nothing"
+        );
+
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::ProfitDrawn { .. })),
+            "a closing firm drew profit: {:?}",
+            report.events
+        );
+        assert!(world.house(house).unwrap().business.is_none());
+        // Everything it held reached the owner as liquidation PROCEEDS
+        // (settlement + residual), not as a dividend taken ahead of them.
+        assert_eq!(
+            world.accounts.balance_of(owner, Metal::Gold),
+            Money::new(500)
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn arrears_conjunct_gates_the_arrive_decide() {
+        // DECIDE-site probe: only the deadbeat's slot is AGED, while a
+        // clean venue has open headcount that has not aged. The apply's
+        // `still_hiring` is therefore satisfied by the clean venue, so a
+        // refusal can only come from the decide scan's arrears conjunct.
+        let mut world = World::new();
+        let (deadbeat, _d, _boss) = landlord_owner_business(
+            &mut world,
+            "Deadbeat",
+            Good::Food,
+            Money::new(2),
+            Money::new(30),
+            1,
+            "dodger",
+        );
+        let ghost = world.spawn_agent("ghost", None, Some(deadbeat));
+        world
+            .house_mut(deadbeat)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(ghost, Money::new(1));
+        world.add_house("5 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(500));
+        // Age ONLY the deadbeat's slot.
+        world
+            .house_mut(deadbeat)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .roles
+            .get_mut(&Role::Labourer)
+            .unwrap()
+            .unfilled_ticks = VACANCY_PULL_TICKS;
+        // A clean venue with open, UN-aged headcount keeps the apply's
+        // re-check satisfiable.
+        let (clean, _c, _b2) = landlord_owner_business(
+            &mut world,
+            "Clean",
+            Good::Luxury,
+            Money::new(2),
+            Money::new(30),
+            1,
+            "honest",
+        );
+        let _ = clean;
+
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Arrived { .. })),
+            "the decide must not age-scan a venue that owes back wages"
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn arrears_conjunct_gates_the_arrive_apply() {
+        // APPLY-site probe. Two venues: a CLEAN, AGED one justifies the
+        // decide, and a DEADBEAT one is the only place still hiring by
+        // the time the apply's `still_hiring` re-check runs — because a
+        // local applicant fills the clean venue earlier in the same apply
+        // loop (applications are applied before Arrive). Without the
+        // conjunct on the re-check, the deadbeat's open headcount would
+        // confirm the arrival; with it, the intent dies cleanly.
+        let mut world = World::new();
+        let (clean, _c, _boss) = landlord_owner_business(
+            &mut world,
+            "Clean",
+            Good::Food,
+            Money::new(2),
+            Money::new(50), // the higher wage, so the local applies here
+            1,
+            "honest",
+        );
+        let (deadbeat, _d, _dodger) = landlord_owner_business(
+            &mut world,
+            "Deadbeat",
+            Good::Luxury,
+            Money::new(2),
+            Money::new(10),
+            1,
+            "dodger",
+        );
+        // A creditor who is employed, so they never compete for a slot.
+        let ghost = world.spawn_agent("ghost", None, Some(deadbeat));
+        world
+            .house_mut(deadbeat)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(ghost, Money::new(1));
+        // The clean venue is the aged one — it alone justifies the pull.
+        world
+            .house_mut(clean)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .roles
+            .get_mut(&Role::Labourer)
+            .unwrap()
+            .unfilled_ticks = VACANCY_PULL_TICKS;
+        let local = world.spawn_agent("local", None, None);
+        world.add_house("5 Weir Cottage", vec![]);
+        world
+            .accounts
+            .mint(world.external_id, Metal::Gold, Money::new(500));
+
+        let mut report = TickReport::default();
+        labor_market(&mut world, &mut report);
+
+        // The local took the clean venue, so it is no longer hiring...
+        assert!(
+            report.events.iter().any(|event| matches!(
+                event,
+                Event::Hired { agent, .. } if *agent == local
+            )),
+            "the local must fill the clean venue for this to test the apply"
+        );
+        // ...leaving only the deadbeat's open headcount, which cannot
+        // confirm an arrival.
+        assert!(
+            !report
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Arrived { .. })),
+            "an owing venue must not confirm an arrival: {:?}",
+            report.events
+        );
         world.accounts.audit();
     }
 

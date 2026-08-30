@@ -488,10 +488,23 @@ impl World {
     }
 
     /// Removes `agent` from the world — the emigration command
-    /// (town-colony pack 4; Amendment 17). Validates first: only a real
-    /// spawned agent qualifies — reserved and business ids refuse — and
-    /// `Err(WorldError::UnknownAgent)` means nothing changed. Then, in
-    /// order: every business still owing the leaver settles
+    /// (town-colony pack 4; Amendments 17 and 19). Validates first: only
+    /// a real spawned agent qualifies — reserved and business ids refuse
+    /// — and `Err(WorldError::UnknownAgent)` means nothing changed. Then,
+    /// in order: **step 0 (Amendment 19, firm-lifecycle pack 2)** runs
+    /// the [`close_business`](World::close_business) procedure on every
+    /// house, in houses order, whose business's `owner` is the leaver —
+    /// creditors settled (the leaver included, if their own firm owes
+    /// them), staff laid off, the per-metal residual into the *leaver's*
+    /// wallet, where the sweep below then carries it out of the node.
+    /// The **returned `ClosureReceipt`s are the caller's only view of
+    /// those flows**: measured around this whole command they are
+    /// unobservable, since the leaver's wallet delta is minus their
+    /// pre-command balance whatever happened inside. A caller emitting
+    /// Amendment-17 `Settled` events from coffer deltas must therefore
+    /// EXCLUDE firms the leaver owns, or it will re-narrate closure
+    /// flows as arrears settlements. Then, unchanged: every OTHER
+    /// business still owing the leaver settles
     /// `min(gold coffer, owed)` into their wallet and the remainder is
     /// written off (gate ruling 2 — the ledger entry goes either way);
     /// every `Metal::ALL` balance sweeps to External through the §8.2
@@ -500,7 +513,10 @@ impl World {
     /// totals-only audit cannot see a conservation-legal orphan); the
     /// leaver's id is stripped from every `House.owners`; the `Agent` is
     /// removed, which clears home/workplace/employed_role with it since
-    /// occupancy and staffing are derived, never stored. After
+    /// occupancy and staffing are derived, never stored. Removal is LAST
+    /// for the same mechanical reason detach is last inside
+    /// `close_business`: during step 0 the leaver must still be a known
+    /// account, or the residual `pay` to them would refuse. After
     /// validation no internal transfer can fail — every amount is
     /// min-bounded by a live balance and both ids are known — so the
     /// command is atomic by construction.
@@ -1131,7 +1147,21 @@ mod tests {
 
         let receipt = world.close_business(shop).unwrap();
 
-        // 1. ascending AgentId, positive amounts only, min-bounded
+        // 1. ascending AgentId, positive amounts only, min-bounded.
+        //    `owed_to` is a HashMap, so the exact-vector check below only
+        //    OBSERVES the sort when the map's own iteration order happens
+        //    to differ from ascending id — measured 2026-08-30 by
+        //    deleting `debts.sort_by_key`, the mutant still ran the suite
+        //    green in 5 of 30 runs. The structural assertion is the
+        //    order-independent guard.
+        assert!(
+            receipt
+                .settlements
+                .windows(2)
+                .all(|pair| pair[0].0.0 < pair[1].0.0),
+            "settlements must be strictly ascending AgentId: {:?}",
+            receipt.settlements
+        );
         assert_eq!(
             receipt.settlements,
             vec![

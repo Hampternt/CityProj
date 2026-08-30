@@ -725,14 +725,19 @@ mod tests {
     /// closure DELETES the arrears-carrying venue that the Arrive
     /// exclusion refuses to recruit for, leaving the survivor's
     /// post-layoff vacancies clean and pull-eligible. What the re-measure
-    /// did find is worse and is pinned below: closure cascades. Longacre
-    /// Farm dies at t140 exactly as designed, but its four laid-off
-    /// workers join the dis-saving pool, demand falls further, and five
-    /// of six venues are gone by t172 (t140, t153, t156, t171, t172),
-    /// population troughing at 1 before the arrivals. That is the
-    /// honest consequence of landing "firms die" before "firms are
-    /// born"; pack 3's founding is the designed cure, and criterion 5
-    /// below is the floor it must raise.
+    /// did find is worse and is pinned below: closure cascades, and
+    /// the cascade is TOTAL. Measured against a pack-1 baseline (closure
+    /// code absent), the first three deaths are NOT cascade deaths —
+    /// Longacre, The Brass Bell and Gilt Curtain already carry terminal
+    /// arrears streaks of 73 / 60 / 57 ticks there and simply never die,
+    /// because no rule kills them. The cascade's own victims are the
+    /// three venues that carry ZERO arrears for 200 ticks under pack 1:
+    /// Karat & Co (t171), Silverthread Atelier (t172) and Greenrow Farm
+    /// (t201, one tick past this horizon). Every venue dies; from t201
+    /// the town holds no businesses at all. That is the honest
+    /// consequence of landing "firms die" before "firms are born";
+    /// pack 3's founding is the designed cure, and criterion 5 below is
+    /// the floor it must raise.
     #[test]
     fn town_soak_population_moves_both_directions() {
         use crate::sim::{self, Event};
@@ -787,18 +792,28 @@ mod tests {
         //    not only on fixtures — and the cascade it sets off is
         //    RECORDED, not hidden. Measured 2026-08-30: closures at
         //    t140/t153/t156/t171/t172, min population 1, final
-        //    population 4, one surviving venue. The bounds below are a
-        //    pack-2 FLOOR, deliberately loose: they exist so pack 3's
-        //    founding has something to raise, and so a regression that
-        //    stopped closure firing — or one that emptied the town
-        //    entirely — fails here instead of passing quietly.
+        //    population 4, one surviving venue AT THIS HORIZON ONLY.
+        //    The cascade is in fact TOTAL: Greenrow Farm's terminal
+        //    arrears begin t189, its counter reads 12 (== the threshold)
+        //    at t200, and it closes at t201 — measured to t300 the town
+        //    then holds ZERO businesses at population 4. The 200-tick
+        //    window is the only reason a survivor is visible here.
+        //    Mind the margins, because two of the three bounds have
+        //    NONE: `closed >= 3` is genuinely loose against 5, but
+        //    `min_population >= 1` sits exactly on the measured minimum
+        //    and `businesses().count() >= 1` clears by exactly one tick.
+        //    They are a FLOOR in the sense that pack 3's founding must
+        //    RAISE them, not in the sense that they have slack — a
+        //    change that advances the cascade by a single tick turns
+        //    this red for a reason it was not written to catch.
         assert!(
             closed.len() >= 3,
             "closure never reached the demand-losing venues (closed at {closed:?})"
         );
         assert!(
             world.businesses().count() >= 1,
-            "every business in the town closed — nothing left to found against"
+            "every business closed inside the window (measured: the last venue dies \
+             at t201, one tick past this horizon — this bound has no margin)"
         );
         assert!(
             min_population >= 1,

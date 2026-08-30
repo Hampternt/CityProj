@@ -182,7 +182,10 @@ is soak-invisible and must be proven on a fixture or it ships untested);
 "The Brass Bell closed — karl pockets 12g" — and the freed address inspects
 as a vacant residence; on the quit-free 100-tick tuned town nothing closes
 (pinned — scoped to that soak deliberately). **The 200-tick migration soak
-is re-cut in this pack, named here rather than discovered red:** its
+is re-cut in this pack, named here rather than discovered red:**
+*(Erratum 2026-08-30: no re-cut was needed — see the erratum ending this
+paragraph. The arrival criterion holds on pack-2 code and stays pinned in
+the shipped soak.)* Its
 demand-shocked venue now dies by closure shortly after its quits (the
 post-quit freeze guarantees it — see the baseline), and with the Arrive
 exclusion live and closure deleting deadbeat vacancies, the shipped
@@ -702,7 +705,10 @@ the id-migration mechanics of the worldgen reorder.
   stress-fixture death, the 100-tick tuned-town zero-closures pin, and the
   **named re-cut** of the 200-tick migration soak (departure criteria
   kept; the arrival assertion moves to pack 3 — recorded in pack 2's
-  ledger, never silently weakened); pack 3's both-directions shock soak —
+  ledger, never silently weakened) *(Erratum 2026-08-30: the re-cut did
+  not happen and was not needed — the arrival assertion was never moved
+  and needs no pack-3 restoration; pack 2 added a cascade floor
+  instead)*; pack 3's both-directions shock soak —
   a fixtured single-seller closure with live demand founds within a pinned
   window (the fixture seeds a thin surviving shelf or budgets the window
   as backlog-drain ticks + ratchet steps + one founding tick: a raise

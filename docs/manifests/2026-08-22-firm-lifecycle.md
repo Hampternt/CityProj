@@ -58,9 +58,13 @@ pricing, terrain, physical goods movement.
 - **The pack-2 re-cut is named up front**: any quit now guarantees that
   venue's closure (frozen ex-worker arrears are unpayable outside
   settlement), and with the Arrive exclusion live, the shipped 200-tick
-  arrival criterion cannot hold on pack-2 code — its departure-side
-  criteria stay, the arrival assertion moves to pack 3's full-cycle soak,
-  where a founded firm is the pull-eligible vacancy.
+  arrival criterion was expected not to hold on pack-2 code. *(Refuted by
+  pack 2's re-measure, 2026-08-30: it does hold — closure DELETES the
+  arrears-carrying venue the exclusion refuses to recruit for, leaving
+  the survivors' post-layoff vacancies clean, and arrivals land
+  t183/184/185. No criterion was weakened and nothing moved to pack 3.
+  What the re-measure found instead is the total closure cascade; see the
+  pack-2 ledger.)*
 - **Pack 1 re-measures before anything freezes**: the draw re-times the
   fuse and the 21/30 ceiling; every pack-2/3 criterion is written against
   pack 1's re-pinned numbers, never the inherited t127 / 21-of-30.
@@ -102,8 +106,12 @@ residual to owner → detach); the phase-6 closure pass before draws; the
 Arrive decide+apply arrears exclusion (the handoff resolved by rule);
 forced liquidation in `remove_agent` + Amendment 19 + the dedicated
 owner-emigration fixture; `Closed`/`LaidOff` + `Settled` doc widened; the
-100-tick zero-closure pin and the NAMED re-cut of the 200-tick migration
-soak.
+100-tick zero-closure pin; and the 200-tick migration soak re-measured
+under live closure. *(The NAMED re-cut this line planned did not happen
+and was not needed — the arrival criterion holds on pack-2 code, so
+nothing was weakened and nothing moved to pack 3. The re-measure found a
+larger effect instead: the closure cascade, now pinned as a floor. Both
+recorded as errata in the signed spec; see the pack-2 ledger.)*
 
 Observable: on a stress fixture the whole death narrates — quits, then
 "The Brass Bell closed — karl pockets 12g" — and the freed address

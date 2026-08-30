@@ -60,12 +60,14 @@ signed, not a divergence from it. Every alternative buys its fix with
 predicate text, a field name, or the writer's phase — all of which *are*
 signed contract.
 
-Why the retune is *sufficient*: **arrears are bimodal, not a gradient.**
-The probe's `owed > wage_bill/4` and `owed > wage_bill/2` columns are
-identical at every venue at every threshold — no tick's arrears ever sat
-between a quarter-bill and a half-bill. Healthy flicker is one isolated
-tick at 1.4–8% of a bill; sick persistence is 57–73 ticks at 4.7–7.2
-bills; there is nothing in between. Any threshold in [8, 20] separates the
+Why the retune is *sufficient*: **arrears are bimodal in persistence.**
+The probe's max-streak columns under an `owed > wage_bill/4` gate and an
+`owed > wage_bill/2` gate are identical at every venue at every
+threshold — no *run* of arrears ever lived in that band. Healthy flicker
+is one isolated tick at 1.4–8% of a bill; sick persistence is 57–73 ticks
+at 4.7–7.2 bills. (Read as a claim about individual ticks the gloss would
+be too strong — arrears do pass through the band on the way up; what the
+data shows is that they never *persist* there.) Any threshold in [8, 20] separates the
 two modes with a bare counter, so a magnitude floor buys only healthy-side
 margin that a longer fuse already buys in time — at the price of a second
 soak-tuned constant, a cross-constant invariant, a two-branch predicate,
@@ -464,13 +466,36 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   vacancies are clean and pull-eligible. **No criterion was weakened and
   nothing moved to pack 3.** Recorded as an erratum in the signed spec.
 
-  **WHAT THE RE-MEASURE ACTUALLY FOUND: closure cascades.** This is the
-  finding that matters, and it is larger than the effect the re-cut was
-  written for. Longacre's four laid-off workers join the dis-saving pool;
-  demand falls; the next venue's arrears deepen. Five of six venues are
-  gone by t172 (**t140, t153, t156, t171, t172**), population troughs at
-  **1** and ends at **4**, with **one** surviving business — against
-  pack 1's 200-tick end state of population 26 and all six venues alive.
+  **WHAT THE RE-MEASURE ACTUALLY FOUND: closure cascades, and the
+  cascade is TOTAL.** This is the finding that matters, and it is larger
+  than the effect the re-cut was written for. *(Both the totality and the
+  attribution below were corrected 2026-08-30 by the close review: this
+  entry first said "five of six venues are gone by t172 … with one
+  surviving business", which is true at t200 and materially misleading,
+  and it credited the cascade with three deaths that were not its
+  doing.)*
+
+  Every venue dies: **t140, t153, t156, t171, t172, and Greenrow Farm at
+  t201** — one tick past the soak's horizon, which is the only reason a
+  survivor is visible at all. Measured to t300 the town then holds **zero
+  businesses** at population 4, against pack 1's 200-tick end state of
+  population 26 with all six venues alive. Greenrow's terminal arrears
+  begin t189 and its counter already reads 12 at t200, so its death is
+  fully determined inside the measured window.
+
+  **The attribution matters, and the first reading of it was wrong.**
+  Re-measured against a pack-1 baseline (`git archive 92cc955`, closure
+  code absent, 200 ticks), the first three deaths are NOT cascade deaths:
+  Longacre Farm, The Brass Bell and Gilt Curtain Theater already carry
+  terminal arrears streaks of **73 / 60 / 57** ticks there and simply
+  never die, because no rule kills them. Their t140/t153/t156 deaths are
+  the pack-1 trajectory meeting a threshold. The cascade's own victims
+  are the three venues that carry **zero** arrears across 200 ticks under
+  pack 1 — **Karat & Co (t171), Silverthread Atelier (t172) and Greenrow
+  Farm (t201)** — which die only because closure's layoffs gut demand.
+  That makes the finding stronger, not weaker: closure kills three
+  previously healthy venues.
+
   Two things are worth being precise about:
   - It is **not a mistuning**. No threshold inside the range that
     separates the two arrears modes avoids it (a higher one only delays
@@ -486,10 +511,16 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   100-tick soak, the 50-tick employment soak (`NEAR_FULL` = 21,
   unchanged) and the shipped interactive experience below t140 are all
   untouched. The 200-tick soak keeps every inherited criterion and gains
-  a deliberately loose floor — closures ≥ 3, ≥ 1 surviving business, min
-  population ≥ 1 — so that a regression which stopped closure firing, or
-  one that emptied the town entirely, fails there instead of passing
-  quietly. **That floor is what pack 3 must raise.**
+  a floor — closures ≥ 3, ≥ 1 surviving business, min population ≥ 1 —
+  so a regression that stopped closure firing, or one that emptied the
+  town of people, fails there instead of passing quietly. **That floor is
+  what pack 3 must raise**, and it is a floor in exactly that sense
+  rather than in the sense of having slack: only `closures ≥ 3` is loose
+  (against 5). `min_population ≥ 1` sits exactly on the measured minimum,
+  and `businesses().count() ≥ 1` clears by exactly one tick — a change
+  that advances the cascade by a single tick turns that bound red for a
+  reason it was not written to catch. Recorded rather than widened,
+  because pack 3 replaces it with a founding-backed bound.
 
   Eyeballed at `cargo run` on the shipped town (shell behavior no test
   covers), which also caught a narration bug no test would have: a
@@ -507,6 +538,24 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   Also executed here: **Amendment 19**, plus the D7 back-fill of
   Amendments 16 and 17, which had been recorded in the 07-02 header since
   2026-08-21 but never applied to the table cells.
+
+  **Acceptance-test name map (spec → shipped).** Two of the spec's
+  acceptance names ship under different names. Coverage is complete and
+  nothing was dropped, so this is a naming note rather than an erratum —
+  the verbatim-copy rule binds the spec's *Contracts*, not its derived
+  acceptance list — but pack 3's close review should not have to
+  re-derive it:
+  - `insolvent_ticks_single_writer_and_healthy_town_control` → split into
+    `insolvent_ticks_has_a_single_writer` +
+    `insolvent_ticks_counts_consecutive_arrears_ticks_and_resets_on_a_clear_one`
+    (sim.rs) and criterion 7 of `town_soak_holds_the_pinned_exit_criteria`
+    (worldgen.rs), which is the healthy-town control half.
+  - `closure_fires_on_persistence_after_quits` → split into
+    `closure_fires_on_persistence_and_narrates_from_the_receipt` (the
+    persistence + narration half, staff still employed) and
+    `closure_fires_after_quits_freeze_the_ledger` (the post-quit
+    reachability half). The spec's single name conflated two cases that
+    need different fixtures.
 
   Pack gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 168
   passed, 0 failed (160 on arrival; +9 new, −1 retired).

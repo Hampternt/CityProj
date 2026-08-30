@@ -288,7 +288,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     for (business, workers, total) in wages {
         lines.push(format!(
             "{} paid {workers} worker{} {total}g",
-            business_address(world, business),
+            business_label(world, &dead, business),
             if workers == 1 { "" } else { "s" },
         ));
     }
@@ -296,7 +296,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     for (business, good, price, units, buyers) in sales {
         lines.push(format!(
             "{} sold {units} {good} to {buyers} buyer{} @ {price}g",
-            business_address(world, business),
+            business_label(world, &dead, business),
             if buyers == 1 { "" } else { "s" },
         ));
     }
@@ -517,15 +517,6 @@ fn agent_label(world: &World, dead: &DeadThisTick, id: AgentId) -> String {
         .map(|agent| agent.name.clone())
         .or_else(|| dead.agents.get(&id).cloned())
         .unwrap_or_else(|| "(unknown agent)".to_string())
-}
-
-/// A business has no name of its own — it renders as its house's address.
-fn business_address(world: &World, id: AgentId) -> String {
-    world
-        .businesses()
-        .find(|(_, business)| business.id == id)
-        .map(|(house, _)| house.address.clone())
-        .unwrap_or_else(|| "(unknown business)".to_string())
 }
 
 fn agent_name(world: &World, id: AgentId) -> String {
