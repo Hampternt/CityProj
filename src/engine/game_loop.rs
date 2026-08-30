@@ -74,7 +74,7 @@ pub fn run() {
 /// Folds one tick's events into each starring agent's last-3 buffer.
 /// Business-only events (production, price moves) star nobody.
 fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, report: &TickReport) {
-    let dead = dead_business_addresses(world, report);
+    let dead = dead_this_tick(world, report);
     for event in &report.events {
         let starring = match event {
             Event::Hired { agent, .. } | Event::Quit { agent, .. } => Some(*agent),
@@ -172,8 +172,20 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
             or_none(&occupants),
         );
         if let Some(business) = &house.business {
+            // Distress only shows once the fuse is actually lit — the
+            // frame is at its width budget at town scale, so a zero
+            // counter (the normal case) costs nothing.
+            let distress = if business.insolvent_ticks > 0 {
+                format!(
+                    " · insolvent {}/{}",
+                    business.insolvent_ticks,
+                    crate::sim::CLOSE_INSOLVENT_TICKS
+                )
+            } else {
+                String::new()
+            };
             println!(
-                "    sells {} @{} · owner {} · stock {} · balance {} · owed {}",
+                "    sells {} @{} · owner {} · stock {} · balance {} · owed {}{distress}",
                 business.product,
                 business.price,
                 agent_name(world, business.owner),
@@ -196,7 +208,7 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
 /// order). Presentation only: events stay granular for tests and the
 /// inspect buffer.
 fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
-    let dead = dead_business_addresses(world, report);
+    let dead = dead_this_tick(world, report);
     // (business, workers paid, total gold)
     let mut wages: Vec<(AgentId, u32, Money)> = Vec::new();
     // (business, good, snapshot price, units, buyers)
@@ -224,6 +236,13 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
             | Event::Quit { .. }
             | Event::WageMoved { .. }
             | Event::Arrived { .. } => labor.push(render_event(world, &dead, event)),
+            // A settlement paid BY a firm that closed this tick belongs
+            // with its closure, not down among the leavers — otherwise
+            // the feed reads "X closed" and only later "X paid its
+            // creditors", with unrelated profit draws in between.
+            Event::Settled { business, .. } if dead.businesses.contains_key(business) => {
+                closures.push(render_event(world, &dead, event))
+            }
             Event::Settled { .. } | Event::Departed { .. } => {
                 leavers.push(render_event(world, &dead, event))
             }
@@ -292,7 +311,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
 /// One feed line for one event. The match is exhaustive on purpose — a
 /// new `Event` variant fails compilation here instead of silently missing
 /// from the feed. All feed amounts are gold this milestone, rendered `35g`.
-fn render_event(world: &World, dead: &HashMap<AgentId, String>, event: &Event) -> String {
+fn render_event(world: &World, dead: &DeadThisTick, event: &Event) -> String {
     match event {
         Event::Quit {
             agent,
@@ -394,14 +413,17 @@ fn render_event(world: &World, dead: &HashMap<AgentId, String>, event: &Event) -
                 .unwrap_or_else(|| "(unknown house)".to_string()),
         ),
         Event::Settled {
-            business, amount, ..
+            business,
+            agent,
+            amount,
         } => format!(
-            "{} paid out {amount}g of back wages to a leaver",
+            "{} settled {amount}g of back wages with {}",
             business_label(world, dead, *business),
+            agent_label(world, dead, *agent),
         ),
         Event::LaidOff { agent, business } => format!(
             "{} was laid off by {}",
-            agent_name(world, *agent),
+            agent_label(world, dead, *agent),
             business_label(world, dead, *business),
         ),
         Event::Closed {
@@ -443,35 +465,58 @@ fn render_event(world: &World, dead: &HashMap<AgentId, String>, event: &Event) -
     }
 }
 
-/// Every business this report saw CLOSE, mapped to the address it traded
-/// from. A closed firm drops out of `businesses()` the instant it detaches,
-/// so its `Settled` and `LaidOff` lines — emitted in the same tick — would
-/// otherwise render as `(unknown business)`. Built once per report, so
-/// intra-tick event order never affects resolution.
-fn dead_business_addresses(world: &World, report: &TickReport) -> HashMap<AgentId, String> {
-    report
-        .events
-        .iter()
-        .filter_map(|event| match event {
+/// Everything this report watched DIE, by id: businesses that closed
+/// (mapped to the address they traded from) and agents that emigrated
+/// (mapped to their name). Both drop out of the live world the instant
+/// their command runs, so lines emitted in the same tick — a closure's
+/// `Settled`s and `LaidOff`s, a leaver's settlement — would otherwise
+/// render as `(unknown ...)`. Built once per report, so intra-tick event
+/// order never affects resolution.
+#[derive(Default)]
+struct DeadThisTick {
+    businesses: HashMap<AgentId, String>,
+    agents: HashMap<AgentId, String>,
+}
+
+fn dead_this_tick(world: &World, report: &TickReport) -> DeadThisTick {
+    let mut dead = DeadThisTick::default();
+    for event in &report.events {
+        match event {
             Event::Closed {
                 business, house, ..
-            } => world
-                .house(*house)
-                .map(|house| (*business, house.address.clone())),
-            _ => None,
-        })
-        .collect()
+            } => {
+                if let Some(house) = world.house(*house) {
+                    dead.businesses.insert(*business, house.address.clone());
+                }
+            }
+            Event::Departed { agent, name, .. } => {
+                dead.agents.insert(*agent, name.clone());
+            }
+            _ => {}
+        }
+    }
+    dead
 }
 
 /// A business id as a label: its live address, else the address it traded
 /// from before closing this tick, else the honest fallback.
-fn business_label(world: &World, dead: &HashMap<AgentId, String>, id: AgentId) -> String {
+fn business_label(world: &World, dead: &DeadThisTick, id: AgentId) -> String {
     world
         .businesses()
         .find(|(_, business)| business.id == id)
         .map(|(house, _)| house.address.clone())
-        .or_else(|| dead.get(&id).cloned())
+        .or_else(|| dead.businesses.get(&id).cloned())
         .unwrap_or_else(|| "(unknown business)".to_string())
+}
+
+/// An agent id as a label: their live name, else the name they left town
+/// under this tick, else the honest fallback.
+fn agent_label(world: &World, dead: &DeadThisTick, id: AgentId) -> String {
+    world
+        .agent(id)
+        .map(|agent| agent.name.clone())
+        .or_else(|| dead.agents.get(&id).cloned())
+        .unwrap_or_else(|| "(unknown agent)".to_string())
 }
 
 /// A business has no name of its own — it renders as its house's address.
@@ -630,8 +675,10 @@ fn roster(world: &World) {
 }
 
 /// Prints one agent's details (with their last 3 feed lines) or, when the
-/// name matches no agent, a business by its house address; then waits for
-/// Enter so the next clear-screen doesn't wipe it before it's read.
+/// name matches no agent, a business by its house address — falling back
+/// to the house itself, which is how a CLOSED venue's address still
+/// resolves (pack 2). Then waits for Enter so the next clear-screen
+/// doesn't wipe it before it's read.
 fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
     if let Some(agent) = world.agent_by_name(name) {
         println!("{}:", agent.name);
@@ -675,10 +722,38 @@ fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
             debts.sort();
             println!("  owes    {}", debts.join(" · "));
         }
+        if business.insolvent_ticks > 0 {
+            println!(
+                "  distress {} tick(s) insolvent (closes at {})",
+                business.insolvent_ticks,
+                crate::sim::CLOSE_INSOLVENT_TICKS
+            );
+        }
         let workers = names_of(world, &world.employees_of(house_id));
         println!("  workers {}", or_none(&workers));
+    } else if let Some(house) = world
+        .houses
+        .iter()
+        .find(|house| house.address.eq_ignore_ascii_case(name))
+    {
+        // A house with no business — a spare cottage, or the address a
+        // closed venue traded from. Without this branch a freed address
+        // stops resolving the moment its firm dies.
+        let occupants = names_of(world, &world.occupants_of(house.id));
+        let owners = names_of(world, &house.owners);
+        println!("{} (house):", house.address);
+        println!("  owners    {}", or_none(&owners));
+        println!("  occupants {}", or_none(&occupants));
+        println!(
+            "  status    {}",
+            if occupants.is_empty() {
+                "vacant residence — open to a newcomer"
+            } else {
+                "occupied residence"
+            }
+        );
     } else {
-        println!("no agent or business named '{name}'");
+        println!("no agent, business or house named '{name}'");
     }
     wait_for_enter();
 }

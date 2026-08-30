@@ -349,7 +349,7 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   zero, so the exclusion costs the suite nothing — verify, do not assume.
   Done: `./scripts/check.sh` clean; `cargo test sim::` quoted. Touches:
   src/sim.rs.
-- [ ] **6. The shell shows distress and death.** Distress on the business
+- [x] **6. The shell shows distress and death.** Distress on the business
   inspect view (`insolvent_ticks` + "closes at N", mirroring the agent
   view's hunger line) and beside the frame's `owed` when non-zero; a
   vacant/freed-house `inspect` branch (owners, occupants, vacancy stated
