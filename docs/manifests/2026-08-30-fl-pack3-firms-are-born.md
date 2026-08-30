@@ -242,7 +242,7 @@ address it — a successor container, not this one.
   reads the phase-start snapshot (a firm closing this tick still counts,
   so a refound is a t+1 event). Done: `./scripts/check.sh` clean;
   `cargo test sim::` quoted. Touches: src/sim.rs, src/engine/game_loop.rs.
-- [ ] **6. Fixtures and the controlled soaks.** New sim.rs helpers
+- [x] **6. Fixtures and the controlled soaks.** New sim.rs helpers
   (`capitalized_idle`, a demand pool, `set_price`, an unstaffed seller,
   a ticks-until-event runner), all built on `landlord_owner_business`,
   never `staffed_business`. Then the spec's two named fixtures: a

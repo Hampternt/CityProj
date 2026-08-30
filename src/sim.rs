@@ -2424,6 +2424,204 @@ mod tests {
     }
 
     #[test]
+    fn a_single_seller_closure_with_live_demand_founds_within_a_window() {
+        // The container's headline chain on a controlled fixture: two
+        // Food sellers, one dies, the survivor's shelf clears under live
+        // demand, and an entrant appears — all inside a pinned window.
+        let mut world = World::new();
+        for (index, good) in [Good::Entertainment, Good::Luxury].into_iter().enumerate() {
+            for side in 0..2 {
+                landlord_owner_business(
+                    &mut world,
+                    &format!("filler{index}{side}"),
+                    good,
+                    Money::new(2),
+                    Money::new(30),
+                    1,
+                    &format!("keeper{index}{side}"),
+                );
+            }
+        }
+        let (survivor, survivor_id, _s) = landlord_owner_business(
+            &mut world,
+            "Survivor",
+            Good::Food,
+            Money::new(4),
+            Money::new(35),
+            1,
+            "keeps",
+        );
+        let (doomed, _d, _o) = landlord_owner_business(
+            &mut world,
+            "Doomed",
+            Good::Food,
+            Money::new(4),
+            Money::new(35),
+            1,
+            "goner",
+        );
+        hire_at(&mut world, survivor, "worker");
+        world
+            .accounts
+            .mint(survivor_id, Metal::Gold, Money::new(10_000));
+        world.add_house("5 Weir Cottage", vec![]);
+        // Live demand: buyers with money and empty pantries.
+        for name in ["b1", "b2", "b3"] {
+            let buyer = world.spawn_agent(name, None, None);
+            world.accounts.mint(buyer, Metal::Gold, Money::new(5000));
+        }
+        let founder = world.spawn_agent("mira", None, None);
+        world.accounts.mint(founder, Metal::Gold, Money::new(5000));
+        // The doomed venue's fuse is already spent — it dies next phase 6.
+        world
+            .house_mut(doomed)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .insolvent_ticks = CLOSE_INSOLVENT_TICKS;
+
+        let mut closed_at = None;
+        let mut founded_at = None;
+        for t in 1..=12u64 {
+            // A THIN shelf: adjust_price raises only at >= 9/10 of the
+            // OFFERED stock sold, so a fat shelf never ratchets and the
+            // sell-out streak never accumulates.
+            set_stock(&mut world, survivor, 1);
+            let report = tick(&mut world);
+            for event in &report.events {
+                match event {
+                    Event::Closed { .. } => closed_at.get_or_insert(t),
+                    Event::Founded { good, .. } if *good == Good::Food => {
+                        founded_at.get_or_insert(t)
+                    }
+                    _ => continue,
+                };
+            }
+        }
+        let closed = closed_at.expect("the doomed venue never closed");
+        let founded = founded_at.expect("nothing was founded into the scarcity");
+        // The window, and why it is a window. The decide runs at the TOP
+        // of phase 6, so it cannot see this tick's own closure — the
+        // sector still reads as carried, and the refound waits for
+        // tc+1 at the earliest. It CAN see this tick's sell-out streak,
+        // because phase 4 wrote it earlier in the same tick. So a
+        // sector whose survivor was already clearing its shelf refounds
+        // at tc+1; one that has to build the streak from scratch takes
+        // up to FOUND_SIGNAL_TICKS longer. Measured here: tc+1, the
+        // survivor having sold out alongside the doomed venue.
+        assert!(
+            (closed + 1..=closed + 4).contains(&founded),
+            "founding landed at t{founded}, outside t{}..=t{} after the closure at t{closed}",
+            closed + 1,
+            closed + 4
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn a_demand_death_founds_nothing() {
+        // The anti-churn discriminator, with its positive control in the
+        // same test: the SAME single-seller shape, differing only in
+        // whether anyone is buying. Nobody refounds into a dead sector.
+        fn run(with_demand: bool) -> bool {
+            let mut world = World::new();
+            for (index, good) in [Good::Entertainment, Good::Luxury].into_iter().enumerate() {
+                for side in 0..2 {
+                    landlord_owner_business(
+                        &mut world,
+                        &format!("filler{index}{side}"),
+                        good,
+                        Money::new(2),
+                        Money::new(30),
+                        1,
+                        &format!("keeper{index}{side}"),
+                    );
+                }
+            }
+            let (survivor, survivor_id, _s) = landlord_owner_business(
+                &mut world,
+                "Survivor",
+                Good::Food,
+                Money::new(4),
+                Money::new(35),
+                1,
+                "keeps",
+            );
+            hire_at(&mut world, survivor, "worker");
+            world
+                .accounts
+                .mint(survivor_id, Metal::Gold, Money::new(10_000));
+            world.add_house("5 Weir Cottage", vec![]);
+            if with_demand {
+                for name in ["b1", "b2", "b3"] {
+                    let buyer = world.spawn_agent(name, None, None);
+                    world.accounts.mint(buyer, Metal::Gold, Money::new(5000));
+                }
+            }
+            let founder = world.spawn_agent("mira", None, None);
+            world.accounts.mint(founder, Metal::Gold, Money::new(5000));
+            let mut founded = false;
+            for _ in 1..=12 {
+                set_stock(&mut world, survivor, 1);
+                let report = tick(&mut world);
+                founded |= report.events.iter().any(
+                    |event| matches!(event, Event::Founded { good, .. } if *good == Good::Food),
+                );
+            }
+            world.accounts.audit();
+            founded
+        }
+        assert!(run(true), "control: live demand must found");
+        assert!(!run(false), "a demand death must found NOTHING");
+    }
+
+    #[test]
+    fn founding_and_immigration_contend_for_the_same_lowest_id_vacancy() {
+        // Both mechanics take the LOWEST-ID fully-vacant house, through
+        // the one shared `is_fully_vacant` predicate — so across ticks
+        // they alternate on the same premises, and within a tick phase
+        // order settles it (Arrive applies in phase 1, Found in phase 6).
+        //
+        // Measured while writing this: the two rarely contend at all, and
+        // for a reason worth recording. A pull needs a CLEAN slot aged
+        // past VACANCY_PULL_TICKS, but any unemployed resident — the only
+        // people eligible to found — takes such a slot in phase 1 long
+        // before phase 6, which both fills the vacancy and disqualifies
+        // them as a founder. Immigration is for demand the residents
+        // cannot meet; founding is for capital they can. The premises
+        // they share are the seam, not a race.
+        let (mut world, lowest, _founder) = founding_ready(Money::new(5000));
+        let spare = world.add_house("9 Later Row", vec![]);
+        assert!(world.is_fully_vacant(lowest) && world.is_fully_vacant(spare));
+        assert!(lowest.0 < spare.0, "the fixture's premises must be ordered");
+
+        let mut report = TickReport::default();
+        invest(&mut world, &mut report);
+
+        // The founding took the lowest-id vacancy — exactly the house
+        // `immigrate` would have been handed.
+        assert!(
+            report
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Founded { house, .. } if *house == lowest)),
+            "founding must take the lowest-id vacancy, like immigration"
+        );
+        assert!(world.house(lowest).unwrap().business.is_some());
+        assert!(
+            world.is_fully_vacant(spare),
+            "and leave the rest alone — one founding per tick"
+        );
+        // The house it took is no longer offerable to a newcomer.
+        assert_eq!(
+            world.immigrate("Mara".to_string(), lowest),
+            Err(crate::world::WorldError::HouseNotVacant(lowest))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
     fn closure_fires_on_persistence_and_narrates_from_the_receipt() {
         // The doomed venue that dies with its staff STILL EMPLOYED, so
         // the layoffs are observable. The shortfall is deliberately tiny:
