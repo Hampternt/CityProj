@@ -359,7 +359,7 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   its `Departed` line. Done: `./scripts/check.sh` clean; behavior eyeballed
   at `cargo run` on a fixture that closes, quoted in the ledger. Touches:
   src/engine/game_loop.rs.
-- [ ] **7. Re-measure, re-cut, freeze.** Re-run all four soaks with closure
+- [x] **7. Re-measure, re-cut, freeze.** Re-run all four soaks with closure
   live. **Criterion 7** added to the 100-tick soak: per-venue max
   `insolvent_ticks < CLOSE_INSOLVENT_TICKS` across the span, **paired with
   a vanish-detector** (`world.businesses().count() == 6` every tick and a
@@ -425,3 +425,88 @@ Flagged in the ledger and PR #2 for owner acknowledgement.
   streak", and nothing requires the latter because the long streaks belong
   to the venues the mechanic exists to kill. Separately found and recorded:
   Amendments 16 and 17 were never executed in the 07-02 phase table (D7).
+
+- **2026-08-30** — **items 1–7 land** (five commits). The counter, the
+  liquidation command, phase 6's closure pass, forced liquidation with
+  Amendment 19, the Arrive exclusion, the shell, and the re-measure.
+  Items 3 and 4 landed together and not for convenience: deleting the
+  pack-1 dangling-owner skip opens a window in which an emigrating
+  owner's live firm points at a removed agent and `invest` panics, and
+  only forced liquidation closes it.
+
+  **THE RE-MEASURE (item 7) — the baseline pack 3 cites.**
+
+  - **The derivation was exact.** `CLOSE_INSOLVENT_TICKS = 12` was chosen
+    from a crossing law fitted to pack-1 data: closure tick = 128+k /
+    141+k / 144+k, predicting t140 / t153 / t156. Under live closure the
+    200-tick town closed Longacre Farm at **t140**, The Brass Bell at
+    **t153** and Gilt Curtain Theater at **t156** — all three exactly as
+    derived, confirming both the crossing law and the one-tick write-back
+    latency. Slack over each venue's first quit: **+6 / +7 / +8**.
+  - **The healthy window is as measured.** Over t≤100 the tuned town
+    produced exactly **ten** one-tick flickers, all at Longacre Farm,
+    owing 2–11g against a 140g bill. Observed maximum counter **1**;
+    the threshold is frozen eleven ticks above it. Criterion 7 (three
+    assertions: no counter reaches the threshold, no venue vanishes from
+    the per-tick count, no `Closed` is ever narrated) is live and green.
+    Written by hand — worldgen's two `match event` arms end in `_ => {}`,
+    so neither new variant forces at compile time there.
+  - **`CLOSE_INSOLVENT_TICKS` FROZEN at 12.**
+
+  **THE NAMED RE-CUT WAS NOT NEEDED — and that is a refuted spec
+  prediction, not a lucky pass.** The spec stated the 200-tick arrival
+  criterion "becomes structurally unsatisfiable on pack-2 code", because
+  quits create only arrears-carrying vacancies and the Arrive exclusion
+  skips them. Measured: arrivals land at **t183/184/185**, well after the
+  first departure at t127, and the criterion holds. The reasoning missed
+  that closure DELETES the arrears-carrying venue the exclusion refuses
+  to recruit for — after Longacre dies its survivors' post-layoff
+  vacancies are clean and pull-eligible. **No criterion was weakened and
+  nothing moved to pack 3.** Recorded as an erratum in the signed spec.
+
+  **WHAT THE RE-MEASURE ACTUALLY FOUND: closure cascades.** This is the
+  finding that matters, and it is larger than the effect the re-cut was
+  written for. Longacre's four laid-off workers join the dis-saving pool;
+  demand falls; the next venue's arrears deepen. Five of six venues are
+  gone by t172 (**t140, t153, t156, t171, t172**), population troughs at
+  **1** and ends at **4**, with **one** surviving business — against
+  pack 1's 200-tick end state of population 26 and all six venues alive.
+  Two things are worth being precise about:
+  - It is **not a mistuning**. No threshold inside the range that
+    separates the two arrears modes avoids it (a higher one only delays
+    the same cascade), and one above the measured 73-tick streaks would
+    make closure soak-invisible instead — the pack's whole observable
+    reduced to a fixture.
+  - It is the **honest cost of the signed sequence** ("death before
+    birth"), and pack 3's founding is its designed cure. Decision D8
+    accepted this shape in advance; the measured magnitude is much larger
+    than D8 assumed, so it is re-flagged for owner acknowledgement rather
+    than left inside a closed decision.
+  Scope of the exposure, measured: nothing closes before t140, so the
+  100-tick soak, the 50-tick employment soak (`NEAR_FULL` = 21,
+  unchanged) and the shipped interactive experience below t140 are all
+  untouched. The 200-tick soak keeps every inherited criterion and gains
+  a deliberately loose floor — closures ≥ 3, ≥ 1 surviving business, min
+  population ≥ 1 — so that a regression which stopped closure firing, or
+  one that emptied the town entirely, fails there instead of passing
+  quietly. **That floor is what pack 3 must raise.**
+
+  Eyeballed at `cargo run` on the shipped town (shell behavior no test
+  covers), which also caught a narration bug no test would have: a
+  closure's own `Settled` events were bucketed with the leavers, so the
+  feed read "Longacre Farm closed" and only later "Longacre Farm paid
+  out 32g", with an unrelated profit draw in between. Fixed, and the
+  wording corrected with it — "paid out 32g of back wages to a leaver"
+  became "settled 32g of back wages with george", which is no longer
+  false for a closure settlement, where nobody left town. The freed
+  address then inspects as the pack's stated observable:
+  `Longacre Farm (house): … status vacant residence — open to a
+  newcomer`, and a still-living venue shows `distress 5 tick(s)
+  insolvent (closes at 12)`.
+
+  Also executed here: **Amendment 19**, plus the D7 back-fill of
+  Amendments 16 and 17, which had been recorded in the 07-02 header since
+  2026-08-21 but never applied to the table cells.
+
+  Pack gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 168
+  passed, 0 failed (160 on arrival; +9 new, −1 retired).

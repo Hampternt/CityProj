@@ -435,6 +435,16 @@ mod tests {
         let mut moved: HashMap<AgentId, (u32, u32)> = HashMap::new();
         let mut quits = 0u32;
         let mut drew: HashMap<AgentId, u32> = HashMap::new();
+        // criterion 7 (firm-lifecycle pack 2): the tuned town never
+        // closes. A max-tracking map alone cannot prove that — a closed
+        // venue simply drops out of `businesses()` and scores as "never
+        // got high" — so it is paired with a live-count check and a
+        // hand-written Closed tally. Worldgen's `match event` arms end in
+        // `_ => {}`, so neither Closed nor LaidOff forces at compile time
+        // here: these assertions have no compiler help and must be
+        // written deliberately.
+        let mut distress: HashMap<AgentId, u32> = HashMap::new();
+        let mut closures = 0u32;
 
         for t in 1..=LAST {
             // the prices in force during tick t are those posted before
@@ -467,6 +477,7 @@ mod tests {
                         }
                     }
                     Event::Quit { .. } => quits += 1,
+                    Event::Closed { .. } => closures += 1,
                     // t >= 20 like criterion 5: the t1–2 boot burst (the
                     // seeded-wallet spending wave flowing through the
                     // coffers) would satisfy an unguarded tally even for
@@ -496,6 +507,18 @@ mod tests {
                     );
                 }
             }
+            // 7. (firm-lifecycle pack 2) the tuned town never closes.
+            //    Sampled post-tick, which IS the next tick's phase-start
+            //    snapshot — the value phase 6's closure pass will read.
+            for (_, business) in world.businesses() {
+                let entry = distress.entry(business.id).or_default();
+                *entry = (*entry).max(business.insolvent_ticks);
+            }
+            assert_eq!(
+                world.businesses().count(),
+                6,
+                "a venue vanished from the tuned town at t{t}"
+            );
         }
 
         // 1. every agent completes ≥1 Food purchase in every rolling
@@ -553,6 +576,29 @@ mod tests {
                 drew.get(&business.id).copied().unwrap_or(0) > 0,
                 "{} never drew profit across the soak",
                 house.address
+            );
+        }
+
+        // 7. (firm-lifecycle pack 2) NOTHING closes in the tuned town.
+        //    Three assertions, because no one of them is sufficient: the
+        //    counter never reaches the threshold, no venue vanished (the
+        //    per-tick count above), and no closure was ever narrated.
+        //    Measured 2026-08-30: exactly ten one-tick flickers over the
+        //    whole span, all at Longacre Farm, owing 2–11g against a 140g
+        //    bill — observed maximum 1, so CLOSE_INSOLVENT_TICKS = 12
+        //    clears it by eleven ticks. The other five venues never
+        //    accrue a coin. This is a REGRESSION GUARD, not a tuning
+        //    constraint: it passes at any threshold ≥ 2, so it proves the
+        //    constant is not too LOW and says nothing about it being too
+        //    high. Only the 200-tick soak can show the fuse still fires.
+        assert_eq!(closures, 0, "the tuned town closed {closures} venues");
+        for (house, business) in world.businesses() {
+            let max = distress.get(&business.id).copied().unwrap_or(0);
+            assert!(
+                max < crate::sim::CLOSE_INSOLVENT_TICKS,
+                "{} reached {max} insolvent ticks against a threshold of {}",
+                house.address,
+                crate::sim::CLOSE_INSOLVENT_TICKS
             );
         }
     }
@@ -668,9 +714,25 @@ mod tests {
     /// and broader under the draw, since the coffer cushions that used
     /// to absorb it are drawn down by design (quit churn from ~t134,
     /// three venues, was ~t174 at one); quits open slots; the K-aged
-    /// vacancy pulls grubstaked immigrants (~t175 on, was ~t182) who
-    /// are hired within a tick or two. The audit runs inside every
-    /// `tick`, so any §8 break panics the soak.
+    /// vacancy pulls grubstaked immigrants who are hired within a tick
+    /// or two. The audit runs inside every `tick`, so any §8 break
+    /// panics the soak.
+    ///
+    /// **Re-measured under pack-2 closure, 2026-08-30.** The spec's
+    /// named re-cut turned out NOT to be needed and no criterion was
+    /// weakened — see the pack-2 ledger. Arrivals still answer the shock
+    /// (t183/184/185, after the first departure at t127), because
+    /// closure DELETES the arrears-carrying venue that the Arrive
+    /// exclusion refuses to recruit for, leaving the survivor's
+    /// post-layoff vacancies clean and pull-eligible. What the re-measure
+    /// did find is worse and is pinned below: closure cascades. Longacre
+    /// Farm dies at t140 exactly as designed, but its four laid-off
+    /// workers join the dis-saving pool, demand falls further, and five
+    /// of six venues are gone by t172 (t140, t153, t156, t171, t172),
+    /// population troughing at 1 before the arrivals. That is the
+    /// honest consequence of landing "firms die" before "firms are
+    /// born"; pack 3's founding is the designed cure, and criterion 5
+    /// below is the floor it must raise.
     #[test]
     fn town_soak_population_moves_both_directions() {
         use crate::sim::{self, Event};
@@ -683,6 +745,8 @@ mod tests {
         let mut first_arrived_after_departure: Option<u64> = None;
         let mut dipped = false;
         let mut rose = false;
+        let mut closed: Vec<u64> = Vec::new();
+        let mut min_population = seed_population;
         for t in 1..=LAST {
             let before = world.agents.len();
             let report = sim::tick(&mut world);
@@ -700,12 +764,15 @@ mod tests {
                     Event::Arrived { .. } if first_departed.is_some_and(|d| t > d) => {
                         first_arrived_after_departure.get_or_insert(t);
                     }
+                    // no compiler help here: this match ends in `_ => {}`
+                    Event::Closed { .. } => closed.push(t),
                     _ => {}
                 }
             }
             let after = world.agents.len();
             dipped |= after < seed_population;
             rose |= after > before;
+            min_population = min_population.min(after);
         }
         // population moves in BOTH directions (spec observable), on the
         // per-tick series — offsetting same-tick moves cannot fake it
@@ -716,6 +783,28 @@ mod tests {
         );
         assert!(dipped, "population never fell below the seed count");
         assert!(rose, "population never rose across a tick");
+        // 5. (firm-lifecycle pack 2) the fuse fires in the real town,
+        //    not only on fixtures — and the cascade it sets off is
+        //    RECORDED, not hidden. Measured 2026-08-30: closures at
+        //    t140/t153/t156/t171/t172, min population 1, final
+        //    population 4, one surviving venue. The bounds below are a
+        //    pack-2 FLOOR, deliberately loose: they exist so pack 3's
+        //    founding has something to raise, and so a regression that
+        //    stopped closure firing — or one that emptied the town
+        //    entirely — fails here instead of passing quietly.
+        assert!(
+            closed.len() >= 3,
+            "closure never reached the demand-losing venues (closed at {closed:?})"
+        );
+        assert!(
+            world.businesses().count() >= 1,
+            "every business in the town closed — nothing left to found against"
+        );
+        assert!(
+            min_population >= 1,
+            "the town emptied completely (min population {min_population})"
+        );
+
         // no orphan balances: every leaver's account is empty on every
         // metal — the per-account check the totals-only audit cannot
         // make (ids are never reused, so these must still be zero)

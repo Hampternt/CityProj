@@ -195,6 +195,21 @@ open-slotted) firm is exactly the pull-eligible vacancy the exclusion
 demands. Pack 2's ledger records the re-cut; pack 3's full-cycle soak
 restores the arrival.
 
+*(Erratum, recorded 2026-08-30 after pack 2's re-measure: the
+"structurally unsatisfiable" prediction above is **wrong**, and no
+re-cut was needed — the shipped arrival criterion still holds on pack-2
+code, so pack 2 weakened nothing. The reasoning missed that closure
+DELETES the arrears-carrying venue the exclusion refuses to recruit for:
+after Longacre Farm dies at t140 the survivor's post-layoff vacancies are
+clean and pull-eligible, and arrivals land at t183/184/185, comfortably
+after the first departure at t127. What the re-measure did find is a
+different and larger effect the prediction did not consider — closure
+CASCADES. Longacre's laid-off staff join the dis-saving pool, demand
+falls further, and five of six venues are gone by t172 with population
+troughing at 1. Pack 2 pins that as a deliberately loose floor for
+pack 3's founding to raise, rather than hiding it. See the pack-2
+manifest's ledger.)*
+
 **Pack 3 — Firms are born.** `market::plan_founding` + the per-good
 founding template and `FOUND_SIGNAL` constants; `Intent::Found` on the
 decide→apply template (one per tick, phase-start snapshot, kill-only live

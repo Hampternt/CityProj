@@ -259,9 +259,10 @@ pub(crate) fn insolvent_now(owed_total: Money) -> bool {
 /// it. An arrears-**persistence** trigger, deliberately not an arrears
 /// level: the quit rule caps per-worker debt near four wages and
 /// post-quit arrears freeze, so persistence is the one signal that stays
-/// reachable. Soak-tuned 2026-08-30 (the spec ships 6 as provisional and
-/// prescribes "the observed per-venue maximum … and the threshold frozen
-/// above it"), then frozen.
+/// reachable. FROZEN at 12, 2026-08-30, by the procedure the spec
+/// prescribes ("the observed per-venue maximum … and the threshold frozen
+/// above it"): observed maximum 1, over ten single-tick flickers in the
+/// 100-tick tuned soak.
 ///
 /// Measured, 200-tick `town_world` under the pack-1 draw:
 /// - **healthy t≤100** — max streak 1 (Longacre's isolated one-tick
@@ -273,10 +274,19 @@ pub(crate) fn insolvent_now(owed_total: Money) -> bool {
 ///   phase-start snapshot, so a firm crossing at tick t closes at t+1:
 ///   closure tick = 128+k / 141+k / 144+k against first quits t134 /
 ///   t146 / t148. A strict one-tick lead over the quit needs k ≥ 7
-///   (Longacre binding). At 12: closures t140 / t153 / t156, slack
-///   +6 / +7 / +8. (The spec's provisional 6 closes Longacre on its own
-///   quit tick — a within-tick tie, phase 1 before phase 6, so not an
-///   ordering failure but zero slack.)
+///   (Longacre binding). At 12 the derivation predicted closures at
+///   t140 / t153 / t156, and the 200-tick soak under live closure hit
+///   those three ticks EXACTLY — slack +6 / +7 / +8 over the quits.
+///   (The spec's provisional 6 closes Longacre on its own quit tick — a
+///   within-tick tie, phase 1 before phase 6, so not an ordering failure
+///   but zero slack.)
+/// - **cascade, recorded** — closure is not free: Longacre's four
+///   laid-off workers join the dis-saving pool, and five of six venues
+///   are gone by t172. That is the cost of landing "firms die" before
+///   "firms are born", not a mistuning — no threshold inside the range
+///   that separates the two arrears modes avoids it, and one above the
+///   measured 73-tick streaks would make closure soak-invisible
+///   instead. Pack 3's founding is the designed cure.
 ///
 /// Mnemonic: 12 = 3 × (`QUIT_ARREARS_BILLS` + 1), three nominal quit
 /// cycles — but the nominal 4-tick cycle assumes a full-bill shortfall
