@@ -194,7 +194,7 @@ address it — a successor container, not this one.
   resets, `offered == 0` holds. Done: `./scripts/check.sh` clean;
   `cargo test sim:: market::` quoted. Touches: src/business.rs, src/sim.rs,
   src/world.rs.
-- [ ] **2. The market.rs founding band.** A third `// ---` band after
+- [x] **2. The market.rs founding band.** A third `// ---` band after
   `cheapest_offer`: `SellerSnapshot`, `Prospectus`, `FoundTemplate`, the
   private founding table + `FOUND_SIGNAL_TICKS` in the price/wage
   constant-block layout, `found_template`, private `found_signal`, and

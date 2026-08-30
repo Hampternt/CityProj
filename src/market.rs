@@ -3,7 +3,10 @@
 //! `plan_application` are pure — snapshot in, plan out; no world access,
 //! fully deterministic. sim.rs builds `Offer`s/`JobOffer`s from
 //! `World::businesses()`, applies purchase plans through `World::pay`,
-//! and applies hires through `World::assign_workplace`.
+//! and applies hires through `World::assign_workplace`. `plan_founding`
+//! (firm-lifecycle pack 3) is the third pure planner — market signals in,
+//! an entry decision out; sim.rs builds the `SellerSnapshot`s and applies
+//! a prospectus through `World::found_business` plus a capital `pay`.
 
 use std::collections::HashMap;
 
@@ -275,6 +278,185 @@ fn cheapest_offer(good: Good, budget: Money, offers: &[Offer], remaining: &[u32]
         }
     }
     cheapest
+}
+
+// ---------------------------------------------------------------------
+// Firm founding (firm-lifecycle pack 3): entry choice. Reading market
+// signals to decide whether a sector is worth entering IS market logic
+// (§8.6) — the ranking mirror of `plan_application`, one tier up.
+
+/// One good's market as the founding decide sees it, snapshotted at
+/// phase-6 start. BUILDER INVARIANT, relied on by the gates below:
+/// `sellers >= 1` implies `cheapest_price` is `Some`, `sellers == 0`
+/// implies `None` and `sold_out_streak == 0`. `sold_out_streak` is the
+/// MAX over the good's live sellers — one seller clearing its shelf is
+/// enough to call the sector scarce.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+pub struct SellerSnapshot {
+    pub good: Good,
+    pub sellers: u32,
+    pub cheapest_price: Option<Money>,
+    pub sold_out_streak: u32,
+}
+
+/// The entry decision: what to sell and at what price.
+#[derive(Debug, PartialEq, Eq)]
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+pub struct Prospectus {
+    pub good: Good,
+    pub price: Money,
+}
+
+/// What a founded firm looks like, per good. Deliberately smaller than a
+/// worldgen venue (see `FOUNDING_TEMPLATE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+pub struct FoundTemplate {
+    pub price: Money,
+    pub wage: Money,
+    pub headcount: u32,
+}
+
+/// Founding tuning table (firm-lifecycle spec, `plan_founding` contract)
+/// — gameplay knobs like the price and wage constants above. Columns:
+/// good, entry price, wage, headcount, scarcity signal.
+///
+/// **Entry price** 2/2/4: the cheaper worldgen seed of each pair, read
+/// only on the existential tier (with a live seller, the prospectus
+/// enters AT market and tâtonnement takes it from there). `goods.rs`
+/// deliberately holds no prices, so this table is the datum.
+///
+/// **Wage** 35/36/24: the seeded-solvent wages, never the top posted
+/// wage — `plan_application` matches on highest wage, so entering above
+/// market would seed a wage war.
+///
+/// **Headcount 2** everywhere, against worldgen's 4/3/3: the spec's own
+/// anti-churn lever ("founding smaller than a worldgen venue is
+/// legitimate"). The seeded supply already mildly over-served demand
+/// (Food: 8 staff × 40 = 320 against 30 × 10 = 300 appetite), which is
+/// what floored both prices in the first place; an entrant at worldgen
+/// size would recreate the price war founding exists to cure. The
+/// founder self-hires into one seat, leaving exactly one for the labor
+/// market.
+///
+/// **Scarcity signal** 2/2/3 — DERIVED, not tuned:
+/// `max(PRICE_FLOOR + 1, ceil(wage / production_rate))`, the price at
+/// which one staffer's full output covers his own wage. Food
+/// `ceil(35/40) = 1` → 2, Entertainment `ceil(36/20) = 2`, Luxury
+/// `ceil(24/8) = 3`. Sized against VIABILITY rather than mere scarcity,
+/// per the spec's anti-churn note. A consequence stated rather than
+/// hidden: a sector whose lone survivor cannot post a wage-covering
+/// price has no room for an entrant, so its scarcity tier is correctly
+/// unreachable and only the existential tier can recover it.
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+const FOUNDING_TEMPLATE: [(Good, Money, Money, u32, Money); 3] = [
+    (Good::Food, Money::new(2), Money::new(35), 2, Money::new(2)),
+    (
+        Good::Entertainment,
+        Money::new(2),
+        Money::new(36),
+        2,
+        Money::new(2),
+    ),
+    (
+        Good::Luxury,
+        Money::new(4),
+        Money::new(24),
+        2,
+        Money::new(3),
+    ),
+];
+
+/// Consecutive sell-out ticks a lone survivor must post before its
+/// sector counts as scarce rather than collapsing — the DIRECTION half
+/// of the scarcity gate. PROVISIONAL: it cannot be frozen from the
+/// pack-3 planning probe, which recorded prices rather than sell-through.
+/// The pack's re-measure item freezes it strictly above the longest
+/// streak posted by a survivor that then closed.
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+const FOUND_SIGNAL_TICKS: u32 = 2;
+
+/// This good's founding template. The accessor exists so the numbers
+/// stay in market.rs (§8.6) while sim.rs builds the `RoleSlot` and the
+/// capital stake from them — widening `Prospectus` to carry them would
+/// put the founding template in the plan struct instead.
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+pub fn found_template(good: Good) -> FoundTemplate {
+    let (_, price, wage, headcount, _) = FOUNDING_TEMPLATE
+        .iter()
+        .find(|(candidate, ..)| *candidate == good)
+        .expect("FOUNDING_TEMPLATE lists every Good");
+    FoundTemplate {
+        price: *price,
+        wage: *wage,
+        headcount: *headcount,
+    }
+}
+
+/// The price at or above which this good's lone survivor signals room
+/// for a second seller.
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+fn found_signal(good: Good) -> Money {
+    let (.., signal) = FOUNDING_TEMPLATE
+        .iter()
+        .find(|(candidate, ..)| *candidate == good)
+        .expect("FOUNDING_TEMPLATE lists every Good");
+    *signal
+}
+
+/// Pure entry choice: which good, if any, is worth founding into, and at
+/// what price. TWO passes over `Good::ALL`, returning the first hit —
+/// existential before scarcity:
+///
+/// 1. **Tier 1, existential:** a good with NO seller is refounded
+///    unconditionally, at the template price. A dead sector must be
+///    recoverable — with no Food seller the phase-7 destitution rule has
+///    no posted price to judge against and nobody can even emigrate.
+/// 2. **Tier 2, scarcity:** a good with exactly ONE seller is entered at
+///    that survivor's live price, but only when the sector looks scarce
+///    on BOTH axes — a price at or above the viability signal AND a
+///    sell-out streak. Level alone cannot discriminate: at `PRICE_FLOOR`
+///    a live sector and a dead one post the same number, and a
+///    collapsing sector's price passes back DOWN through any threshold
+///    on its way to the floor.
+///
+/// The two tiers are exactly the signed `sellers < 2` carrying-capacity
+/// gate, split by priority: founding never creates the third seller the
+/// town measured cannot be carried. Pure, total, and iteration-order-free
+/// — the winner is the same whatever order `snapshots` arrives in.
+#[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+pub fn plan_founding(snapshots: &[SellerSnapshot]) -> Option<Prospectus> {
+    for good in Good::ALL {
+        if snapshots
+            .iter()
+            .any(|snapshot| snapshot.good == good && snapshot.sellers == 0)
+        {
+            return Some(Prospectus {
+                good,
+                price: found_template(good).price,
+            });
+        }
+    }
+    for good in Good::ALL {
+        let scarce = snapshots.iter().find(|snapshot| {
+            snapshot.good == good
+                && snapshot.sellers == 1
+                && snapshot.sold_out_streak >= FOUND_SIGNAL_TICKS
+                && snapshot
+                    .cheapest_price
+                    .is_some_and(|price| price >= found_signal(good))
+        });
+        if let Some(snapshot) = scarce {
+            return Some(Prospectus {
+                good,
+                price: snapshot
+                    .cheapest_price
+                    .expect("sellers == 1 implies a price (builder invariant)"),
+            });
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -591,6 +773,143 @@ mod tests {
                 stepped_wage(Money::new(wage)),
                 adjust_wage(Money::new(wage), 1, 0, true)
             );
+        }
+    }
+
+    // --- Firm founding (firm-lifecycle pack 3) ---
+
+    fn snapshot(good: Good, sellers: u32, cheapest: Option<u64>, streak: u32) -> SellerSnapshot {
+        SellerSnapshot {
+            good,
+            sellers,
+            cheapest_price: cheapest.map(Money::new),
+            sold_out_streak: streak,
+        }
+    }
+
+    /// A market where every good has two healthy sellers — the tuned
+    /// town. Nothing is ever founded into it.
+    fn carried() -> Vec<SellerSnapshot> {
+        vec![
+            snapshot(Good::Food, 2, Some(2), 9),
+            snapshot(Good::Entertainment, 2, Some(2), 9),
+            snapshot(Good::Luxury, 2, Some(4), 9),
+        ]
+    }
+
+    #[test]
+    fn plan_founding_refuses_a_carried_market() {
+        // The signed carrying-capacity gate: founding never creates the
+        // third seller the town measured cannot support — however scarce
+        // the sector looks on both other axes.
+        assert_eq!(plan_founding(&carried()), None);
+    }
+
+    #[test]
+    fn plan_founding_scarcity_needs_both_level_and_direction() {
+        // One seller, sold out for long enough, at a viable price: enter
+        // AT market, not at the template price.
+        let mut market = carried();
+        market[0] = snapshot(Good::Food, 1, Some(7), FOUND_SIGNAL_TICKS);
+        assert_eq!(
+            plan_founding(&market),
+            Some(Prospectus {
+                good: Good::Food,
+                price: Money::new(7),
+            })
+        );
+        // Same shelf-clearing streak, but the price does not cover a
+        // staffer's own wage — a sector with no room for an entrant.
+        market[0] = snapshot(Good::Food, 1, Some(1), FOUND_SIGNAL_TICKS);
+        assert_eq!(plan_founding(&market), None);
+        // Viable price, but nothing is clearing: this is a collapse
+        // passing back down through the level on its way to the floor,
+        // not scarcity.
+        market[0] = snapshot(Good::Food, 1, Some(7), FOUND_SIGNAL_TICKS - 1);
+        assert_eq!(plan_founding(&market), None);
+    }
+
+    #[test]
+    fn plan_founding_refounds_a_dead_sector_unconditionally_and_first() {
+        // Tier 1 needs no price and no streak — there is no survivor to
+        // read either from.
+        let mut market = carried();
+        market[2] = snapshot(Good::Luxury, 0, None, 0);
+        assert_eq!(
+            plan_founding(&market),
+            Some(Prospectus {
+                good: Good::Luxury,
+                price: found_template(Good::Luxury).price,
+            })
+        );
+        // ...and it OUTRANKS a merely-scarce good earlier in Good::ALL
+        // order. Measured, pack-3 probe: with one founding per tick and a
+        // single scan, Food's scarcity locked Entertainment out for 25
+        // consecutive ticks while Entertainment had no seller at all.
+        market[0] = snapshot(Good::Food, 1, Some(9), 9);
+        assert_eq!(
+            plan_founding(&market).map(|prospectus| prospectus.good),
+            Some(Good::Luxury)
+        );
+    }
+
+    #[test]
+    fn plan_founding_is_iteration_order_free() {
+        let mut market = carried();
+        market[1] = snapshot(Good::Entertainment, 1, Some(6), 9);
+        market[2] = snapshot(Good::Luxury, 1, Some(6), 9);
+        let forward = plan_founding(&market);
+        market.reverse();
+        assert_eq!(plan_founding(&market), forward);
+        // Good::ALL order decides, not input order: Entertainment first.
+        assert_eq!(
+            forward.map(|prospectus| prospectus.good),
+            Some(Good::Entertainment)
+        );
+    }
+
+    #[test]
+    fn founding_template_matches_the_manifest_table() {
+        // Change the manifest first, then this (the goods.rs
+        // `constants_match_the_spec_table` precedent).
+        let expected = [
+            (Good::Food, 2, 35, 2, 2),
+            (Good::Entertainment, 2, 36, 2, 2),
+            (Good::Luxury, 4, 24, 2, 3),
+        ];
+        for (good, price, wage, headcount, signal) in expected {
+            let template = found_template(good);
+            assert_eq!(template.price, Money::new(price), "{good} price");
+            assert_eq!(template.wage, Money::new(wage), "{good} wage");
+            assert_eq!(template.headcount, headcount, "{good} headcount");
+            assert_eq!(found_signal(good), Money::new(signal), "{good} signal");
+        }
+    }
+
+    #[test]
+    fn every_founding_price_and_signal_covers_its_own_payroll() {
+        // The derivation the signal IS, pinned so a later wage or
+        // production tweak cannot silently make founding suicidal:
+        // one staffer's full output must cover one staffer's wage, at
+        // the entry price AND at the scarcity signal.
+        for good in Good::ALL {
+            let template = found_template(good);
+            let output = u64::from(good.production_rate());
+            assert!(
+                template.price.times(good.production_rate()) >= template.wage,
+                "{good}: entry price {} × output {output} cannot pay wage {}",
+                template.price,
+                template.wage,
+            );
+            assert!(
+                found_signal(good).times(good.production_rate()) >= template.wage,
+                "{good}: signal {} × output {output} cannot pay wage {}",
+                found_signal(good),
+                template.wage,
+            );
+            // ...and the signal is strictly above the floor, so "at the
+            // floor" can never read as scarcity.
+            assert!(found_signal(good) > PRICE_FLOOR, "{good}: signal at floor");
         }
     }
 }
