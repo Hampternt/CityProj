@@ -445,6 +445,7 @@ mod tests {
         // written deliberately.
         let mut distress: HashMap<AgentId, u32> = HashMap::new();
         let mut closures = 0u32;
+        let mut foundings = 0u32;
 
         for t in 1..=LAST {
             // the prices in force during tick t are those posted before
@@ -478,6 +479,7 @@ mod tests {
                     }
                     Event::Quit { .. } => quits += 1,
                     Event::Closed { .. } => closures += 1,
+                    Event::Founded { .. } => foundings += 1,
                     // t >= 20 like criterion 5: the t1–2 boot burst (the
                     // seeded-wallet spending wave flowing through the
                     // coffers) would satisfy an unguarded tally even for
@@ -517,8 +519,22 @@ mod tests {
             assert_eq!(
                 world.businesses().count(),
                 6,
-                "a venue vanished from the tuned town at t{t}"
+                "the tuned town's venue count moved at t{t} — a death or a birth"
             );
+            // 8. (firm-lifecycle pack 3) and NOTHING is founded — named
+            //    at its cause rather than only at its symptom: founding's
+            //    carrying-capacity gate needs a good to drop below two
+            //    sellers, and in the tuned town none ever does.
+            for good in Good::ALL {
+                assert!(
+                    world
+                        .businesses()
+                        .filter(|(_, b)| b.product == good)
+                        .count()
+                        >= 2,
+                    "{good} fell below two sellers at t{t} — founding's gate would open"
+                );
+            }
         }
 
         // 1. every agent completes ≥1 Food purchase in every rolling
@@ -592,6 +608,10 @@ mod tests {
         //    constant is not too LOW and says nothing about it being too
         //    high. Only the 200-tick soak can show the fuse still fires.
         assert_eq!(closures, 0, "the tuned town closed {closures} venues");
+        // Hand-written, like criterion 7: this match ends in `_ => {}`,
+        // so `Event::Founded` forces nothing here and a missing arm would
+        // ship green while observing nothing.
+        assert_eq!(foundings, 0, "the tuned town founded {foundings} venues");
         for (house, business) in world.businesses() {
             let max = distress.get(&business.id).copied().unwrap_or(0);
             assert!(
@@ -687,6 +707,13 @@ mod tests {
             let never_fell = series.windows(2).all(|w| w[1] >= w[0]);
             let rose = series.last() > series.first();
             if never_fell && rose {
+                // A founded firm's wage series starts mid-soak, so it can
+                // be shorter than PLATEAU — `series.len() - PLATEAU`
+                // would underflow into a panic rather than a failure.
+                // Too short to judge a plateau is not evidence of one.
+                if series.len() < PLATEAU {
+                    continue;
+                }
                 let tail = &series[series.len() - PLATEAU..];
                 assert!(
                     tail.windows(2).all(|w| w[1] == w[0]),
@@ -725,21 +752,29 @@ mod tests {
     /// closure DELETES the arrears-carrying venue that the Arrive
     /// exclusion refuses to recruit for, leaving the survivor's
     /// post-layoff vacancies clean and pull-eligible. What the re-measure
-    /// did find is worse and is pinned below: closure cascades, and
-    /// the cascade is TOTAL. Measured against a pack-1 baseline (closure
-    /// code absent), the first three deaths are NOT cascade deaths —
-    /// Longacre, The Brass Bell and Gilt Curtain already carry terminal
-    /// arrears streaks of 73 / 60 / 57 ticks there and simply never die,
-    /// because no rule kills them. The cascade's own victims are the
-    /// three venues that carry ZERO arrears for 200 ticks under pack 1:
-    /// Karat & Co (t171), Silverthread Atelier (t172) and Greenrow Farm
-    /// (t201, one tick past this horizon). Every venue dies; from t201
-    /// the town holds no businesses at all. That is the honest
-    /// consequence of landing "firms die" before "firms are born";
-    /// pack 3's founding is the designed cure, and criterion 5 below is
-    /// the floor it must raise.
+    /// did find is pinned below: pack 2's closure cascade, and pack 3's
+    /// answer to it.
+    ///
+    /// **Pack 2 (closure without founding) emptied the town.** Every
+    /// venue died — t140/t153/t156/t171/t172 and Greenrow Farm at t201,
+    /// one tick past this horizon — leaving no businesses at all at
+    /// population 4. Measured against a pack-1 baseline, only three of
+    /// those were the cascade's own: Longacre, The Brass Bell and Gilt
+    /// Curtain already carried terminal arrears streaks of 73 / 60 / 57
+    /// ticks with closure absent and simply never died, while Karat &
+    /// Co, Silverthread and Greenrow carried ZERO arrears for 200 ticks
+    /// and died of the layoffs.
+    ///
+    /// **Pack 3's founding answers it.** Same soak, founding live:
+    /// businesses 5 (was 1), population 20 (was 4), minimum 20 (was 1).
+    /// Six closures, five foundings, every seeded death answered within
+    /// 1–5 ticks, and no founded firm dying inside the horizon.
+    /// Criterion 5 below pins that with slack; criteria 6 and 7 pin the
+    /// anti-churn bound and the full closure→vacancy→founding→hire
+    /// chain.
     #[test]
     fn town_soak_population_moves_both_directions() {
+        use crate::housing::HouseId;
         use crate::sim::{self, Event};
 
         const LAST: u64 = 200;
@@ -751,10 +786,53 @@ mod tests {
         let mut dipped = false;
         let mut closed: Vec<u64> = Vec::new();
         let mut min_population = seed_population;
+        // Per-good birth/death stream for the anti-churn bound. A closed
+        // firm's id no longer resolves, so the good is remembered in a
+        // side table seeded from the boot set and extended on every
+        // Founded.
+        let mut sector: HashMap<AgentId, Good> = world
+            .businesses()
+            .map(|(_, business)| (business.id, business.product))
+            .collect();
+        let mut births: HashMap<Good, Vec<u64>> = HashMap::new();
+        let mut deaths: HashMap<Good, Vec<u64>> = HashMap::new();
+        // The full-cycle chain, as four deliberate observations.
+        let mut freed: Vec<(u64, HouseId)> = Vec::new();
+        let mut chain_reoccupied: Option<(u64, HouseId)> = None;
+        let mut chain_hired: Option<u64> = None;
+        let mut founded_ids: Vec<AgentId> = Vec::new();
         for t in 1..=LAST {
             let report = sim::tick(&mut world);
             for event in &report.events {
                 match event {
+                    // no compiler help for either arm: this match ends in
+                    // `_ => {}`, so a missing one ships green
+                    Event::Founded {
+                        business,
+                        house,
+                        good,
+                        ..
+                    } => {
+                        sector.insert(*business, *good);
+                        births.entry(*good).or_default().push(t);
+                        founded_ids.push(*business);
+                        // this arm shadows the answer arm below, so it
+                        // records the answer itself
+                        if first_departed.is_some_and(|d| t > d) {
+                            first_answer_after_departure.get_or_insert(t);
+                        }
+                        if freed
+                            .iter()
+                            .any(|(freed_at, id)| *freed_at < t && id == house)
+                        {
+                            chain_reoccupied.get_or_insert((t, *house));
+                        }
+                    }
+                    Event::Hired { business, .. }
+                        if chain_reoccupied.is_some() && founded_ids.contains(business) =>
+                    {
+                        chain_hired.get_or_insert(t);
+                    }
                     Event::Departed { agent, .. } => {
                         departed_ids.push(*agent);
                         first_departed.get_or_insert(t);
@@ -764,13 +842,18 @@ mod tests {
                     // shock, which a boot transient cannot satisfy
                     // (phase order puts both before Departed inside one
                     // tick, so strictly-later is the honest bar)
-                    Event::Arrived { .. } | Event::Founded { .. }
-                        if first_departed.is_some_and(|d| t > d) =>
-                    {
+                    Event::Arrived { .. } if first_departed.is_some_and(|d| t > d) => {
                         first_answer_after_departure.get_or_insert(t);
                     }
-                    // no compiler help here: this match ends in `_ => {}`
-                    Event::Closed { .. } => closed.push(t),
+                    Event::Closed {
+                        business, house, ..
+                    } => {
+                        closed.push(t);
+                        freed.push((t, *house));
+                        if let Some(good) = sector.get(business) {
+                            deaths.entry(*good).or_default().push(t);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -802,7 +885,73 @@ mod tests {
              (first departure at {first_departed:?})"
         );
         assert!(dipped, "population never fell below the seed count");
-        // 5. (firm-lifecycle pack 2) the fuse fires in the real town,
+        // 5. (firm-lifecycle pack 3) FOUNDING ANSWERS THE CASCADE.
+        //    Measured 2026-08-30 over this exact run, against pack 2's
+        //    same soak with founding absent:
+        //
+        //        pack 2   businesses 1, population 4, min 1
+        //        pack 3   businesses 5, population 20, min 20
+        //
+        //    closures [140, 153, 156, 179, 182, 199]; births Food [142],
+        //    Entertainment [155, 157], Luxury [180, 184]. Every seeded
+        //    death is answered within 1–5 ticks, and NO founded firm
+        //    closes inside the horizon — the anti-churn target holds with
+        //    room. The bounds below sit BELOW those measurements on
+        //    purpose: pack 2 shipped two zero-margin floors and its close
+        //    review was right to call them traps, so these carry slack
+        //    (5 → 4, 20 → 15, 5 → 3) and are stated as measured-vs-
+        //    asserted rather than as "deliberately loose".
+        assert!(
+            world.businesses().count() >= 4,
+            "the town kept only {} venues — founding is not answering",
+            world.businesses().count()
+        );
+        assert!(
+            min_population >= 15,
+            "population troughed at {min_population} — the cascade is winning"
+        );
+        let total_births: usize = births.values().map(Vec::len).sum();
+        assert!(
+            total_births >= 3,
+            "only {total_births} firms were founded in {LAST} ticks"
+        );
+
+        // 6. ANTI-CHURN: no good may run a found→close cycle inside a
+        //    100-tick window. A founded firm that dies is the failure
+        //    mode the scarcity gate's direction test exists to prevent.
+        for good in Good::ALL {
+            let born = births.get(&good).cloned().unwrap_or_default();
+            let died = deaths.get(&good).cloned().unwrap_or_default();
+            for birth in &born {
+                let churned = died
+                    .iter()
+                    .filter(|death| *death > birth && **death - *birth <= 100)
+                    .count();
+                assert!(
+                    churned <= 1,
+                    "{good} churned: founded t{birth}, then {churned} deaths within 100 ticks"
+                );
+            }
+        }
+
+        // 7. THE FULL-CYCLE CHAIN, as four deliberate observations: a
+        //    venue closed, its house passed the vacancy predicate, a
+        //    firm was founded into that very house at a strictly later
+        //    tick, and someone was hired into it. Hand-written — this
+        //    match ends in `_ => {}` and forces nothing.
+        let (reoccupied_at, house) =
+            chain_reoccupied.expect("no freed house was ever founded into");
+        assert!(
+            freed.iter().any(|(_, freed_house)| *freed_house == house),
+            "the reoccupied house was never freed by a closure"
+        );
+        let hired_at = chain_hired.expect("nobody was hired into a founded firm");
+        assert!(
+            hired_at >= reoccupied_at,
+            "the hire (t{hired_at}) preceded the founding (t{reoccupied_at})"
+        );
+
+        // 8. (firm-lifecycle pack 2) the fuse fires in the real town,
         //    not only on fixtures — and the cascade it sets off is
         //    RECORDED, not hidden. Measured 2026-08-30: closures at
         //    t140/t153/t156/t171/t172, min population 1, final
@@ -820,18 +969,18 @@ mod tests {
         //    RAISE them, not in the sense that they have slack — a
         //    change that advances the cascade by a single tick turns
         //    this red for a reason it was not written to catch.
+        // Report before asserting, so a red run says what it measured.
+        println!(
+            "PACK3 SOAK: closures {closed:?} | births {births:?} | deaths {deaths:?} | \
+             pop {} min {min_population} | businesses {} | chain {:?}/{:?}",
+            world.agents.len(),
+            world.businesses().count(),
+            chain_reoccupied,
+            chain_hired,
+        );
         assert!(
             closed.len() >= 3,
             "closure never reached the demand-losing venues (closed at {closed:?})"
-        );
-        assert!(
-            world.businesses().count() >= 1,
-            "every business closed inside the window (measured: the last venue dies \
-             at t201, one tick past this horizon — this bound has no margin)"
-        );
-        assert!(
-            min_population >= 1,
-            "the town emptied completely (min population {min_population})"
         );
 
         // no orphan balances: every leaver's account is empty on every

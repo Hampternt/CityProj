@@ -255,7 +255,7 @@ address it — a successor container, not this one.
   tick — the arrival wins on phase order and the Found intent dies on its
   re-check. Done: `./scripts/check.sh` clean; `cargo test sim::` quoted.
   Touches: src/sim.rs.
-- [ ] **7. Soak hardening.** Lands before the town re-measure so
+- [x] **7. Soak hardening.** Lands before the town re-measure so
   intermediate runs fail readably. 100-tick soak: an explicit
   `Event::Founded` tally asserted zero (the match ends `_ => {}` and would
   ship green observing nothing), and a per-tick "no good drops below 2
@@ -263,7 +263,7 @@ address it — a successor container, not this one.
   guard the `PLATEAU` slice against a `usize` underflow **panic**. Done:
   `./scripts/check.sh` clean; all three soaks quoted green. Touches:
   src/engine/worldgen.rs.
-- [ ] **8. The 200-tick soak raised and instrumented.** A per-good event
+- [x] **8. The 200-tick soak raised and instrumented.** A per-good event
   stream via a `HashMap<AgentId, Good>` side table seeded from the boot
   `businesses()` set and extended on every `Founded`; the rolling-100-tick
   anti-churn bound per good; the full-cycle chain as four deliberate
