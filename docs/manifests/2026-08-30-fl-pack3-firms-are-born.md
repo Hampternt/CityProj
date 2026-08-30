@@ -11,9 +11,12 @@ judged four-angle design panel. **This pack closes the container.**
 `Intent::Found`, `World::found_business`, `Event::Founded`. This pack
 closes the container: CLAUDE.md structure update + the INVENTORY fold.
 
-Observable (verbatim from the container): after a venue dies, "mira
-founded a food stall at 5 Weir Cottage (staked 420g)", then Hired events
-restaffing it; zero foundings on the tuned equilibrium town.
+Observable: after a venue dies, a founding line then Hired events
+restaffing it; zero foundings on the tuned equilibrium town. *(The
+container's wording quotes "staked 420g", which was the signed
+headcount-4 Food template. At the shipped headcount of 2 the Food stake
+is 210g, and the shell reads "ed founded a venue at 5 Weir Cottage
+selling food @3g (staked 210g)".)*
 
 ## The measurement that reshaped this pack
 
@@ -335,12 +338,23 @@ address it — a successor container, not this one.
   | population at t200 | 4 | **20** |
   | minimum population | 1 | **20** |
 
+  (The minimum column is not an independent third win: with zero arrivals
+  the pack-3 population is monotone, so its minimum simply *is* its
+  final value. It is listed because pack 2's minimum of 1 was not
+  degenerate — that town dipped and partially recovered.)
+
   Closures [140, 153, 156, 179, 182, 199]; births Food [142],
-  Entertainment [155, 157], Luxury [180, 184] — every seeded death
-  answered within 1–5 ticks, and **no founded firm closes inside the
-  horizon**, so the anti-churn criterion holds with room. The full-cycle
-  chain is observed, not assumed: the house freed at t156 was founded
-  into at t157 and hired into at t158.
+  Entertainment [155, 157], Luxury [180, 184] — **five of the six deaths
+  answered within 1–5 ticks**; the sixth (Greenrow Farm, t199) falls one
+  tick short of the horizon and is answered at t201, outside it. **No
+  founded firm closes inside the horizon**, so the anti-churn criterion
+  has real room rather than sitting on its own value. The full-cycle
+  chain is observed, not assumed: the house freed at **t140** was founded
+  into at t157 and hired into at t158. *(This entry first said "every
+  seeded death answered" — six deaths against five births cannot support
+  that — and misattributed the freeing tick as t156, which freed a
+  different house, founded into at t180. Both corrected 2026-08-30 by
+  the close review.)*
 
   **What the pre-implementation probe changed, and what the
   post-implementation measurements changed again.** The probe found the
@@ -391,14 +405,26 @@ address it — a successor container, not this one.
   full-cycle wording, not a weakened pack-4 assertion.
 
   **WHAT THIS PACK DOES NOT CLAIM, per D7.** The town still declines:
-  t300 leaves 10 residents and 3 businesses, and found→close churn sets
-  in after ~t236 and accelerates. Founding slows the collapse; it does
-  not arrest it. The residual is a **circulation** failure, not a
-  firm-count one — money is conserved, but `target_days` purchase caps
-  make any wallet above the cap a sink that never returns, so the town
-  starves beside its own gold. Phase 7's demurrage/imports and phase 8's
-  mint are the standing TODO stubs that address it, and they belong to a
-  successor container.
+  t300 leaves 10 residents and 3 businesses, found→close churn sets in
+  after ~t236 and accelerates, and **12 of the 15 firms founded across
+  300 ticks eventually close** (against 6 seeded deaths). Founding slows
+  the collapse; it does not arrest it, and the clean 200-tick picture
+  above is the first 200 ticks of a longer decline, not a steady state.
+
+  The residual is a **circulation** failure, not a firm-count one — money
+  is conserved, but `target_days` purchase caps mean a wallet above the
+  cap is a sink that never returns, so the town starves beside its own
+  gold. Founding *does* redistribute, and the corrected figure matters:
+  under the shipped code the largest wallet holds **21.8%** of the supply
+  at t200 and 27.8% at t300, against the 99% measured on the pack-2
+  founding-absent trajectory. *(This ledger and CLAUDE.md first cited
+  that 99% as the shipped state; it is pack 2's number. Corrected
+  2026-08-30 by the close review — and the correction sharpens rather
+  than softens the diagnosis: concentration is NOT what is killing the
+  town under pack 3, so demurrage and imports are being handed the right
+  problem for a better-measured reason.)* Phase 7's demurrage/imports and
+  phase 8's mint are the standing TODO stubs that address it, and they
+  belong to a successor container.
 
   Close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` **190
   passed, 0 failed** (171 on arrival).

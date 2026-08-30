@@ -345,9 +345,9 @@ const FOUND_CAPITAL_BILLS: u32 = 3;
 
 /// Gold a founder keeps back for themselves — nobody founds themselves
 /// destitute. STAYS PROVISIONAL after the pack-3 re-measure, which is
-/// the honest outcome rather than a missed step: it was never binding at
-/// any tick a founding fired (the marginal founders held thousands), so
-/// the soaks contain no evidence for or against any particular value.
+/// the honest outcome rather than a missed step: at no tick a founding
+/// fired was this the constant that decided WHO founded, so the soaks
+/// discriminate between no two values of it.
 /// A constant nothing has exercised should not be stamped frozen.
 /// `founding_dies_cleanly_on_every_stale_re_check` pins the bound it
 /// participates in from both sides, so the mechanism is covered even
@@ -1213,9 +1213,13 @@ fn invest(world: &mut World, report: &mut TickReport) {
         emit_closure(&receipt, &owner_name, report);
     }
 
-    // (2) The founding APPLY — after the closures whose freed houses it
-    // may take, before the draws, so a firm founded this tick sits
-    // exactly at its buffer and draws zero (see FOUND_CAPITAL_BILLS).
+    // (2) The founding APPLY — after the closures ONLY so its live
+    // re-checks read the post-closure world. Its placement relative to
+    // the draws is not what makes a new firm draw nothing: the draw
+    // collect below snapshots `businesses()` after this runs, so the new
+    // firm IS in it, and it draws zero because its coffer sits exactly
+    // at the buffer (see FOUND_CAPITAL_BILLS), not because it was
+    // skipped. The order still follows the spec's phase-6 sequence.
     if let Some(intent) = founding {
         apply_found_intent(world, intent, report);
     }
@@ -2268,7 +2272,12 @@ mod tests {
     }
 
     #[test]
-    fn founding_dies_cleanly_on_every_stale_re_check() {
+    fn founding_is_refused_by_the_decide_on_every_gate() {
+        // Every case here is refused in `decide_founding`, before an
+        // intent exists — which is what the name now says. The APPLY's
+        // re-checks are a separate guard against facts moving between
+        // decide and apply, and are pinned by
+        // `found_apply_rechecks_kill_a_stale_intent` below.
         let template = market::found_template(Good::Food);
         let capital = template
             .wage
@@ -2334,6 +2343,41 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Event::Founded { .. }))
         );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn found_apply_rechecks_kill_a_stale_intent() {
+        // The apply's own guard, reached the only way it can be: build a
+        // real intent from the phase-start snapshot, move the world under
+        // it, then apply. Whole-phase tests cannot get here — the decide
+        // would simply refuse to plan.
+        let (mut world, vacant, founder) = founding_ready(Money::new(5000));
+        let intent = decide_founding(&world).expect("the fixture must plan a founding");
+        let businesses_before = world.businesses().count();
+
+        // The founder's wallet drains between decide and apply.
+        let gold = world.accounts.balance_of(founder, Metal::Gold);
+        world
+            .pay(founder, world.external_id, Metal::Gold, gold)
+            .expect("draining a live wallet");
+        let mut report = TickReport::default();
+        apply_found_intent(&mut world, intent, &mut report);
+        assert_eq!(report.events, vec![], "a drained founder founds nothing");
+        assert_eq!(world.businesses().count(), businesses_before);
+        assert!(world.house(vacant).unwrap().business.is_none());
+        assert_eq!(world.agent(founder).unwrap().workplace, None);
+        world.accounts.audit();
+
+        // ...and the premises are taken between decide and apply.
+        let (mut world, vacant, founder) = founding_ready(Money::new(5000));
+        let intent = decide_founding(&world).expect("the fixture must plan a founding");
+        world.spawn_agent("squatter", Some(vacant), None);
+        let mut report = TickReport::default();
+        apply_found_intent(&mut world, intent, &mut report);
+        assert_eq!(report.events, vec![], "a taken house founds nothing");
+        assert!(world.house(vacant).unwrap().business.is_none());
+        assert_eq!(world.agent(founder).unwrap().workplace, None);
         world.accounts.audit();
     }
 
@@ -2559,14 +2603,27 @@ mod tests {
                 .accounts
                 .mint(survivor_id, Metal::Gold, Money::new(10_000));
             world.add_house("5 Weir Cottage", vec![]);
-            if with_demand {
-                for name in ["b1", "b2", "b3"] {
-                    let buyer = world.spawn_agent(name, None, None);
+            // The buyers exist in BOTH arms — only their purses differ.
+            // Spawning them conditionally would change the AGENT ROSTER,
+            // and since the founder is chosen from that roster the
+            // negative arm would be refused for want of a founder rather
+            // than for want of demand, proving nothing about the gate.
+            for name in ["b1", "b2", "b3"] {
+                let buyer = world.spawn_agent(name, None, None);
+                if with_demand {
                     world.accounts.mint(buyer, Metal::Gold, Money::new(5000));
                 }
             }
+            // The founder must not be able to prop the sector up alone,
+            // so their capital is exactly the stake plus the reserve.
+            let template = market::found_template(Good::Food);
+            let stake = template
+                .wage
+                .times(template.headcount * FOUND_CAPITAL_BILLS);
             let founder = world.spawn_agent("mira", None, None);
-            world.accounts.mint(founder, Metal::Gold, Money::new(5000));
+            world
+                .accounts
+                .mint(founder, Metal::Gold, stake.plus(FOUNDER_RESERVE));
             let mut founded = false;
             for _ in 1..=12 {
                 set_stock(&mut world, survivor, 1);

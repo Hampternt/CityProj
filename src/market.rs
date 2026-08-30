@@ -336,23 +336,29 @@ pub struct FoundTemplate {
 /// size would recreate the price war founding exists to cure. The
 /// founder self-hires into one seat, leaving exactly one for the labor
 /// market. FROZEN at 2, 2026-08-30 — but the measurement is a genuine
-/// trade and is recorded rather than buried. A 300-tick sweep:
+/// trade and is recorded rather than buried. Two horizons, and the table
+/// mixes them deliberately, so read the column headers:
 ///
-///     headcount 1   t300 pop 2,  3 venues  (no open slot: the
-///                                           full-cycle Hired is
-///                                           unsatisfiable)
-///     headcount 2   t300 pop 10, 3 venues  — anti-churn HOLDS
-///     headcount 3   t300 pop 18, 6 venues  — anti-churn FAILS
-///     headcount 4   t300 pop 17, 5 venues
+///     headcount   t300 pop   t300 venues   anti-churn @ t200
+///     1           3          3             (n/a: no open slot, so the
+///                                           full-cycle Hired criterion
+///                                           is unsatisfiable)
+///     2           10         3             HOLDS
+///     3           18         6             FAILS
+///     4           17         5             not run
 ///
 /// Bigger entrants employ more of the dis-saving unemployed and leave a
 /// visibly larger town, because in this economy employment matters more
 /// than supply balance. They also break the spec's anti-churn acceptance
-/// criterion outright (at 3: "entertainment churned: founded t155, then
-/// 3 deaths within 100 ticks"). A town of 18 sustained by constant firm
-/// death and rebirth is not obviously healthier than a stable 10, and
-/// the criterion is signed, so 2 ships. Whoever revisits the
-/// expand-capacity seam should start from this table.
+/// criterion outright (at 3, under the pack's then-coded criterion:
+/// "entertainment churned: founded t155, then 3 deaths within 100
+/// ticks"). Neither town is stable — at headcount 2, 12 of 15 founded
+/// firms still die inside 300 ticks — so the choice is between a
+/// shrinking town that satisfies a signed criterion and a larger one
+/// that does not. The criterion is signed, so 2 ships. Whoever revisits
+/// the expand-capacity seam should start from this table and re-run the
+/// sweep against the corrected criterion, which counts founded deaths
+/// rather than every death of a good.
 ///
 /// **Scarcity signal** 2/2/3 — DERIVED, not tuned:
 /// `max(PRICE_FLOOR + 1, ceil(wage / production_rate))`, the price at

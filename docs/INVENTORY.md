@@ -72,8 +72,8 @@ The behaviors you can watch play out over successive ticks:
   every coin of back wages it still owes — to its owner, narrated in the
   feed. Creditors therefore always sit ahead of the owner, though a venue
   earning well enough to cover both still pays out. Coffers no longer pool
-  without bound; the owner's wealth does, which is the capital the coming
-  founding mechanic spends.
+  without bound; the owner's wealth does — and that pooled wealth is what
+  pays for the new ventures below.
 - **Failing firms die.** A business that ends a tick owing back wages is
   carrying a lit fuse, shown in the feed as its distress count; carry it
   long enough and the venue liquidates. Its creditors — current and former
@@ -109,11 +109,14 @@ The behaviors you can watch play out over successive ticks:
   business and four.
 
   What founding does *not* fix, and what a later milestone will: the town
-  still shrinks slowly. Money is never lost, but households only buy what
-  they need, so wealth pooling in a successful owner's hands never comes
-  back as anyone's wages — the town can starve beside its own gold. Coin
-  degradation, trade with the outside world, and minting are the unbuilt
-  mechanics that would put it back into circulation.
+  still shrinks, and new ventures are not safe. Over three hundred ticks
+  twelve of the fifteen firms founded eventually fail in their turn, and
+  the town ends smaller than it started. Money is never lost, but
+  households only buy what they need, so wealth that pools in a
+  successful owner's hands never comes back as anyone's wages — the town
+  can starve beside its own gold. Coin degradation, trade with the
+  outside world, and minting are the unbuilt mechanics that would put it
+  back into circulation.
 
 Money is strictly conserved: each metal's total is fixed at whatever the
 world was seeded with, and the sim halts rather than continue if a tick ever

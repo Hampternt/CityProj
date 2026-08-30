@@ -296,9 +296,10 @@ follow-up whatever pack 1 re-measures.
   **The container's goal is met where it can be measured.** Over the
   200-tick town, founding turns pack 2's emptied husk into a living
   town: **5 live businesses and population 20, against 1 and 4** without
-  it, with every seeded death answered within 1–5 ticks and the full
-  phoenix chain observed (house freed t156 → founded into t157 → hired
-  t158). Zero found→close churn inside the horizon.
+  it, with five of the six deaths answered within 1–5 ticks (the sixth
+  falls a tick outside the horizon) and the full phoenix chain observed —
+  house freed t140 → founded into t157 → hired t158. Zero found→close
+  churn inside the horizon.
 
   **Two spec errata**, both forced by measuring before building: the
   single `Good::ALL` scan starves dead sectors (a merely-scarce good
@@ -323,11 +324,15 @@ follow-up whatever pack 1 re-measures.
   3 businesses, with churn accelerating after ~t236. Founding slows the
   collapse; it does not arrest it. The cause is not firm count but
   **circulation**: money is conserved, yet `target_days` purchase caps
-  make any wallet above the cap a sink that never returns, so the town
-  starves beside its own gold (99% of the supply measured in one owner's
-  wallet). Phase 7's demurrage and imports and phase 8's mint are the
-  standing TODO stubs that address it — a successor container's work,
-  named here so it is inherited rather than rediscovered.
+  mean a wallet above the cap is a sink that never returns, so the town
+  starves beside its own gold. Founding does redistribute — the largest
+  wallet holds 21.8% of the supply at t200 under the shipped code,
+  against 99% on the founding-absent trajectory — but it redistributes to
+  owners rather than to demand, and 12 of the 15 firms founded across 300
+  ticks eventually close. Phase 7's demurrage and imports and phase 8's
+  mint are the standing TODO stubs that address it — a successor
+  container's work, named here so it is inherited rather than
+  rediscovered.
 
   Container close gate: `VERIFY OK — fmt, clippy, build, tests all
   clean.` 190 passed, 0 failed. CLAUDE.md updated and the INVENTORY 🚧

@@ -796,9 +796,17 @@ mod tests {
             .collect();
         let mut births: HashMap<Good, Vec<u64>> = HashMap::new();
         let mut deaths: HashMap<Good, Vec<u64>> = HashMap::new();
+        // Deaths OF FOUNDED FIRMS only — the found→close cycle the
+        // anti-churn criterion is actually about. Counting every death of
+        // a good conflates a seeded venue's death with an entrant's, and
+        // an entrant dying is the failure the scarcity gate exists to
+        // prevent.
+        let mut founded_deaths: HashMap<Good, Vec<(u64, u64)>> = HashMap::new();
+        let mut born_at: HashMap<AgentId, u64> = HashMap::new();
         // The full-cycle chain, as four deliberate observations.
         let mut freed: Vec<(u64, HouseId)> = Vec::new();
-        let mut chain_reoccupied: Option<(u64, HouseId)> = None;
+        let mut chain_reoccupied: Option<(u64, HouseId, u64)> = None; // tick, house, freed_at
+        let mut chain_business: Option<AgentId> = None;
         let mut chain_hired: Option<u64> = None;
         let mut founded_ids: Vec<AgentId> = Vec::new();
         for t in 1..=LAST {
@@ -816,20 +824,24 @@ mod tests {
                         sector.insert(*business, *good);
                         births.entry(*good).or_default().push(t);
                         founded_ids.push(*business);
+                        born_at.insert(*business, t);
                         // this arm shadows the answer arm below, so it
                         // records the answer itself
                         if first_departed.is_some_and(|d| t > d) {
                             first_answer_after_departure.get_or_insert(t);
                         }
-                        if freed
-                            .iter()
-                            .any(|(freed_at, id)| *freed_at < t && id == house)
+                        if let Some((at, _)) = freed.iter().find(|(at, id)| *at < t && id == house)
+                            && chain_reoccupied.is_none()
                         {
-                            chain_reoccupied.get_or_insert((t, *house));
+                            chain_reoccupied = Some((t, *house, *at));
+                            chain_business = Some(*business);
                         }
                     }
+                    // the hire must name the very firm founded into the
+                    // freed house — not merely any founded firm, which an
+                    // unrelated founding elsewhere would satisfy
                     Event::Hired { business, .. }
-                        if chain_reoccupied.is_some() && founded_ids.contains(business) =>
+                        if chain_business.is_some_and(|id| id == *business) =>
                     {
                         chain_hired.get_or_insert(t);
                     }
@@ -852,6 +864,9 @@ mod tests {
                         freed.push((t, *house));
                         if let Some(good) = sector.get(business) {
                             deaths.entry(*good).or_default().push(t);
+                            if let Some(born) = born_at.get(business) {
+                                founded_deaths.entry(*good).or_default().push((*born, t));
+                            }
                         }
                     }
                     _ => {}
@@ -916,20 +931,23 @@ mod tests {
             "only {total_births} firms were founded in {LAST} ticks"
         );
 
-        // 6. ANTI-CHURN: no good may run a found→close cycle inside a
-        //    100-tick window. A founded firm that dies is the failure
-        //    mode the scarcity gate's direction test exists to prevent.
+        // 6. ANTI-CHURN: no good may run more than one found→close cycle
+        //    per 100-tick window — a FOUNDED firm dying is the failure the
+        //    scarcity gate's direction test exists to prevent, and a
+        //    SEEDED venue's death is not that. Measured at this horizon:
+        //    zero founded deaths in any sector, so the bound has real
+        //    room rather than sitting on its own value.
         for good in Good::ALL {
-            let born = births.get(&good).cloned().unwrap_or_default();
-            let died = deaths.get(&good).cloned().unwrap_or_default();
-            for birth in &born {
-                let churned = died
+            let cycles = founded_deaths.get(&good).cloned().unwrap_or_default();
+            for window in 0..LAST {
+                let inside = cycles
                     .iter()
-                    .filter(|death| *death > birth && **death - *birth <= 100)
+                    .filter(|(_, death)| (window..window + 100).contains(death))
                     .count();
                 assert!(
-                    churned <= 1,
-                    "{good} churned: founded t{birth}, then {churned} deaths within 100 ticks"
+                    inside <= 1,
+                    "{good} churned: {inside} founded firms died in t{window}..t{} ({cycles:?})",
+                    window + 100
                 );
             }
         }
@@ -939,36 +957,35 @@ mod tests {
         //    firm was founded into that very house at a strictly later
         //    tick, and someone was hired into it. Hand-written — this
         //    match ends in `_ => {}` and forces nothing.
-        let (reoccupied_at, house) =
+        let (reoccupied_at, house, freed_at) =
             chain_reoccupied.expect("no freed house was ever founded into");
+        // The house really was emptied by a closure BEFORE the founding —
+        // the middle link a bare "some house was founded into" skips.
         assert!(
-            freed.iter().any(|(_, freed_house)| *freed_house == house),
-            "the reoccupied house was never freed by a closure"
+            freed_at < reoccupied_at,
+            "the founding at t{reoccupied_at} did not follow a freeing (t{freed_at})"
         );
-        let hired_at = chain_hired.expect("nobody was hired into a founded firm");
+        let hired_at = chain_hired.expect("nobody was hired into THAT founded firm");
         assert!(
             hired_at >= reoccupied_at,
             "the hire (t{hired_at}) preceded the founding (t{reoccupied_at})"
         );
 
         // 8. (firm-lifecycle pack 2) the fuse fires in the real town,
-        //    not only on fixtures — and the cascade it sets off is
-        //    RECORDED, not hidden. Measured 2026-08-30: closures at
-        //    t140/t153/t156/t171/t172, min population 1, final
-        //    population 4, one surviving venue AT THIS HORIZON ONLY.
-        //    The cascade is in fact TOTAL: Greenrow Farm's terminal
-        //    arrears begin t189, its counter reads 12 (== the threshold)
-        //    at t200, and it closes at t201 — measured to t300 the town
-        //    then holds ZERO businesses at population 4. The 200-tick
-        //    window is the only reason a survivor is visible here.
-        //    Mind the margins, because two of the three bounds have
-        //    NONE: `closed >= 3` is genuinely loose against 5, but
-        //    `min_population >= 1` sits exactly on the measured minimum
-        //    and `businesses().count() >= 1` clears by exactly one tick.
-        //    They are a FLOOR in the sense that pack 3's founding must
-        //    RAISE them, not in the sense that they have slack — a
-        //    change that advances the cascade by a single tick turns
-        //    this red for a reason it was not written to catch.
+        //    not only on fixtures. **Pack 2's numbers, kept as the
+        //    before-picture:** closures at t140/t153/t156/t171/t172, min
+        //    population 1, final population 4, one surviving venue AT
+        //    THAT HORIZON ONLY — the cascade was TOTAL, since Greenrow
+        //    Farm closed at t201, one tick past this window, after which
+        //    the town held ZERO businesses through t300.
+        //
+        //    Pack 3's founding is what changed that, and criterion 5
+        //    above carries the raised bounds. The two zero-margin floors
+        //    pack 2 shipped here — `businesses().count() >= 1`, which
+        //    cleared by exactly one tick, and `min_population >= 1`,
+        //    which sat exactly on the measured minimum — are DELETED,
+        //    replaced by bounds with real slack. `closed >= 3` survives
+        //    below as the proof the fuse still fires at all.
         // Report before asserting, so a red run says what it measured.
         println!(
             "PACK3 SOAK: closures {closed:?} | births {births:?} | deaths {deaths:?} | \
@@ -978,6 +995,7 @@ mod tests {
             chain_reoccupied,
             chain_hired,
         );
+        let _ = (&founded_ids, &house);
         assert!(
             closed.len() >= 3,
             "closure never reached the demand-losing venues (closed at {closed:?})"

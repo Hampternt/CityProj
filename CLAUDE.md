@@ -162,11 +162,16 @@ new mechanics into the loop and money:
   bound from t20 and every-venue-draws; since pack 2 criterion 7's
   zero-closures pin, which needs a hand-written vanish-detector because
   worldgen's `match event` arms end `_ => {}` and force nothing), the
-  50-tick employment soak (`NEAR_FULL` = 21 of 30, unchanged under both
-  packs), and the 200-tick migration soak (population moves both
-  directions, arrivals answering the demand shock, per-account no-orphan
-  sweeps — every inherited criterion still holds under closure, and
-  pack 2 added a deliberately loose cascade floor for pack 3 to raise).
+  50-tick employment soak (`NEAR_FULL` = 21 of 30, unchanged under all
+  three packs), and the 200-tick migration soak — which pack 3 re-cut and
+  raised: its shock-answer criterion now reads over a `Founded` OR an
+  `Arrived` (founding answers the shock, and no arrival fires once the
+  town's own unemployed take every founded vacancy), and it gained a
+  raised firm/population floor, a found→close anti-churn bound, and the
+  full closure→vacancy→founding→hire chain. Pack 3 also added a
+  zero-`Founded` tally to the 100-tick soak; like pack 2's zero-closures
+  pin it is hand-written, because worldgen's `match event` arms end
+  `_ => {}` and force nothing.
 - `src/engine/game_loop.rs` — interactive shell only (Enter advances a
   tick, `roster` lists agents, a name or business address inspects,
   `map` exports map.json, q quits): town header, aggregated per-tick
@@ -220,16 +225,17 @@ closure alone created: over the 200-tick town, **5 live businesses and
 population 20 with founding, against 1 and 4 without**.
 
 **Standing finding, and the successor's problem, not this container's:**
-the town still declines. Founding slows the collapse without arresting
-it, because the residual is a **circulation** failure rather than a
-firm-count one — money is conserved, but `target_days` purchase caps
-make any wallet above the cap a sink that never returns, so the town
-starves beside its own gold (measured: 99% of the supply in one owner's
-wallet). Phase 7's demurrage/imports and phase 8's mint are the standing
-TODO stubs that address it. That is the cost of the signed
-"death before birth" sequence, not a mistuning (no threshold that
-separates the two arrears modes avoids it); pack 3's founding is the
-designed cure, and the 200-tick soak's floor is what it must raise.
+the town still declines — t300 leaves 10 residents and 3 businesses, and
+12 of the 15 firms founded in 300 ticks eventually close. Founding slows
+the collapse without arresting it, because the residual is a
+**circulation** failure rather than a firm-count one: money is conserved,
+but `target_days` purchase caps mean a wallet above the cap is a sink
+that never returns, so the town starves beside its own gold. Founding
+*does* redistribute — measured under the shipped code the largest wallet
+holds 21.8% of the supply at t200 and 27.8% at t300, against 99% on the
+pack-2 (founding-absent) trajectory — but it redistributes to owners
+rather than to demand. Phase 7's demurrage/imports and phase 8's mint are
+the standing TODO stubs that address it.
 
 The terrain playground landed on 2026-08-15 —
 [`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)
