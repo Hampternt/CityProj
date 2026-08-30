@@ -2,7 +2,8 @@
 
 **Status:** IN FLIGHT — gate signed 2026-08-22; **pack 1 DONE**
 2026-08-22 (`VERIFY OK`, 160 passed); **pack 2 DONE** 2026-08-30
-(`VERIFY OK`, 171 passed). Pack 3 planned, on the owner's go.
+(`VERIFY OK`, 171 passed); **pack 3 IN PROGRESS** from 2026-08-30 (the
+owner's go).
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-22-firm-lifecycle-design.md](../superpowers/specs/2026-08-22-firm-lifecycle-design.md)
 (approved 2026-08-22; drafted from a judged three-angle proposal panel —
@@ -119,7 +120,11 @@ inspects as a vacant residence.
 
 ### Pack 3 — Firms are born
 
-Item manifest: written on your go.
+Item manifest: [2026-08-30-fl-pack3-firms-are-born.md](2026-08-30-fl-pack3-firms-are-born.md)
+(IN PROGRESS from 2026-08-30). A pre-implementation probe found the signed
+founding gates blocked three independent ways on the pack-2 trajectory —
+two errata follow (existential-before-scarcity ranking, and a
+level-AND-direction scarcity gate).
 
 `market::plan_founding` + the founding template (FOUND_PRICE/wage/
 headcount per good) + `FOUND_SIGNAL`; `Intent::Found` (one per tick,
