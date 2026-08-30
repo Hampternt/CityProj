@@ -1,8 +1,8 @@
 # Firm lifecycle — Pack 3: Firms are born
 
 **Status:** DONE 2026-08-30 — all items landed, measured and frozen;
-close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 190
-passed (171 on arrival, +19). Drafted from the signed spec's Contracts,
+close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` 191
+passed (171 on arrival, +20). Drafted from the signed spec's Contracts,
 a 260-tick gate-reachability probe on the pack-2 trajectory, and a
 judged four-angle design panel. **This pack closes the container.**
 **Container:** [2026-08-22-firm-lifecycle.md](2026-08-22-firm-lifecycle.md)
@@ -256,9 +256,20 @@ address it — a successor container, not this one.
   invisible to this tick's decide, then `FOUND_SIGNAL_TICKS` sell-out
   ticks accumulate), and a demand-death founding **nothing**, with its
   positive control in the same test. Plus the vacant-house competition
-  fixture: one vacancy, an aged clean slot and a qualifying founder in one
-  tick — the arrival wins on phase order and the Found intent dies on its
-  re-check. Done: `./scripts/check.sh` clean; `cargo test sim::` quoted.
+  fixture — **which changed shape when it was built, recorded here rather
+  than left contradicting the shipped test.** It was planned as "one
+  vacancy, an aged clean slot and a qualifying founder in one tick: the
+  arrival wins on phase order and the Found intent dies on its re-check".
+  That world cannot be built. A clean slot aged past `VACANCY_PULL_TICKS`
+  is taken in phase 1 by any unemployed resident — and the only people
+  eligible to found ARE unemployed residents — so the founder is hired
+  before phase 6 and stops being a founder. The shipped fixture
+  (`founding_and_immigration_contend_for_the_same_lowest_id_vacancy`)
+  pins what is true instead: both mechanics read the same
+  `is_fully_vacant` predicate, the founding takes exactly the house
+  `immigrate` would have been handed, leaves the spare alone, and the
+  taken house then refuses a newcomer.
+  Done: `./scripts/check.sh` clean; `cargo test sim::` quoted.
   Touches: src/sim.rs.
 - [x] **7. Soak hardening.** Lands before the town re-measure so
   intermediate runs fail readably. 100-tick soak: an explicit
@@ -428,3 +439,70 @@ address it — a successor container, not this one.
 
   Close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` **190
   passed, 0 failed** (171 on arrival).
+
+- **2026-08-30** — **pack and container close after review.** Five-lens
+  adversarial close review, every finding re-verified by an independent
+  skeptic: **36 raised, 5 refuted, 31 confirmed, ZERO blockers.** Five
+  MAJORs, and the pattern is the one pack 2's review caught — the ledger
+  claiming more than the measurements support:
+  - **The "99% of the gold supply in one wallet" figure was pack 2's**,
+    cited as the shipped state. Re-measured under pack 3: 21.8% at t200,
+    27.8% at t300. Founding *does* redistribute — to owners, not to
+    demand. The correction sharpens the circulation diagnosis rather than
+    softening it.
+  - **The anti-churn criterion counted every death of a good**, not
+    found→close cycles — over-strict and blind to the failure it names at
+    the same time. It now tracks founded firms by birth tick.
+  - **The apply's re-checks were unverified**: all four cases of the test
+    named for them die in the DECIDE. Mutation-checked — neutering the
+    apply guard left all 190 tests green. Renamed, and a white-box apply
+    test added that now fails alone under that mutation.
+  - **The demand-death test's negative arm was confounded** — spawning
+    buyers conditionally changed the agent roster, so it was refused for
+    want of a *founder*, not for want of demand.
+  - **The headcount sweep table mixed horizons** silently and
+    mis-recorded one row.
+  Confirmed MINORs applied: the full-cycle chain's hire leg accepted any
+  founded firm and its freeing assertion was a tautology; the chain's
+  freeing tick is **t140**, not the t156 four documents claimed; "every
+  seeded death answered" contradicted its own arithmetic (six deaths,
+  five births); item 6's planned fixture could not be built and the text
+  now says why; the Observable quoted an unreachable 420g stake; and four
+  stale doc blocks across CLAUDE.md, INVENTORY and worldgen.
+
+  Close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` **191
+  passed, 0 failed.**
+
+- **2026-08-30** — **pack and container close after review.** Five-lens
+  adversarial close review, every finding re-verified by an independent
+  skeptic: **36 raised, 5 refuted, 31 confirmed, ZERO blockers.** Five
+  MAJORs, and the pattern is the one pack 2's review caught — the ledger
+  claiming more than the measurements support:
+  - **The "99% of the gold supply in one wallet" figure was pack 2's**,
+    cited as the shipped state. Re-measured under pack 3: 21.8% at t200,
+    27.8% at t300. Founding *does* redistribute — to owners, not to
+    demand. The correction sharpens the circulation diagnosis rather than
+    softening it.
+  - **The anti-churn criterion counted every death of a good**, not
+    found→close cycles — over-strict and blind to the failure it names at
+    once. It now tracks founded firms by birth tick.
+  - **The apply's re-checks were unverified**: all four cases of the test
+    named for them die in the DECIDE. Mutation-checked — neutering the
+    apply guard left all 190 tests green. Renamed, and a white-box apply
+    test added that now fails alone under that mutation.
+  - **The demand-death test's negative arm was confounded** — spawning
+    buyers conditionally changed the agent roster, so it was refused for
+    want of a *founder*, not for want of demand.
+  - **The headcount sweep table mixed horizons** silently and
+    mis-recorded one row.
+
+  Confirmed MINORs applied: the full-cycle chain's hire leg accepted any
+  founded firm and its freeing assertion was a tautology; the chain's
+  freeing tick is **t140**, not the t156 four documents claimed; "every
+  seeded death answered" contradicted its own arithmetic (six deaths,
+  five births); item 6's planned fixture could not be built, and the item
+  now says why; the Observable quoted an unreachable 420g stake; and four
+  stale doc blocks across CLAUDE.md, INVENTORY and worldgen.
+
+  Close gate: `VERIFY OK — fmt, clippy, build, tests all clean.` **191
+  passed, 0 failed.**

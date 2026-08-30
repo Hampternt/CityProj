@@ -1,9 +1,9 @@
 # Firm lifecycle (container)
 
 **Status:** **DONE 2026-08-30** — all three packs landed; close gate
-`VERIFY OK — fmt, clippy, build, tests all clean.` **190 passed**
+`VERIFY OK — fmt, clippy, build, tests all clean.` **191 passed**
 (155 at the container's start, +35). Pack 1 2026-08-22 (160), pack 2
-2026-08-30 (171), pack 3 2026-08-30 (190).
+2026-08-30 (171), pack 3 2026-08-30 (191).
 **Branch:** `claude/town-colony-sim-p1s06q` (PR #2)
 **Origin:** [2026-08-22-firm-lifecycle-design.md](../superpowers/specs/2026-08-22-firm-lifecycle-design.md)
 (approved 2026-08-22; drafted from a judged three-angle proposal panel —
@@ -121,7 +121,7 @@ inspects as a vacant residence.
 ### Pack 3 — Firms are born
 
 Item manifest: [2026-08-30-fl-pack3-firms-are-born.md](2026-08-30-fl-pack3-firms-are-born.md)
-(DONE 2026-08-30; 171 → 190 tests; the founding measurements and the two
+(DONE 2026-08-30; 171 → 191 tests; the founding measurements and the two
 constant sweeps live in its ledger). A pre-implementation probe found the
 signed founding gates blocked three independent ways on the pack-2
 trajectory — two errata followed (existential-before-scarcity ranking,
@@ -335,6 +335,6 @@ follow-up whatever pack 1 re-measures.
   rediscovered.
 
   Container close gate: `VERIFY OK — fmt, clippy, build, tests all
-  clean.` 190 passed, 0 failed. CLAUDE.md updated and the INVENTORY 🚧
+  clean.` 191 passed, 0 failed. CLAUDE.md updated and the INVENTORY 🚧
   pointer folded into a real entry — the container's definition of
   merged.
