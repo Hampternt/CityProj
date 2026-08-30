@@ -274,7 +274,7 @@ address it — a successor container, not this one.
   records the new closure-tick series against pack 2's
   140/153/156/171/172/201. Done: `./scripts/verify.sh` green. Touches:
   src/engine/worldgen.rs.
-- [ ] **9. The re-measure and freeze.** From item 8's run record, per
+- [x] **9. The re-measure and freeze.** From item 8's run record, per
   good: the lone-survivor sell-out streak series, the streak at every
   `Founded`, the longest streak posted by a survivor that then closed, the
   founder wallet distribution at every firing tick, and the found→close

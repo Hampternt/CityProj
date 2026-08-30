@@ -344,11 +344,14 @@ pub(crate) const CLOSE_INSOLVENT_TICKS: u32 = 12;
 const FOUND_CAPITAL_BILLS: u32 = 3;
 
 /// Gold a founder keeps back for themselves — nobody founds themselves
-/// destitute. PROVISIONAL: the pack-3 planning probe found it
-/// non-binding at every tick the gate fired (the marginal founders held
-/// thousands), and no value above zero is satisfiable in the measured
-/// capital drought, so the pack's re-measure freezes it only if it ever
-/// actually binds.
+/// destitute. STAYS PROVISIONAL after the pack-3 re-measure, which is
+/// the honest outcome rather than a missed step: it was never binding at
+/// any tick a founding fired (the marginal founders held thousands), so
+/// the soaks contain no evidence for or against any particular value.
+/// A constant nothing has exercised should not be stamped frozen.
+/// `founding_dies_cleanly_on_every_stale_re_check` pins the bound it
+/// participates in from both sides, so the mechanism is covered even
+/// though the value is not.
 const FOUNDER_RESERVE: Money = Money::new(200);
 
 /// Consecutive hungry ticks before a destitute agent gives up on the
@@ -2266,7 +2269,10 @@ mod tests {
 
     #[test]
     fn founding_dies_cleanly_on_every_stale_re_check() {
-        let capital = Money::new(210);
+        let template = market::found_template(Good::Food);
+        let capital = template
+            .wage
+            .times(template.headcount * FOUND_CAPITAL_BILLS);
         let bar = capital.plus(FOUNDER_RESERVE);
         // (a) the founder cannot afford the stake and their reserve
         let (mut world, vacant, _f) = founding_ready(bar.minus(Money::new(1)));

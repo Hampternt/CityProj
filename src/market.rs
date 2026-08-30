@@ -335,7 +335,24 @@ pub struct FoundTemplate {
 /// what floored both prices in the first place; an entrant at worldgen
 /// size would recreate the price war founding exists to cure. The
 /// founder self-hires into one seat, leaving exactly one for the labor
-/// market.
+/// market. FROZEN at 2, 2026-08-30 — but the measurement is a genuine
+/// trade and is recorded rather than buried. A 300-tick sweep:
+///
+///     headcount 1   t300 pop 2,  3 venues  (no open slot: the
+///                                           full-cycle Hired is
+///                                           unsatisfiable)
+///     headcount 2   t300 pop 10, 3 venues  — anti-churn HOLDS
+///     headcount 3   t300 pop 18, 6 venues  — anti-churn FAILS
+///     headcount 4   t300 pop 17, 5 venues
+///
+/// Bigger entrants employ more of the dis-saving unemployed and leave a
+/// visibly larger town, because in this economy employment matters more
+/// than supply balance. They also break the spec's anti-churn acceptance
+/// criterion outright (at 3: "entertainment churned: founded t155, then
+/// 3 deaths within 100 ticks"). A town of 18 sustained by constant firm
+/// death and rebirth is not obviously healthier than a stable 10, and
+/// the criterion is signed, so 2 ships. Whoever revisits the
+/// expand-capacity seam should start from this table.
 ///
 /// **Scarcity signal** 2/2/3 — DERIVED, not tuned:
 /// `max(PRICE_FLOOR + 1, ceil(wage / production_rate))`, the price at
@@ -366,10 +383,21 @@ const FOUNDING_TEMPLATE: [(Good, Money, Money, u32, Money); 3] = [
 
 /// Consecutive sell-out ticks a lone survivor must post before its
 /// sector counts as scarce rather than collapsing — the DIRECTION half
-/// of the scarcity gate. PROVISIONAL: it cannot be frozen from the
-/// pack-3 planning probe, which recorded prices rather than sell-through.
-/// The pack's re-measure item freezes it strictly above the longest
-/// streak posted by a survivor that then closed.
+/// of the scarcity gate. FROZEN at 2 by measurement, 2026-08-30.
+///
+/// The plan's a-priori freeze rule — "strictly above the longest streak
+/// posted by a survivor that then closed", which would give 4 — is
+/// REFUTED by a 300-tick sweep of the shipped town. Raising the constant
+/// does not reduce churn; it makes both churn and survival worse:
+///
+///     ticks=2   15 foundings, 12 found→close cycles, t300 pop 10
+///     ticks=3   18 foundings, 14 cycles,             t300 pop 6
+///     ticks=4   16 foundings, 13 cycles,             t300 pop 6
+///     ticks=6   18 foundings, 14 cycles,             t300 pop 7
+///
+/// The heuristic assumed a longer streak requirement filters out dying
+/// sectors. It mostly just delays every founding, so each entrant
+/// arrives into a poorer town. Measurement over rule.
 const FOUND_SIGNAL_TICKS: u32 = 2;
 
 /// This good's founding template. The accessor exists so the numbers
