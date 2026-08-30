@@ -208,14 +208,14 @@ address it — a successor container, not this one.
   `FOUND_SIGNAL >= ceil(wage / production_rate)` for all three goods).
   Done: `./scripts/check.sh` clean; `cargo test market::` quoted.
   Touches: src/market.rs.
-- [ ] **3. `World::is_fully_vacant` and the de-duplication.** The
+- [x] **3. `World::is_fully_vacant` and the de-duplication.** The
   predicate beside `occupants_of`/`employees_of` (false for an unknown
   house, documented); `immigrate`'s two `HouseNotVacant` arms and the
   Arrive decide rewritten onto it, `immigrate` keeping its `UnknownHouse`
   arm first. Behaviour-preserving by construction — the ledger quotes the
   200-tick migration soak unchanged. Done: `./scripts/check.sh` clean;
   full suite green. Touches: src/world.rs, src/sim.rs.
-- [ ] **4. `World::found_business`.** Signature verbatim, placed after
+- [x] **4. `World::found_business`.** Signature verbatim, placed after
   `immigrate`: founder known FIRST (`UnknownAgent`), then `UnknownHouse`,
   then `is_fully_vacant` (`HouseNotVacant`), then forward to
   `create_business`. Money-free; writes no agent field. Tests:

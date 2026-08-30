@@ -157,7 +157,8 @@ pub enum WorldError {
     NoBusinessHere(HouseId),
     /// Not a vacant residence: it has occupants or hosts a business —
     /// v1's entire vacancy rule (ownership plays no part). Refused by
-    /// `immigrate`.
+    /// `immigrate` and, since pack 3, by `found_business` — newcomers and
+    /// new firms compete for the same premises.
     HouseNotVacant(HouseId),
     /// The money core refused; wrapped unchanged.
     Money(MoneyError),
@@ -488,6 +489,18 @@ impl World {
         })
     }
 
+    /// v1's entire vacancy rule, in one place: no business, no
+    /// occupants. Ownership plays no part (`House.owners` is rule-inert).
+    /// An unknown house is not vacant — you cannot move into a house that
+    /// does not exist. Read by `immigrate`, by `found_business`, and by
+    /// phase 1's and phase 6's decide passes, which all need the SAME
+    /// predicate: a closed venue's freed house becomes a landing pad by
+    /// satisfying exactly this.
+    pub fn is_fully_vacant(&self, house: HouseId) -> bool {
+        self.house(house)
+            .is_some_and(|place| place.business.is_none() && self.occupants_of(house).is_empty())
+    }
+
     /// Removes `agent` from the world — the emigration command
     /// (town-colony pack 4; Amendments 17 and 19). Validates first: only
     /// a real spawned agent qualifies — reserved and business ids refuse
@@ -606,19 +619,51 @@ impl World {
     /// leaves a penniless-but-valid newcomer). Bumps `arrivals`, the
     /// immigrant-name counter. `Err` means nothing changed.
     pub fn immigrate(&mut self, name: String, home: HouseId) -> Result<AgentId, WorldError> {
-        match self.house(home) {
-            None => return Err(WorldError::UnknownHouse(home)),
-            Some(house) if house.business.is_some() => {
-                return Err(WorldError::HouseNotVacant(home));
-            }
-            Some(_) if !self.occupants_of(home).is_empty() => {
-                return Err(WorldError::HouseNotVacant(home));
-            }
-            Some(_) => {}
+        if self.house(home).is_none() {
+            return Err(WorldError::UnknownHouse(home)); // house checked first
+        }
+        if !self.is_fully_vacant(home) {
+            return Err(WorldError::HouseNotVacant(home));
         }
         let id = self.spawn_agent(&name, Some(home), None);
         self.arrivals += 1;
         Ok(id)
+    }
+
+    /// The tick-time founding command (firm-lifecycle pack 3) — the
+    /// `immigrate` wrapper precedent applied to firms. Validates the
+    /// founder is a real spawned agent (checked FIRST, per the
+    /// agent-checked-first convention), then that the house exists and is
+    /// fully vacant — the `immigrate` predicate verbatim, so a founder
+    /// and an immigrant compete for exactly the same premises — then
+    /// forwards to the widened `create_business` with `owner = founder`.
+    ///
+    /// **Money-free**, like `immigrate`: 07-03's refusal of money-moving
+    /// constructors stands, so the capital stake is a separate
+    /// `World::pay(founder, new_id, Gold, capital)` in the Found apply.
+    /// A failed stake can therefore never half-found a firm, and §8.5
+    /// caps it against the live wallet. Writes no agent field either —
+    /// the founder does not move in, and their self-hire is a separate
+    /// `assign_workplace`. `Err` means nothing changed.
+    #[allow(dead_code)] // no caller until phase 6 founds firms (pack-3 item 5)
+    pub fn found_business(
+        &mut self,
+        founder: AgentId,
+        house: HouseId,
+        product: Good,
+        price: Money,
+        roles: HashMap<Role, RoleSlot>,
+    ) -> Result<AgentId, WorldError> {
+        if self.agent(founder).is_none() {
+            return Err(WorldError::UnknownAgent(founder)); // founder checked first
+        }
+        if self.house(house).is_none() {
+            return Err(WorldError::UnknownHouse(house));
+        }
+        if !self.is_fully_vacant(house) {
+            return Err(WorldError::HouseNotVacant(house));
+        }
+        self.create_business(house, founder, product, price, roles)
     }
 }
 
@@ -1475,5 +1520,135 @@ mod tests {
         // derived, never stored: quitting is visible immediately
         world.vacate_workplace(first).unwrap();
         assert_eq!(world.employees_of(shop), vec![second]);
+    }
+
+    #[test]
+    fn is_fully_vacant_is_the_one_vacancy_rule() {
+        let mut world = World::new();
+        let empty = world.add_house("Empty", vec![]);
+        let lived_in = world.add_house("Lived In", vec![]);
+        let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
+        world.spawn_agent("resident", Some(lived_in), None);
+        world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        assert!(world.is_fully_vacant(empty));
+        assert!(!world.is_fully_vacant(lived_in), "occupants block it");
+        assert!(!world.is_fully_vacant(shop), "a business blocks it");
+        assert!(
+            !world.is_fully_vacant(HouseId(99)),
+            "a ghost house is not vacant"
+        );
+        // Ownership plays no part — the rule-inert `House.owners`.
+        let owned = world.add_house("Owned", vec![owner]);
+        assert!(world.is_fully_vacant(owned));
+    }
+
+    #[test]
+    fn found_business_validates_founder_then_house_then_vacancy() {
+        let mut world = World::new();
+        let house = world.add_house("Mill", vec![]);
+        let founder = world.spawn_agent("mira", None, None);
+        let occupied = world.add_house("Home", vec![]);
+        world.spawn_agent("resident", Some(occupied), None);
+
+        // Founder checked FIRST, even when the house is also bad.
+        for ghost in [AgentId(404), world.mint_id, world.external_id] {
+            assert_eq!(
+                world.found_business(
+                    ghost,
+                    HouseId(99),
+                    Good::Food,
+                    Money::new(2),
+                    HashMap::new()
+                ),
+                Err(WorldError::UnknownAgent(ghost))
+            );
+        }
+        // Then the house, then its vacancy.
+        assert_eq!(
+            world.found_business(
+                founder,
+                HouseId(99),
+                Good::Food,
+                Money::new(2),
+                HashMap::new()
+            ),
+            Err(WorldError::UnknownHouse(HouseId(99)))
+        );
+        assert_eq!(
+            world.found_business(founder, occupied, Good::Food, Money::new(2), HashMap::new()),
+            Err(WorldError::HouseNotVacant(occupied))
+        );
+        // A house already hosting a business is not vacant either — so
+        // that path refuses BEFORE create_business's own duplicate check.
+        world
+            .create_business(house, founder, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        assert_eq!(
+            world.found_business(founder, house, Good::Food, Money::new(2), HashMap::new()),
+            Err(WorldError::HouseNotVacant(house))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn found_business_is_money_free_and_wraps_the_constructor() {
+        let mut world = World::new();
+        let house = world.add_house("5 Weir Cottage", vec![]);
+        let founder = world.spawn_agent("mira", None, None);
+        world.accounts.mint(founder, Metal::Gold, Money::new(1000));
+        let before = world.accounts.total_money(Metal::Gold);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 2,
+                unfilled_ticks: 0,
+            },
+        );
+
+        let firm = world
+            .found_business(founder, house, Good::Food, Money::new(2), roles)
+            .unwrap();
+
+        let business = world.house(house).unwrap().business.as_ref().unwrap();
+        assert_eq!(business.owner, founder);
+        assert_eq!(business.product, Good::Food);
+        assert_eq!(business.price, Money::new(2));
+        assert_eq!(business.stock, 0);
+        assert!(business.owed_to.is_empty());
+        assert_eq!(business.insolvent_ticks, 0);
+        assert_eq!(business.sold_out_ticks, 0);
+        // Money-free: the founder keeps every coin and the new account is
+        // empty until the apply's separate stake.
+        assert_eq!(
+            world.accounts.balance_of(founder, Metal::Gold),
+            Money::new(1000)
+        );
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(firm, metal), Money::ZERO);
+        }
+        assert_eq!(world.accounts.total_money(Metal::Gold), before);
+        // Account-only, like every business id: no Agent behind it.
+        assert!(world.agent(firm).is_none());
+        // The founder does not move in and is not hired by the command.
+        let person = world.agent(founder).unwrap();
+        assert_eq!(person.home, None);
+        assert_eq!(person.workplace, None);
+        assert_eq!(person.employed_role, None);
+        // ...and the house stops being vacant the moment it hosts a firm.
+        assert!(!world.is_fully_vacant(house));
+        // The stake seam: pay works immediately, now the id is known.
+        world
+            .pay(founder, firm, Metal::Gold, Money::new(210))
+            .unwrap();
+        assert_eq!(
+            world.accounts.balance_of(firm, Metal::Gold),
+            Money::new(210)
+        );
+        world.accounts.audit();
     }
 }

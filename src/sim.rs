@@ -453,7 +453,7 @@ fn labor_market(world: &mut World, report: &mut TickReport) {
         let vacant = snapshot
             .houses
             .iter()
-            .find(|house| house.business.is_none() && snapshot.occupants_of(house.id).is_empty());
+            .find(|house| snapshot.is_fully_vacant(house.id));
         if let Some(house) = vacant {
             intents.push(Intent::Arrive {
                 name: immigrant_name(snapshot.arrivals),
