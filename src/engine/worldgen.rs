@@ -1,0 +1,1018 @@
+//! Hand-seeded scenarios. Every coin enters through `mint`, so the audit
+//! counts each seed as the entire per-metal money supply, forever — there
+//! is no tick-time faucet (§8.4). Deterministic and seedless: no RNG
+//! exists in this codebase, so the same world boots every run.
+
+use std::collections::HashMap;
+
+use crate::agent::AgentId;
+use crate::business::RoleSlot;
+use crate::goods::Good;
+use crate::metal::Metal;
+use crate::money::Money;
+use crate::role::Role;
+use crate::world::World;
+
+/// The 07-19 minimal-needs scenario: farm, theater, and jeweler (one
+/// Labourer slot each at wage 35), three employed agents, one unemployed,
+/// all housed at the residence. Worldgen seeds every business with one
+/// wage bill — tick 1 must be pre-funded because there is no per-tick mint
+/// faucet; the seed is the entire money supply and tick 1's wages are paid
+/// before any business revenue exists — and every agent with a small wallet
+/// plus one day's goods. All seeding goes through `mint`, so the audit
+/// counts it (§8.4). The economy trades in gold only; each agent also
+/// holds small silver and copper savings (pack 2, D1) that stay inert
+/// until the market layer can price non-gold metals — they exist so every
+/// metal's ledger and conservation total is live in production.
+///
+/// Since town-colony pack 2 this is the small TEST FIXTURE — the shipped
+/// scenario is [`town_world`], so this only compiles into test builds.
+#[cfg(test)]
+pub fn template_world() -> World {
+    let mut world = World::new();
+    let residence = world.add_house("1 Mill Lane", vec![]);
+
+    let farm = world.add_house("Greenrow Farm", vec![]);
+    let theater = world.add_house("Gilt Curtain Theater", vec![]);
+    let jeweler = world.add_house("Karat & Co", vec![]);
+    let scenario = [
+        (farm, Good::Food, Money::new(1), "alice"),
+        (theater, Good::Entertainment, Money::new(2), "bob"),
+        (jeweler, Good::Luxury, Money::new(5), "carol"),
+    ];
+    for (house, product, price, worker_name) in scenario {
+        // Owner-before-venue (firm-lifecycle pack 1): the worker must
+        // exist so `create_business` can validate them as owner — each
+        // venue is an owner-operator shop.
+        let worker = world.spawn_agent(worker_name, Some(residence), Some(house));
+        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 1,
+                unfilled_ticks: 0,
+            },
+        );
+        let business = world
+            .create_business(house, worker, product, price, roles)
+            .expect("fresh house, spawned owner");
+        let bill = world
+            .house(house)
+            .expect("just added")
+            .business
+            .as_ref()
+            .expect("just created")
+            .wage_bill();
+        world.accounts.mint(business, Metal::Gold, bill);
+    }
+    world.spawn_agent("dave", Some(residence), None); // unemployed, housed
+
+    let everyone: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
+    for id in everyone {
+        world.accounts.mint(id, Metal::Gold, Money::new(35));
+        // Inert savings (D1): nothing spends non-gold until markets can
+        // price it, so these only exercise the per-metal books.
+        world.accounts.mint(id, Metal::Silver, Money::new(10));
+        world.accounts.mint(id, Metal::Copper, Money::new(20));
+        let agent = world.agent_mut(id).expect("listed above");
+        for good in Good::ALL {
+            agent.inventory.insert(good, good.consumption_rate());
+        }
+    }
+    world
+}
+
+// ---------------------------------------------------------------------
+// town_world tuning constants (pack 2): iterated against the spec's
+// pinned soak exit criteria, then frozen. All gold — silver and copper
+// stay inert savings until the market layer can price them.
+
+/// Wallet each employed agent starts with — bridges the revenue drought
+/// a business sees before the price rotation first reaches it (its
+/// workers still buy while their wages accrue as arrears).
+const EMPLOYED_WALLET: u64 = 120;
+/// Savings each seeded-unemployed agent lives off until pack 3's labor
+/// market gives them income — sized to keep them buying Food through the
+/// 100-tick soak with margin (the liveness criterion applies to them
+/// too; steady-state spend is ~25g/tick at settled prices). Also the
+/// town's DEMAND FUSE (pack-3 close review; re-timed for pack 4): the
+/// frozen equilibrium is ~30% dis-saving-financed — coffers absorb
+/// ~90g/tick as one-way sinks while the 9 permanently unemployed
+/// dis-save ~25g/tick each — so this constant times ~25 sets when
+/// destitution arrives. Pack 4 shortened it 4000 → 3400 so the WHOLE
+/// breathing chain (broke → hungry → depart → demand shock → quits →
+/// K-aged vacancy → grubstaked arrival) completes inside the 200-tick
+/// soak window, while the first departure (t127, measured) lands safely
+/// beyond the 100-tick soak's criteria span. Migration relieves the
+/// fuse. The phase-6 draw (firm-lifecycle pack 1) killed the coffer
+/// SINK — coffers now cap at the retained buffer and ~22k gold
+/// recirculated to owners over 200 ticks — but the fuse itself barely
+/// moved (first departure still t127, measured): `target_days` purchase
+/// caps keep owner income pooling in wallets, never reaching the
+/// unemployed. The pooled capital is the recorded seam for founding
+/// (pack 3) and phase 6's expand-capacity half.
+const UNEMPLOYED_SAVINGS: u64 = 3400;
+/// External's gold settlement fund: pack 4's immigration grubstakes draw
+/// from here; until then it sits on the books, audited like everything.
+const SETTLEMENT_FUND: u64 = 600;
+const SILVER_SAVINGS: u64 = 10;
+const COPPER_SAVINGS: u64 = 20;
+/// How many full-staffing wage bills each business's coffer starts with.
+const WAGE_BILLS_SEEDED: u32 = 3;
+
+/// Every named resident, spawn order = ascending `AgentId`. The first
+/// seeded-staff-sum names (16) fill business slots in declaration order;
+/// the rest are seeded unemployed.
+const NAMES: [&str; 30] = [
+    "alice", "bob", "carol", "dave", "ed", "fiona", "george", "hana", "ivan", "judit", "karl",
+    "lena", "marco", "nadia", "otto", "petra", "quinn", "rosa", "sam", "tessa", "ulf", "vera",
+    "will", "xenia", "yara", "zeno", "mira", "tomas", "orla", "bram",
+];
+
+/// The shipped town (town-colony spec, `town_world` contract): 30 agents
+/// across 4 occupied residences (8/8/8/6), 2 zero-occupant spare
+/// residences (pack 4's landing pads), and 6 multi-worker businesses over
+/// all three Goods — two competing sellers of each. 16 agents are
+/// seeded employed; the rest are seeded unemployed and live off savings
+/// until phase 1's labor market hires them into the open headcount
+/// (pack 3: headcount exceeds seeded staffing, so slots stand open at
+/// boot). Each business is pre-funded with one full-staffing wage
+/// bill, three deep (`WAGE_BILLS_SEEDED`); External holds the settlement
+/// fund. Deterministic and seedless;
+/// its per-metal totals are the entire money supply, pinned by test and
+/// audit forever.
+pub fn town_world() -> World {
+    let mut world = World::new();
+    let residences = [
+        "1 Mill Lane",
+        "2 Mill Lane",
+        "3 Orchard Row",
+        "4 Orchard Row",
+    ]
+    .map(|address| world.add_house(address, vec![]));
+    // Zero-occupant spares: vacancy is "no occupants, hosts no business".
+    world.add_house("5 Weir Cottage", vec![]);
+    world.add_house("6 Weir Cottage", vec![]);
+
+    // (address, product, price, wage, headcount) — soak-tuned, then
+    // frozen, all three regimes measured, not taste. FOOD runs a mild
+    // surplus (8×40=320 vs 30×10=300): surplus caps prices low while
+    // rotation sell-outs keep them moving, and the loser's backlog
+    // serves the buying-order tail. ENT and LUX run deliberate SCARCITY
+    // (80 vs 150 nominal, 32 vs 60): a staffer's output value at the
+    // floor (production_rate × 1g) is below any livable wage for these
+    // goods, so parity or surplus bankrupts their venues (measured —
+    // arrears in the thousands by t60); scarcity keeps their prices
+    // above the floor where revenue covers payroll, and only Food's
+    // liveness is universal by criterion. Not every agent gets
+    // entertainment every tick — that is the town's poverty, not a bug: with surplus every
+    // seller floors out and the houses-order tie-break routes all demand
+    // to the first forever; at parity the cheapest sells out, raises,
+    // and demand rotates. TWO sellers per good, measured, not taste: a
+    // third wins at most a warm-up transient before its payroll starves
+    // — the floor can't be undercut, ties favor earlier houses, and the
+    // loser-lowers step re-undercuts before its turn comes again
+    // (recorded in the pack ledger as a deviation from the spec's "7–9
+    // businesses"; the mechanics admit exactly two solvent sellers per
+    // good until the market layer changes).
+    // (address, product, price, wage, headcount, seeded_staff) —
+    // pack 3: `headcount` exceeds `seeded_staff` so the labor market
+    // has open slots to clear at boot; the wage column is seeded
+    // SOLVENT (payroll at full staffing coverable by measured revenue)
+    // because pack 3's quit rule turns latent insolvency into churn —
+    // pack 2's lux wage of 40 bled 1320g of arrears by t100, harmless
+    // only while quitting didn't exist (pack-3 ledger, traced).
+    let businesses = [
+        ("Greenrow Farm", Good::Food, 2u64, 35u64, 4u32, 4u32),
+        ("Longacre Farm", Good::Food, 3, 35, 4, 4),
+        ("Gilt Curtain Theater", Good::Entertainment, 2, 36, 3, 2),
+        ("The Brass Bell", Good::Entertainment, 3, 36, 4, 2),
+        ("Karat & Co", Good::Luxury, 4, 24, 3, 2),
+        ("Silverthread Atelier", Good::Luxury, 5, 24, 3, 2),
+    ];
+
+    let mut next_name = 0;
+    for (address, product, price, wage, headcount, seeded_staff) in businesses {
+        let house = world.add_house(address, vec![]);
+        // Owner-before-venue (firm-lifecycle pack 1): each venue's staff
+        // spawn BEFORE `create_business` so the first seeded worker's id
+        // exists to validate as owner — the owner-operator pattern
+        // (alice, ed, ivan, karl, marco, otto by construction). The
+        // agent-spawn ORDER (names, homes, sequence) is unchanged; only
+        // the business-id interleaving moves, which is why this landed
+        // as one deliberate re-pin item.
+        let mut first_worker = None;
+        for _ in 0..seeded_staff {
+            let name = NAMES[next_name];
+            let home = residences[next_name / 8];
+            next_name += 1;
+            let worker = world.spawn_agent(name, Some(home), Some(house));
+            world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
+            first_worker.get_or_insert(worker);
+        }
+        let owner = first_worker.expect("every seeded venue has staff");
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(wage),
+                headcount,
+                unfilled_ticks: 0,
+            },
+        );
+        let business = world
+            .create_business(house, owner, product, Money::new(price), roles)
+            .expect("fresh house, spawned owner");
+        let bill = world
+            .house(house)
+            .expect("just added")
+            .business
+            .as_ref()
+            .expect("just created")
+            .wage_bill();
+        // Three bills deep, not one: the demand rotation takes several
+        // ticks to first reach each seller, and payroll must survive
+        // that drought (soak-tuned, then frozen). Bills price the FULL
+        // headcount, so open slots arrive pre-funded.
+        world
+            .accounts
+            .mint(business, Metal::Gold, bill.times(WAGE_BILLS_SEEDED));
+        // Shelves start two ticks deep — sized by the staff that
+        // actually produce at boot, not the target headcount: without
+        // opening stock, the first ticks create pantry deficits in the
+        // late buying order that an exactly-cleared market can never
+        // absorb again (soak-tuned).
+        world
+            .house_mut(house)
+            .expect("just added")
+            .business
+            .as_mut()
+            .expect("just created")
+            .stock = 2 * product.production_rate() * seeded_staff;
+    }
+    // The rest are unemployed until pack 3's labor market hires them.
+    while next_name < NAMES.len() {
+        world.spawn_agent(NAMES[next_name], Some(residences[next_name / 8]), None);
+        next_name += 1;
+    }
+
+    let everyone: Vec<(AgentId, bool)> = world
+        .agents
+        .iter()
+        .map(|agent| (agent.id, agent.workplace.is_some()))
+        .collect();
+    for (id, employed) in everyone {
+        let wallet = if employed {
+            EMPLOYED_WALLET
+        } else {
+            UNEMPLOYED_SAVINGS
+        };
+        world.accounts.mint(id, Metal::Gold, Money::new(wallet));
+        world
+            .accounts
+            .mint(id, Metal::Silver, Money::new(SILVER_SAVINGS));
+        world
+            .accounts
+            .mint(id, Metal::Copper, Money::new(COPPER_SAVINGS));
+        let agent = world.agent_mut(id).expect("listed above");
+        for good in Good::ALL {
+            agent.inventory.insert(good, good.consumption_rate());
+        }
+    }
+    world
+        .accounts
+        .mint(world.external_id, Metal::Gold, Money::new(SETTLEMENT_FUND));
+    world
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D1 (pack 2 manifest): gold funds the whole economy — 3 wage bills of
+    /// 35 plus 4 wallets of 35 — and every agent holds inert silver 10 /
+    /// copper 20 savings, so all three ledgers are live from tick 0.
+    #[test]
+    fn template_world_seeds_the_decided_metals() {
+        let world = template_world();
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(245));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(245));
+        assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(40));
+        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(40));
+        assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(80));
+        assert_eq!(world.accounts.total_minted(Metal::Copper), Money::new(80));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn town_world_has_the_decided_shape() {
+        let world = town_world();
+        // 30 agents, 16 employed, 14 unemployed (pack 3's hiring pool)
+        assert_eq!(world.agents.len(), 30);
+        let employed = world
+            .agents
+            .iter()
+            .filter(|a| a.workplace.is_some())
+            .count();
+        assert_eq!(employed, 16);
+        // every employed agent has a slotted role (they must earn)
+        assert!(
+            world
+                .agents
+                .iter()
+                .filter(|a| a.workplace.is_some())
+                .all(|a| a.employed_role.is_some())
+        );
+        // 12 houses: 4 occupied residences + 2 vacant spares + 6 premises
+        assert_eq!(world.houses.len(), 12);
+        assert_eq!(world.businesses().count(), 6);
+        // ≥2 competing Food sellers, and every Good is produced
+        for good in Good::ALL {
+            let sellers = world
+                .businesses()
+                .filter(|(_, b)| b.product == good)
+                .count();
+            assert!(sellers >= 2, "{good} needs competing sellers");
+        }
+        // the spares stand empty and host nothing
+        for spare in ["5 Weir Cottage", "6 Weir Cottage"] {
+            let house = world
+                .houses
+                .iter()
+                .find(|h| h.address == spare)
+                .expect("spare exists");
+            assert!(world.occupants_of(house.id).is_empty());
+            assert!(house.business.is_none());
+        }
+        // multi-worker slots, seeded staff within headcount, and open
+        // slots for the labor market to clear (pack 3: 21 jobs, 5 open —
+        // see the manifest's tuning saga and deviation record)
+        let mut total_open = 0;
+        for (house, business) in world.businesses() {
+            let staff = world.employees_of(house.id).len() as u32;
+            let headcount: u32 = business.roles.values().map(|slot| slot.headcount).sum();
+            assert!(
+                staff <= headcount,
+                "{} staffed within headcount",
+                house.address
+            );
+            assert!(staff > 1, "{} is multi-worker at seed", house.address);
+            total_open += headcount - staff;
+        }
+        assert_eq!(total_open, 5, "the boot-time hiring pool's slots");
+        world.accounts.audit();
+    }
+
+    /// The conservation re-pin (re-pinned by pack 3's worldgen item —
+    /// open headcounts widen the seeded bills, lux wages drop to
+    /// solvency): town_world's per-metal totals are the entire money
+    /// supply, forever — the audit holds them here every tick. Gold =
+    /// coffers at three full-headcount bills (3×676 = 2028) + 16
+    /// employed wallets of 120 + 14 savings of 3400 + External's 600
+    /// fund (re-pinned by pack 4's fuse shortening). A worldgen change
+    /// must change these constants consciously, in its own item.
+    #[test]
+    fn town_world_seeds_the_decided_metals() {
+        let world = town_world();
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(52148));
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(52148));
+        assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(300));
+        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(300));
+        assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(600));
+        assert_eq!(world.accounts.total_minted(Metal::Copper), Money::new(600));
+        world.accounts.audit();
+    }
+
+    /// Firm-lifecycle pack 1: each venue's owner is its first seeded
+    /// worker — the owner-operator pattern, deterministic by spawn
+    /// order. All six owners are employed, so the 9 permanently
+    /// unemployed stay non-owners and the emigration pool survives.
+    #[test]
+    fn town_world_seeds_owner_operators() {
+        let world = town_world();
+        let expected = [
+            ("Greenrow Farm", "alice"),
+            ("Longacre Farm", "ed"),
+            ("Gilt Curtain Theater", "ivan"),
+            ("The Brass Bell", "karl"),
+            ("Karat & Co", "marco"),
+            ("Silverthread Atelier", "otto"),
+        ];
+        for (address, owner_name) in expected {
+            let (house, business) = world
+                .businesses()
+                .find(|(house, _)| house.address == address)
+                .expect("seeded venue");
+            let owner = world
+                .agent(business.owner)
+                .expect("owner is a living agent");
+            assert_eq!(owner.name, owner_name, "{address}");
+            // owner-operator: employed at their own venue
+            assert_eq!(owner.workplace, Some(house.id), "{address}");
+        }
+    }
+
+    /// The spec's pinned soak exit criteria (town-colony spec, "Pinned
+    /// soak exit criteria"): the tuning constants above were iterated
+    /// until this held, then frozen. 100 ticks, evaluated from tick 10
+    /// (warm-up excluded); the audit runs inside every `tick`, so any §8
+    /// break panics the soak.
+    #[test]
+    fn town_soak_holds_the_pinned_exit_criteria() {
+        use crate::sim::{self, Event};
+
+        const LAST: u64 = 100;
+        const FROM: u64 = 10; // warm-up excluded
+        const WINDOW: u64 = 5;
+        let floor = Money::new(1);
+
+        let mut world = town_world();
+        let mut food_ticks: HashMap<AgentId, Vec<u64>> = HashMap::new();
+        let mut cheapest: HashMap<Good, Vec<Money>> = HashMap::new();
+        // per business: (rises, falls) after warm-up
+        let mut moved: HashMap<AgentId, (u32, u32)> = HashMap::new();
+        let mut quits = 0u32;
+        let mut drew: HashMap<AgentId, u32> = HashMap::new();
+        // criterion 7 (firm-lifecycle pack 2): the tuned town never
+        // closes. A max-tracking map alone cannot prove that — a closed
+        // venue simply drops out of `businesses()` and scores as "never
+        // got high" — so it is paired with a live-count check and a
+        // hand-written Closed tally. Worldgen's `match event` arms end in
+        // `_ => {}`, so neither Closed nor LaidOff forces at compile time
+        // here: these assertions have no compiler help and must be
+        // written deliberately.
+        let mut distress: HashMap<AgentId, u32> = HashMap::new();
+        let mut closures = 0u32;
+        let mut foundings = 0u32;
+
+        for t in 1..=LAST {
+            // the prices in force during tick t are those posted before
+            // it — sample ahead of the write-back, not after
+            for good in Good::ALL {
+                let min = world
+                    .businesses()
+                    .filter(|(_, b)| b.product == good)
+                    .map(|(_, b)| b.price)
+                    .min()
+                    .expect("every good has sellers");
+                cheapest.entry(good).or_default().push(min);
+            }
+            let report = sim::tick(&mut world);
+            for event in &report.events {
+                match event {
+                    Event::Sold {
+                        buyer,
+                        good: Good::Food,
+                        ..
+                    } => food_ticks.entry(*buyer).or_default().push(t),
+                    Event::PriceMoved {
+                        business, from, to, ..
+                    } if t >= FROM => {
+                        let entry = moved.entry(*business).or_default();
+                        if to > from {
+                            entry.0 += 1;
+                        } else {
+                            entry.1 += 1;
+                        }
+                    }
+                    Event::Quit { .. } => quits += 1,
+                    Event::Closed { .. } => closures += 1,
+                    Event::Founded { .. } => foundings += 1,
+                    // t >= 20 like criterion 5: the t1–2 boot burst (the
+                    // seeded-wallet spending wave flowing through the
+                    // coffers) would satisfy an unguarded tally even for
+                    // a draw that broke after warm-up.
+                    Event::ProfitDrawn { business, .. } if t >= 20 => {
+                        *drew.entry(*business).or_default() += 1
+                    }
+                    _ => {}
+                }
+            }
+            // 5. (firm-lifecycle pack 1) the sink is dead: from tick 20
+            //    every coffer sits at or under the retained buffer —
+            //    DRAW_BUFFER_BILLS full-staffing bills plus outstanding
+            //    arrears. Phase 7 can only debit coffers after the draw
+            //    (settlements), so the post-tick bound is the phase-6
+            //    bound or tighter.
+            if t >= 20 {
+                for (house, business) in world.businesses() {
+                    let bound = business
+                        .wage_bill()
+                        .times(crate::sim::DRAW_BUFFER_BILLS)
+                        .plus(business.owed_total());
+                    assert!(
+                        world.accounts.balance_of(business.id, Metal::Gold) <= bound,
+                        "{}'s coffer exceeds the draw buffer at t{t}",
+                        house.address
+                    );
+                }
+            }
+            // 7. (firm-lifecycle pack 2) the tuned town never closes.
+            //    Sampled post-tick, which IS the next tick's phase-start
+            //    snapshot — the value phase 6's closure pass will read.
+            for (_, business) in world.businesses() {
+                let entry = distress.entry(business.id).or_default();
+                *entry = (*entry).max(business.insolvent_ticks);
+            }
+            assert_eq!(
+                world.businesses().count(),
+                6,
+                "the tuned town's venue count moved at t{t} — a death or a birth"
+            );
+            // 8. (firm-lifecycle pack 3) and NOTHING is founded — named
+            //    at its cause rather than only at its symptom: founding's
+            //    carrying-capacity gate needs a good to drop below two
+            //    sellers, and in the tuned town none ever does.
+            for good in Good::ALL {
+                assert!(
+                    world
+                        .businesses()
+                        .filter(|(_, b)| b.product == good)
+                        .count()
+                        >= 2,
+                    "{good} fell below two sellers at t{t} — founding's gate would open"
+                );
+            }
+        }
+
+        // 1. every agent completes ≥1 Food purchase in every rolling
+        //    5-tick window of the evaluated span
+        for agent in &world.agents {
+            let ticks = food_ticks
+                .get(&agent.id)
+                .unwrap_or_else(|| panic!("{} never bought Food", agent.name));
+            for start in FROM..=(LAST - WINDOW + 1) {
+                assert!(
+                    ticks.iter().any(|&t| t >= start && t < start + WINDOW),
+                    "{} bought no Food in ticks {start}–{}",
+                    agent.name,
+                    start + WINDOW - 1,
+                );
+            }
+        }
+
+        // 2. per Good — not per seller: the cheapest posted price neither
+        //    sits at the floor for the whole span nor rises monotonically
+        for good in Good::ALL {
+            let series = &cheapest[&good][(FROM as usize - 1)..];
+            assert!(
+                series.iter().any(|&p| p != floor),
+                "{good}'s cheapest price is floor-pinned all span"
+            );
+            let nondecreasing = series.windows(2).all(|w| w[1] >= w[0]);
+            let rose = series.last() > series.first();
+            assert!(
+                !(nondecreasing && rose),
+                "{good}'s cheapest price rises monotonically"
+            );
+        }
+
+        // 3. at least one price moves in both directions — ONE posted
+        //    price, not an aggregate across sellers (spec sentence)
+        assert!(
+            moved.values().any(|&(rises, falls)| rises > 0 && falls > 0),
+            "no single posted price moved in both directions after warm-up"
+        );
+
+        // 4. zero quits across the whole soak (pack 3): the tuned town
+        //    is solvent, so nobody walks out — no-spurious-quits as an
+        //    assertion, not a hope. A quitting town is a sick town; the
+        //    quit mechanism itself is demonstrated in the sim:: tests.
+        assert_eq!(quits, 0, "the tuned town fired {quits} spurious quits");
+
+        // 6. (firm-lifecycle pack 1) profit flows: every venue drew at
+        //    least once AFTER warm-up — coffers recirculate to owners in
+        //    steady state instead of pooling (the fuse cure landed;
+        //    magnitudes in the pack-1 ledger; measured minimum ~4
+        //    post-warm-up draws at Longacre).
+        for (house, business) in world.businesses() {
+            assert!(
+                drew.get(&business.id).copied().unwrap_or(0) > 0,
+                "{} never drew profit across the soak",
+                house.address
+            );
+        }
+
+        // 7. (firm-lifecycle pack 2) NOTHING closes in the tuned town.
+        //    Three assertions, because no one of them is sufficient: the
+        //    counter never reaches the threshold, no venue vanished (the
+        //    per-tick count above), and no closure was ever narrated.
+        //    Measured 2026-08-30: exactly ten one-tick flickers over the
+        //    whole span, all at Longacre Farm, owing 2–11g against a 140g
+        //    bill — observed maximum 1, so CLOSE_INSOLVENT_TICKS = 12
+        //    clears it by eleven ticks. The other five venues never
+        //    accrue a coin. This is a REGRESSION GUARD, not a tuning
+        //    constraint: it passes at any threshold ≥ 2, so it proves the
+        //    constant is not too LOW and says nothing about it being too
+        //    high. Only the 200-tick soak can show the fuse still fires.
+        assert_eq!(closures, 0, "the tuned town closed {closures} venues");
+        // Hand-written, like criterion 7: this match ends in `_ => {}`,
+        // so `Event::Founded` forces nothing here and a missing arm would
+        // ship green while observing nothing.
+        assert_eq!(foundings, 0, "the tuned town founded {foundings} venues");
+        for (house, business) in world.businesses() {
+            let max = distress.get(&business.id).copied().unwrap_or(0);
+            assert!(
+                max < crate::sim::CLOSE_INSOLVENT_TICKS,
+                "{} reached {max} insolvent ticks against a threshold of {}",
+                house.address,
+                crate::sim::CLOSE_INSOLVENT_TICKS
+            );
+        }
+    }
+
+    /// The pack-3 soak (town-colony spec, pack-3 criteria): 50 ticks
+    /// from `town_world` with the labor market live. Constants are
+    /// iterated until this and the 100-tick soak above BOTH hold — the
+    /// union is the gate — then frozen.
+    #[test]
+    fn town_soak_reaches_near_full_employment() {
+        use crate::role::Role;
+        use crate::sim::{self, Event};
+
+        const LAST: u64 = 50;
+        /// "Near-full employment": the measured, frozen target — see the
+        /// pack-3 manifest's deviation record for why it is not 27/30.
+        const NEAR_FULL: usize = 21;
+        /// A rose-without-falling wage series must be flat this long at
+        /// the end — proof the rise plateaued (the affordability gate or
+        /// a filled slot ended it) rather than compounding unbounded.
+        const PLATEAU: usize = 10;
+
+        let mut world = town_world();
+        let mut first_hire: Option<u64> = None;
+        let mut reached_full: Option<u64> = None;
+        // per (business, role): the wage in force before each tick
+        let mut wages: HashMap<(AgentId, Role), Vec<Money>> = HashMap::new();
+
+        for t in 1..=LAST {
+            for (_, business) in world.businesses() {
+                for &role in Role::ALL.iter() {
+                    if let Some(slot) = business.roles.get(&role) {
+                        wages
+                            .entry((business.id, role))
+                            .or_default()
+                            .push(slot.wage);
+                    }
+                }
+            }
+            let report = sim::tick(&mut world);
+            if first_hire.is_none()
+                && report
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::Hired { .. }))
+            {
+                first_hire = Some(t);
+            }
+            let employed = world
+                .agents
+                .iter()
+                .filter(|agent| agent.workplace.is_some())
+                .count();
+            match reached_full {
+                None if employed >= NEAR_FULL => reached_full = Some(t),
+                Some(reached) => assert!(
+                    employed >= NEAR_FULL,
+                    "employment fell back to {employed} at tick {t} after reaching {NEAR_FULL} at tick {reached}"
+                ),
+                None => {}
+            }
+        }
+
+        // 1. the seeded unemployed start getting hired within a few ticks
+        assert!(
+            first_hire.is_some_and(|t| t <= 3),
+            "first hire at {first_hire:?}, not within 3 ticks"
+        );
+        // 2. near-full employment by the soak's end, held once reached
+        assert!(
+            reached_full.is_some_and(|t| t <= LAST),
+            "never reached {NEAR_FULL} employed within {LAST} ticks"
+        );
+
+        // 3. no posted wage rises monotonically: never strictly
+        //    increasing across the span, and a series that rose without
+        //    ever falling must have plateaued — the unit tests pin the
+        //    affordability gate itself; this pins the absence of an
+        //    ungated unbounded rise in the real town
+        for ((business, role), series) in &wages {
+            let strictly_rising = series.windows(2).all(|w| w[1] > w[0]);
+            assert!(
+                !strictly_rising,
+                "{business:?}/{role} wage strictly rising all span"
+            );
+            let never_fell = series.windows(2).all(|w| w[1] >= w[0]);
+            let rose = series.last() > series.first();
+            if never_fell && rose {
+                // A founded firm's wage series starts mid-soak, so it can
+                // be shorter than PLATEAU — `series.len() - PLATEAU`
+                // would underflow into a panic rather than a failure.
+                // Too short to judge a plateau is not evidence of one.
+                if series.len() < PLATEAU {
+                    continue;
+                }
+                let tail = &series[series.len() - PLATEAU..];
+                assert!(
+                    tail.windows(2).all(|w| w[1] == w[0]),
+                    "{business:?}/{role} rose without falling and never plateaued: {series:?}"
+                );
+            }
+            // and no slow sawtooth escapes both checks above: every
+            // wage ends within ~2 raise-steps of where it started —
+            // the cascade's measured overshoot, not an unbounded climb
+            let bound = crate::market::stepped_wage(crate::market::stepped_wage(
+                *series.first().expect("series has one entry per tick"),
+            ));
+            assert!(
+                *series.last().expect("series has one entry per tick") <= bound,
+                "{business:?}/{role} climbed past the cascade bound: {series:?}"
+            );
+        }
+    }
+
+    /// The pack-4 soak (town-colony spec): 200 ticks from `town_world`
+    /// with every mechanic live. The measured breathing chain
+    /// (re-measured under the firm-lifecycle draw — pack-1 ledger): the
+    /// unemployed dis-save and the destitute leave (~t127 on, every
+    /// metal swept); the demand shock bites venue payrolls — earlier
+    /// and broader under the draw, since the coffer cushions that used
+    /// to absorb it are drawn down by design (quit churn from ~t134,
+    /// three venues, was ~t174 at one); quits open slots; the K-aged
+    /// vacancy pulls grubstaked immigrants who are hired within a tick
+    /// or two. The audit runs inside every `tick`, so any §8 break
+    /// panics the soak.
+    ///
+    /// **Re-measured under pack-2 closure, 2026-08-30.** The spec's
+    /// named re-cut turned out NOT to be needed and no criterion was
+    /// weakened — see the pack-2 ledger. Arrivals still answer the shock
+    /// (t183/184/185, after the first departure at t127), because
+    /// closure DELETES the arrears-carrying venue that the Arrive
+    /// exclusion refuses to recruit for, leaving the survivor's
+    /// post-layoff vacancies clean and pull-eligible. What the re-measure
+    /// did find is pinned below: pack 2's closure cascade, and pack 3's
+    /// answer to it.
+    ///
+    /// **Pack 2 (closure without founding) emptied the town.** Every
+    /// venue died — t140/t153/t156/t171/t172 and Greenrow Farm at t201,
+    /// one tick past this horizon — leaving no businesses at all at
+    /// population 4. Measured against a pack-1 baseline, only three of
+    /// those were the cascade's own: Longacre, The Brass Bell and Gilt
+    /// Curtain already carried terminal arrears streaks of 73 / 60 / 57
+    /// ticks with closure absent and simply never died, while Karat &
+    /// Co, Silverthread and Greenrow carried ZERO arrears for 200 ticks
+    /// and died of the layoffs.
+    ///
+    /// **Pack 3's founding answers it.** Same soak, founding live:
+    /// businesses 5 (was 1), population 20 (was 4), minimum 20 (was 1).
+    /// Six closures, five foundings, every seeded death answered within
+    /// 1–5 ticks, and no founded firm dying inside the horizon.
+    /// Criterion 5 below pins that with slack; criteria 6 and 7 pin the
+    /// anti-churn bound and the full closure→vacancy→founding→hire
+    /// chain.
+    #[test]
+    fn town_soak_population_moves_both_directions() {
+        use crate::housing::HouseId;
+        use crate::sim::{self, Event};
+
+        const LAST: u64 = 200;
+        let mut world = town_world();
+        let seed_population = world.agents.len();
+        let mut departed_ids: Vec<AgentId> = Vec::new();
+        let mut first_departed: Option<u64> = None;
+        let mut first_answer_after_departure: Option<u64> = None;
+        let mut dipped = false;
+        let mut closed: Vec<u64> = Vec::new();
+        let mut min_population = seed_population;
+        // Per-good birth/death stream for the anti-churn bound. A closed
+        // firm's id no longer resolves, so the good is remembered in a
+        // side table seeded from the boot set and extended on every
+        // Founded.
+        let mut sector: HashMap<AgentId, Good> = world
+            .businesses()
+            .map(|(_, business)| (business.id, business.product))
+            .collect();
+        let mut births: HashMap<Good, Vec<u64>> = HashMap::new();
+        let mut deaths: HashMap<Good, Vec<u64>> = HashMap::new();
+        // Deaths OF FOUNDED FIRMS only — the found→close cycle the
+        // anti-churn criterion is actually about. Counting every death of
+        // a good conflates a seeded venue's death with an entrant's, and
+        // an entrant dying is the failure the scarcity gate exists to
+        // prevent.
+        let mut founded_deaths: HashMap<Good, Vec<(u64, u64)>> = HashMap::new();
+        let mut born_at: HashMap<AgentId, u64> = HashMap::new();
+        // The full-cycle chain, as four deliberate observations.
+        let mut freed: Vec<(u64, HouseId)> = Vec::new();
+        let mut chain_reoccupied: Option<(u64, HouseId, u64)> = None; // tick, house, freed_at
+        let mut chain_business: Option<AgentId> = None;
+        let mut chain_hired: Option<u64> = None;
+        let mut founded_ids: Vec<AgentId> = Vec::new();
+        for t in 1..=LAST {
+            let report = sim::tick(&mut world);
+            for event in &report.events {
+                match event {
+                    // no compiler help for either arm: this match ends in
+                    // `_ => {}`, so a missing one ships green
+                    Event::Founded {
+                        business,
+                        house,
+                        good,
+                        ..
+                    } => {
+                        sector.insert(*business, *good);
+                        births.entry(*good).or_default().push(t);
+                        founded_ids.push(*business);
+                        born_at.insert(*business, t);
+                        // this arm shadows the answer arm below, so it
+                        // records the answer itself
+                        if first_departed.is_some_and(|d| t > d) {
+                            first_answer_after_departure.get_or_insert(t);
+                        }
+                        if let Some((at, _)) = freed.iter().find(|(at, id)| *at < t && id == house)
+                            && chain_reoccupied.is_none()
+                        {
+                            chain_reoccupied = Some((t, *house, *at));
+                            chain_business = Some(*business);
+                        }
+                    }
+                    // the hire must name the very firm founded into the
+                    // freed house — not merely any founded firm, which an
+                    // unrelated founding elsewhere would satisfy
+                    Event::Hired { business, .. }
+                        if chain_business.is_some_and(|id| id == *business) =>
+                    {
+                        chain_hired.get_or_insert(t);
+                    }
+                    Event::Departed { agent, .. } => {
+                        departed_ids.push(*agent);
+                        first_departed.get_or_insert(t);
+                    }
+                    // only an answer at a strictly later tick than the
+                    // first departure counts — the town ANSWERING the
+                    // shock, which a boot transient cannot satisfy
+                    // (phase order puts both before Departed inside one
+                    // tick, so strictly-later is the honest bar)
+                    Event::Arrived { .. } if first_departed.is_some_and(|d| t > d) => {
+                        first_answer_after_departure.get_or_insert(t);
+                    }
+                    Event::Closed {
+                        business, house, ..
+                    } => {
+                        closed.push(t);
+                        freed.push((t, *house));
+                        if let Some(good) = sector.get(business) {
+                            deaths.entry(*good).or_default().push(t);
+                            if let Some(born) = born_at.get(business) {
+                                founded_deaths.entry(*good).or_default().push((*born, t));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let after = world.agents.len();
+            dipped |= after < seed_population;
+            min_population = min_population.min(after);
+        }
+        // The town ANSWERS the shock. Through pack 2 the only available
+        // answer was immigration; since pack 3 founding is the other, and
+        // measurably the one that fires — so the criterion is stated over
+        // both, which is the firm-lifecycle spec's own full-cycle wording
+        // ("SOME house is `Founded`- or `Arrived`-into after the
+        // closure"), not a weakened version of the pack-4 assertion.
+        //
+        // Measured 2026-08-30, and worth stating because it reads like a
+        // regression and is not one: with founding live there are ZERO
+        // arrivals in 300 ticks, while 2–3 houses stand vacant the whole
+        // time. Premises are not the blocker — an aged clean slot is.
+        // Founding creates jobs, and the town's own unemployed take them
+        // within a tick or two, so no vacancy ever survives the
+        // VACANCY_PULL_TICKS wait. That is the pull rule working as
+        // designed: importing a stranger is for demand the residents
+        // cannot meet. The pack-4 arrival criterion was measured on code
+        // where nothing else could answer a shock.
+        assert!(!departed_ids.is_empty(), "nobody left in {LAST} ticks");
+        assert!(
+            first_answer_after_departure.is_some(),
+            "nothing answered the shock — no founding and no arrival \
+             (first departure at {first_departed:?})"
+        );
+        assert!(dipped, "population never fell below the seed count");
+        // 5. (firm-lifecycle pack 3) FOUNDING ANSWERS THE CASCADE.
+        //    Measured 2026-08-30 over this exact run, against pack 2's
+        //    same soak with founding absent:
+        //
+        //        pack 2   businesses 1, population 4, min 1
+        //        pack 3   businesses 5, population 20, min 20
+        //
+        //    closures [140, 153, 156, 179, 182, 199]; births Food [142],
+        //    Entertainment [155, 157], Luxury [180, 184]. Every seeded
+        //    death is answered within 1–5 ticks, and NO founded firm
+        //    closes inside the horizon — the anti-churn target holds with
+        //    room. The bounds below sit BELOW those measurements on
+        //    purpose: pack 2 shipped two zero-margin floors and its close
+        //    review was right to call them traps, so these carry slack
+        //    (5 → 4, 20 → 15, 5 → 3) and are stated as measured-vs-
+        //    asserted rather than as "deliberately loose".
+        assert!(
+            world.businesses().count() >= 4,
+            "the town kept only {} venues — founding is not answering",
+            world.businesses().count()
+        );
+        assert!(
+            min_population >= 15,
+            "population troughed at {min_population} — the cascade is winning"
+        );
+        let total_births: usize = births.values().map(Vec::len).sum();
+        assert!(
+            total_births >= 3,
+            "only {total_births} firms were founded in {LAST} ticks"
+        );
+
+        // 6. ANTI-CHURN: no good may run more than one found→close cycle
+        //    per 100-tick window — a FOUNDED firm dying is the failure the
+        //    scarcity gate's direction test exists to prevent, and a
+        //    SEEDED venue's death is not that. Measured at this horizon:
+        //    zero founded deaths in any sector, so the bound has real
+        //    room rather than sitting on its own value.
+        for good in Good::ALL {
+            let cycles = founded_deaths.get(&good).cloned().unwrap_or_default();
+            for window in 0..LAST {
+                let inside = cycles
+                    .iter()
+                    .filter(|(_, death)| (window..window + 100).contains(death))
+                    .count();
+                assert!(
+                    inside <= 1,
+                    "{good} churned: {inside} founded firms died in t{window}..t{} ({cycles:?})",
+                    window + 100
+                );
+            }
+        }
+
+        // 7. THE FULL-CYCLE CHAIN, as four deliberate observations: a
+        //    venue closed, its house passed the vacancy predicate, a
+        //    firm was founded into that very house at a strictly later
+        //    tick, and someone was hired into it. Hand-written — this
+        //    match ends in `_ => {}` and forces nothing.
+        let (reoccupied_at, house, freed_at) =
+            chain_reoccupied.expect("no freed house was ever founded into");
+        // The house really was emptied by a closure BEFORE the founding —
+        // the middle link a bare "some house was founded into" skips.
+        assert!(
+            freed_at < reoccupied_at,
+            "the founding at t{reoccupied_at} did not follow a freeing (t{freed_at})"
+        );
+        let hired_at = chain_hired.expect("nobody was hired into THAT founded firm");
+        assert!(
+            hired_at >= reoccupied_at,
+            "the hire (t{hired_at}) preceded the founding (t{reoccupied_at})"
+        );
+
+        // 8. (firm-lifecycle pack 2) the fuse fires in the real town,
+        //    not only on fixtures. **Pack 2's numbers, kept as the
+        //    before-picture:** closures at t140/t153/t156/t171/t172, min
+        //    population 1, final population 4, one surviving venue AT
+        //    THAT HORIZON ONLY — the cascade was TOTAL, since Greenrow
+        //    Farm closed at t201, one tick past this window, after which
+        //    the town held ZERO businesses through t300.
+        //
+        //    Pack 3's founding is what changed that, and criterion 5
+        //    above carries the raised bounds. The two zero-margin floors
+        //    pack 2 shipped here — `businesses().count() >= 1`, which
+        //    cleared by exactly one tick, and `min_population >= 1`,
+        //    which sat exactly on the measured minimum — are DELETED,
+        //    replaced by bounds with real slack. `closed >= 3` survives
+        //    below as the proof the fuse still fires at all.
+        // Report before asserting, so a red run says what it measured.
+        println!(
+            "PACK3 SOAK: closures {closed:?} | births {births:?} | deaths {deaths:?} | \
+             pop {} min {min_population} | businesses {} | chain {:?}/{:?}",
+            world.agents.len(),
+            world.businesses().count(),
+            chain_reoccupied,
+            chain_hired,
+        );
+        let _ = (&founded_ids, &house);
+        assert!(
+            closed.len() >= 3,
+            "closure never reached the demand-losing venues (closed at {closed:?})"
+        );
+
+        // no orphan balances: every leaver's account is empty on every
+        // metal — the per-account check the totals-only audit cannot
+        // make (ids are never reused, so these must still be zero)
+        for leaver in departed_ids {
+            for metal in Metal::ALL {
+                assert_eq!(
+                    world.accounts.balance_of(leaver, metal),
+                    Money::ZERO,
+                    "orphan balance parked on departed {leaver:?}"
+                );
+            }
+        }
+        world.accounts.audit();
+    }
+}

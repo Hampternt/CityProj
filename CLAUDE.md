@@ -46,27 +46,96 @@ new mechanics into the loop and money:
 - `src/metal.rs` — `Metal` (closed coinage-metal enum: gold/silver/copper)
   + hand-written `Metal::ALL` and lowercase `Display`; the orthogonal key
   for every balance and conservation total (07-12 spec).
-- `src/agent.rs`, `src/housing.rs` — `Agent` (person) and `House` data types.
+- `src/agent.rs`, `src/housing.rs` — `Agent` (person, including the
+  pack-4 `hunger` stopgap counter) and `House` data types.
 - `src/role.rs`, `src/business.rs` — `Role` (closed job-role enum) and
   `Business`/`RoleSlot` (per-role wages, account-only money); phase 3
   (`pay_wages`) reads `employed_role` and `RoleSlot.wage` and keeps the
-  per-worker `owed_to` wage-arrears ledger.
+  per-worker `owed_to` wage-arrears ledger. Since firm-lifecycle pack 1
+  every `Business` names a living `owner` (required, validated at
+  creation, strictly distinct from the still-rule-inert `House.owners`);
+  since pack 2 the always-living invariant is complete — forced
+  liquidation in `remove_agent` means a live business always names a
+  live owner, so the pack-1 dangling-owner draw skip is retired. Pack 2
+  also added `insolvent_ticks`, the consecutive-arrears fuse phase 6
+  liquidates on (single writer: `invest`'s tail write-back); pack 3
+  added `sold_out_ticks`, the scarcity-direction streak founding reads
+  (single writer: phase 4's price write-back, sharing `adjust_price`'s
+  own raise predicate through `market::sold_out`).
 - `src/goods.rs` — `Good` (closed consumable enum) + the 07-19 per-good
   constants table (consumption, weight, target days, production).
 - `src/market.rs` — `plan_purchases`: pure greedy needs-shopping (§8.6);
   sim.rs builds `Offer`s from `businesses()` and applies via `pay`;
   `adjust_price`: per-business tâtonnement (sold out → raise, didn't
-  sell → lower) with its tuning constants alongside.
+  sell → lower) with its tuning constants alongside. Since pack 3
+  (town-colony) the wage market mirrors those shapes: `JobOffer`/
+  `plan_application` (highest wage, skip arrears-owing employers, ties
+  ascending business id then `Role::ALL` order) and `adjust_wage` +
+  `stepped_wage` (raise on unfilled-and-affordable — affordability is
+  net of arrears — lower on a stale applicant queue, floor 1). Since
+  firm-lifecycle pack 3 a third band holds entry choice: `SellerSnapshot`
+  / `Prospectus` / `plan_founding` (two `Good::ALL` passes — existential
+  before scarcity — the scarcity tier conjoining a viability price level
+  and a sell-out streak) plus the per-good founding template and
+  `found_template`.
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
   to the §8.2 chokepoint; `create_business` allocates account-only business
   ids from the agent counter; `businesses()` is the shared phase query;
   `pay` recognizes business ids (refactor Am. 14) and, since pack 2, names
-  its metal (`pay(from, to, metal, amount)`).
+  its metal (`pay(from, to, metal, amount)`); pack 4 added the migration
+  commands — `remove_agent` (validate, settle-then-write-off, per-metal
+  sweep to External, owners strip, remove) and `immigrate` (vacancy-gated
+  wrapper over the untouched `spawn_agent`, bumps the `arrivals` name
+  counter); firm-lifecycle pack 1 widened `create_business` with the
+  validated `owner` param (checked first — reserved/business/ghost ids
+  refuse; the 07-13 "wrap, don't widen" precedent is distinguished in
+  that spec: an un-widened path would manufacture ownerless firms);
+  pack 2 added `close_business` (settle ascending → clear the ledger →
+  lay off → per-metal residual to the OWNER → detach LAST, returning a
+  `ClosureReceipt`; detach is last *mechanically* — `is_known_account`
+  scans the live `businesses()` set, so detaching revokes the id) and
+  the `NoBusinessHere` error, and gave `remove_agent` a step 0 that
+  liquidates the leaver's own firms before the A17 settlement, returning
+  those receipts (Amendment 19); pack 3 added `found_business` (the
+  `immigrate` wrapper precedent for firms — founder checked first, then
+  full vacancy, then `create_business`; money-free, so the stake is a
+  separate `pay` in the apply) and `is_fully_vacant`, which collects v1's
+  entire vacancy rule for its four readers.
 - `src/sim.rs` — `tick()`: the fixed 9-phase order, audit unconditionally
-  last; `goods_market` holds the worked decide→apply template; `Intent` is
-  the enum mechanics extend — `Intent::Buy` is its first variant.
+  last, returning a `TickReport` of typed `Event`s (pure observation,
+  Amendment 15); `goods_market` holds the worked decide→apply template;
+  `Intent` is the enum mechanics extend — `Buy`, since pack 3
+  `TakeJob`/`Quit` (phase 1's `labor_market`: JobOffer snapshot →
+  quits-then-applications decide → live-re-check apply → wage
+  write-back; quit fires when arrears exceed `QUIT_ARREARS_BILLS` ×
+  slot wage), and since pack 4 `Arrive`/`Depart` (the migration pair:
+  phase 1's vacancy pull and phase 7's destitution push). Phase 1's
+  only money op is the immigration grubstake (Amendment 16); phase 7's
+  are the Amendment-17 settlement and the sweep to External — both
+  ride `World::pay`, event amounts measured as balance deltas. Since
+  firm-lifecycle pack 1, phase 6 (`invest`) runs the profit draw: a
+  direct pay_wages-style pass (no intents) paying each business's gold
+  above `draw_amount`'s retained buffer — `DRAW_BUFFER_BILLS` (3,
+  frozen) full-staffing bills plus `owed_total()`, net of arrears by
+  contract — to its owner, `Event::ProfitDrawn`, under row 6's
+  "transfer only" (Amendment 18 touched only that row's purpose text).
+  Pack 2 put a closure pass ABOVE it (so a closing firm structurally
+  cannot draw) and the `insolvent_ticks` write-back BELOW it, giving one
+  tick of designed latency: the counter crosses at tick t's write-back
+  and the firm closes at t+1's phase 6, so the effective fuse is
+  `CLOSE_INSOLVENT_TICKS + 1` (12, frozen) arrears-ticks. `Event::Closed`
+  / `Event::LaidOff` and both closure paths narrate from the
+  `ClosureReceipt` via `emit_closure` — never from deltas around the
+  command, which cannot attribute flows sharing a wallet. Pack 3 put the
+  founding DECIDE at the very top of the phase (so this tick's own
+  closure is invisible to it and a refound is a t+1 event) and the Found
+  APPLY between the closures and the draws, giving the spec's full
+  ordering: decide → closures → founding → draws → counter write-back.
+  `Intent::Found` / `Event::Founded`; the founder self-hires, and
+  `capital` is read back from the new firm's balance rather than
+  assumed.
 - `src/terrain.rs` — world coordinates (`Point3`, 1 unit = 0.1 m) and the
   triangulated integer heightmap (`Terrain`, `elevation_at`); pure movement
   math (`grade`, `travel_time` + `SpeedProfile`) with its tuning constants
@@ -79,21 +148,57 @@ new mechanics into the loop and money:
   playground: in-browser generation parity-pinned to `generate` by the
   `generate_matches_viewer_canary` test, parameter knobs, and named maps
   saved to localStorage (parameters only; not wired into the sim).
-- `src/engine/game_loop.rs` — interactive shell (Enter advances a tick, an
-  agent name inspects it, `map` exports map.json, q quits) plus
-  `template_world`, the worldgen that seeds the 07-19 farm/theater/jeweler
-  scenario — in gold, plus inert silver/copper savings per agent (pack 2,
-  D1); no per-tick simulation behavior. The money summary prints one line
-  per metal and every balance renders as compact `g/s/c` (pack 2, D2/D3).
+- `src/engine/worldgen.rs` — hand-seeded scenarios (split from game_loop
+  in town-colony pack 2): `town_world`, the shipped 30-agent town (12
+  houses, 6 multi-worker businesses, 16 seeded employed + open headcount
+  for the labor market, soak-tuned frozen constants, per-metal totals
+  pinned), and `template_world`, the small `#[cfg(test)]` fixture
+  (07-19 farm/theater/jeweler). Since firm-lifecycle pack 1 each venue's
+  staff spawn before `create_business` and its first seeded worker is
+  its owner-operator (alice/ed/ivan/karl/marco/otto, pinned; per-metal
+  totals unchanged by the reorder — gold 52148 / silver 300 / copper
+  600). The three town soaks live here — the 100-tick pinned-criteria
+  soak (zero quits asserted; since pack 1 also the coffer-at-buffer
+  bound from t20 and every-venue-draws; since pack 2 criterion 7's
+  zero-closures pin, which needs a hand-written vanish-detector because
+  worldgen's `match event` arms end `_ => {}` and force nothing), the
+  50-tick employment soak (`NEAR_FULL` = 21 of 30, unchanged under all
+  three packs), and the 200-tick migration soak — which pack 3 re-cut and
+  raised: its shock-answer criterion now reads over a `Founded` OR an
+  `Arrived` (founding answers the shock, and no arrival fires once the
+  town's own unemployed take every founded vacancy), and it gained a
+  raised firm/population floor, a found→close anti-churn bound, and the
+  full closure→vacancy→founding→hire chain. Pack 3 also added a
+  zero-`Founded` tally to the 100-tick soak; like pack 2's zero-closures
+  pin it is hand-written, because worldgen's `match event` arms end
+  `_ => {}` and force nothing.
+- `src/engine/game_loop.rs` — interactive shell only (Enter advances a
+  tick, `roster` lists agents, a name or business address inspects,
+  `map` exports map.json, q quits): town header, aggregated per-tick
+  event feed, last-3-events per agent; no per-tick simulation behavior.
+  The money summary prints one line per metal and every balance renders
+  as compact `g/s/c` (pack 2, D2/D3).
 
-The 07-19 loops run: phases 2 (produce), 3 (wages from business coffers,
-shortfalls carried as `owed_to` arrears and repaid when revenue returns),
-4 (goods market via `Intent::Buy`, then per-business `adjust_price`
-write-back — new prices take effect next tick), and 5 (consume) have
-behavior; phases 1, 6, 7, and 8 are TODO stubs. The tick-time mint
-faucet is closed: worldgen's seed is the entire money supply and the
-audit pins it there. Worldgen seeds the farm/theater/jeweler scenario.
-If you change structure, update this section.
+The loops run: phases 1 (labor market — hiring, arrears quits, wage
+tâtonnement, and since pack 4 the immigration pull: a `RoleSlot`
+vacancy aged `VACANCY_PULL_TICKS`, a vacant residence, and External
+covering the `GRUBSTAKE` bring an `Intent::Arrive` — `immigrate` + the
+capped External→agent transfer, Amendment 16), 2 (produce, scaled by
+staff), 3 (wages from business coffers, shortfalls carried as `owed_to`
+arrears and repaid when revenue returns), 4 (goods market via
+`Intent::Buy`, then per-business `adjust_price` write-back — new prices
+take effect next tick), 5 (consume — also the single writer of
+`Agent.hunger`), and 7 (emigration: `Intent::Depart` when hunger ≥
+`DEPART_HUNGER_TICKS` and gold below the cheapest posted Food price —
+since pack 2 `remove_agent` first force-liquidates any firm the leaver
+owns (Amendment 19), then settles `min(coffer, owed)` per Amendment 17,
+sweeps every metal to External, and strips the leaver), and 6 (the full firm lifecycle — the founding decide, then closures,
+then the founding apply, then the profit draw, then the insolvency
+write-back) have behavior; phase 8 and phase 7's demurrage/imports are
+TODO stubs. The tick-time mint faucet is closed:
+worldgen's seed is the entire money supply and the audit pins it there.
+The shipped scenario is `town_world`. If you change structure, update
+this section.
 
 Multi-metal money is DONE
 ([`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md),
@@ -104,8 +209,33 @@ metals) 2026-08-20. Every balance and conservation total is per metal;
 gold is the only *trading* metal — every wage and price is an explicit
 `Metal::Gold` choice — and worldgen seeds inert silver/copper savings,
 until the market layer can price non-gold metals (reference currency and
-exchange rates stay open questions there). Next body of work: a
-wage-payment/hiring behavior spec built on `World::businesses()`.
+exchange rates stay open questions there). The wage-payment/hiring work
+CLAUDE.md previously named as next landed as town-colony pack 3
+([`docs/manifests/2026-08-21-tcs-pack3-labor-clears.md`](docs/manifests/2026-08-21-tcs-pack3-labor-clears.md)).
+The **firm lifecycle is DONE**
+([`docs/manifests/2026-08-22-firm-lifecycle.md`](docs/manifests/2026-08-22-firm-lifecycle.md),
+spec
+[`docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md`](docs/superpowers/specs/2026-08-22-firm-lifecycle-design.md),
+gate signed 2026-08-22): pack 1 (owners + the phase-6 profit draw)
+landed 2026-08-22, pack 2 (closure, forced liquidation, Amendment 19)
+and pack 3 (founding) 2026-08-30. The phoenix cycle runs — a venue dies,
+its house frees, a capitalized resident founds into the scarcity, the
+labor market restaffs it — and founding measurably answers the cascade
+closure alone created: over the 200-tick town, **5 live businesses and
+population 20 with founding, against 1 and 4 without**.
+
+**Standing finding, and the successor's problem, not this container's:**
+the town still declines — t300 leaves 10 residents and 3 businesses, and
+12 of the 15 firms founded in 300 ticks eventually close. Founding slows
+the collapse without arresting it, because the residual is a
+**circulation** failure rather than a firm-count one: money is conserved,
+but `target_days` purchase caps mean a wallet above the cap is a sink
+that never returns, so the town starves beside its own gold. Founding
+*does* redistribute — measured under the shipped code the largest wallet
+holds 21.8% of the supply at t200 and 27.8% at t300, against 99% on the
+pack-2 (founding-absent) trajectory — but it redistributes to owners
+rather than to demand. Phase 7's demurrage/imports and phase 8's mint are
+the standing TODO stubs that address it.
 
 The terrain playground landed on 2026-08-15 —
 [`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)
@@ -124,9 +254,10 @@ records what was verified in the browser before the merge.
   staffed Mint business* that consumes precious-metal goods to mint coins
   (seigniorage formula deferred by the 07-12 multi-metal spec), plus
   trade with outside markets through `External`.
-- **Wage market.** The `adjust_price` pattern applied to `RoleSlot.wage`
-  in phase 1 (can't fill a slot → raise, queue of applicants → lower),
-  plus employee happiness / job-switching driven by the arrears ledger.
+- **Wage market.** *(Shipped as town-colony pack 3 — the `adjust_price`
+  pattern on `RoleSlot.wage`, arrears-driven quitting, the deadbeat
+  exclusion.)* Still future: employee happiness and voluntary
+  job-switching by the employed.
 - **Building volumes.** Buildings will occupy 3D volumes (footprint +
   vertical extent, above or below ground) addressed by `Point3` — never
   tile-locked to the terrain grid, which only stores the ground surface.
@@ -158,8 +289,11 @@ These come from §8 of the design doc. Breaking one is a bug even if tests pass.
 - **Sinks** prevent inflation: degradation (`burn`) and imports (money → `External`
   account, still tracked, out-of-node). `External` is the seam for future
   node-to-node trade.
-- **Agents:** Household, Firm, Mint, External, plus a stubbed node modifier layer
-  (government/policy — undesigned, fill in as needed).
+- **Agents:** Household, Firm, Mint, External, plus a *planned* node modifier
+  layer (government/policy — undesigned; nothing in code yet, so there is no
+  stub to find. The parent design doc's §7 layout files it under a `node.rs`
+  that has never been created, and its "modifier-layer hook exists" line reads
+  as intent, not shipped state).
 - **Two markets**, both adjustment-based and swappable: goods prices and competing
   wages.
 - **Discrete ticks**, fixed order: labor clears → produce → wages → goods clear →
@@ -187,6 +321,15 @@ keep their approval gate; a spec is what a manifest is written *from*.
 format — read it for context, never add to it. The general retrofit procedure
 and the manifest templates live in
 `~/projects/planvisualiser/docs/CONVERTING-A-PROJECT.md`.
+
+Both of those references — the user-global `CLAUDE.md` and the planvisualiser
+doc — live on the owner's machine and are **not reachable from cloud/remote
+sessions**, which see only this repo. Working without them, take the shipped
+manifests as the templates: [`docs/manifests/2026-08-22-firm-lifecycle.md`](docs/manifests/2026-08-22-firm-lifecycle.md)
+for a container (Goal / Decisions / Packs / Open questions / Ledger) and
+[`docs/manifests/2026-08-22-fl-pack1-owners-draw.md`](docs/manifests/2026-08-22-fl-pack1-owners-draw.md)
+for a pack (Status / State on arrival / Decisions / numbered items with `[ ]`
+boxes / append-only Ledger quoting real gate output).
 
 **Contracts are the hard reference.** Write a spec-level I/O contract
 (signature + Given/Then + Error + invariant ref) for a unit only when it is

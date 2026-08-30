@@ -1,19 +1,18 @@
 //! The interactive shell: clear, render, read a command, tick. All
 //! simulation behavior lives in `sim::tick` — this file only draws frames
-//! and reads input. Loop mechanics are unchanged: Enter advances, q quits;
-//! typing an agent's name inspects it.
+//! and reads input. Enter advances, q quits; `roster` lists every agent;
+//! typing an agent's name (or a business's house address) inspects it.
 
 use std::collections::HashMap;
 use std::io::{self, Write};
 
+use super::worldgen::town_world;
 use crate::agent::{Agent, AgentId};
-use crate::business::RoleSlot;
 use crate::goods::Good;
 use crate::housing::HouseId;
 use crate::metal::Metal;
 use crate::money::Money;
-use crate::role::Role;
-use crate::sim;
+use crate::sim::{self, Event, TickReport};
 use crate::terrain::Terrain;
 use crate::world::World;
 
@@ -33,95 +32,82 @@ enum Command {
     Quit,
     /// `map` (any case): export the terrain to map.json.
     Map,
-    /// Anything else is taken as an agent name to inspect.
+    /// `roster` (any case): list every agent on one line each.
+    Roster,
+    /// Anything else is taken as an agent name (or business address) to
+    /// inspect.
     Inspect(String),
 }
 
 /// Runs the shell until quit: draw a frame, read a command, act on it.
-/// Starts from the hand-seeded [`template_world`].
+/// Starts from the hand-seeded [`town_world`]
+/// (`worldgen::template_world` stays the small test fixture).
 pub fn run() {
-    let mut world = template_world();
+    let mut world = town_world();
     let terrain = Terrain::generate(MAP_SEED, MAP_VERTICES, MAP_VERTICES, MAP_CELL_SIZE);
     let mut tick_count: u64 = 0;
+    let mut last_report = TickReport::default();
+    // Shell-side memory of the feed: the last 3 lines each agent starred
+    // in (manifest decision — presentation state, never world state).
+    let mut history: HashMap<AgentId, Vec<String>> = HashMap::new();
 
     loop {
         // Redraw the frame in place so the display doesn't scroll downward.
         clear_screen();
-        render(&world, tick_count);
+        render(&world, tick_count, &last_report);
 
         match read_command(tick_count) {
             Command::Quit => break,
             Command::Advance => {
-                sim::tick(&mut world);
+                let report = sim::tick(&mut world);
+                update_history(&mut history, &world, &report);
+                last_report = report;
                 tick_count += 1;
             }
-            Command::Inspect(name) => inspect(&world, &name),
+            Command::Roster => roster(&world),
+            Command::Inspect(name) => inspect(&world, &history, &name),
             Command::Map => export_map(&terrain),
         }
     }
 }
 
-/// The 07-19 minimal-needs scenario: farm, theater, and jeweler (one
-/// Labourer slot each at wage 35), three employed agents, one unemployed,
-/// all housed at the residence. Worldgen seeds every business with one
-/// wage bill — tick 1 must be pre-funded because there is no per-tick mint
-/// faucet; the seed is the entire money supply and tick 1's wages are paid
-/// before any business revenue exists — and every agent with a small wallet
-/// plus one day's goods. All seeding goes through `mint`, so the audit
-/// counts it (§8.4). The economy trades in gold only; each agent also
-/// holds small silver and copper savings (pack 2, D1) that stay inert
-/// until the market layer can price non-gold metals — they exist so every
-/// metal's ledger and conservation total is live in production.
-fn template_world() -> World {
-    let mut world = World::new();
-    let residence = world.add_house("1 Mill Lane", vec![]);
-
-    let farm = world.add_house("Greenrow Farm", vec![]);
-    let theater = world.add_house("Gilt Curtain Theater", vec![]);
-    let jeweler = world.add_house("Karat & Co", vec![]);
-    let scenario = [
-        (farm, Good::Food, Money::new(1), "alice"),
-        (theater, Good::Entertainment, Money::new(2), "bob"),
-        (jeweler, Good::Luxury, Money::new(5), "carol"),
-    ];
-    for (house, product, price, worker_name) in scenario {
-        let mut roles = HashMap::new();
-        roles.insert(
-            Role::Labourer,
-            RoleSlot {
-                wage: Money::new(35),
-                headcount: 1,
-            },
-        );
-        let business = world
-            .create_business(house, product, price, roles)
-            .expect("fresh house");
-        let bill = world
-            .house(house)
-            .expect("just added")
-            .business
-            .as_ref()
-            .expect("just created")
-            .wage_bill();
-        world.accounts.mint(business, Metal::Gold, bill);
-        let worker = world.spawn_agent(worker_name, Some(residence), Some(house));
-        world.agent_mut(worker).expect("just spawned").employed_role = Some(Role::Labourer);
-    }
-    world.spawn_agent("dave", Some(residence), None); // unemployed, housed
-
-    let everyone: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
-    for id in everyone {
-        world.accounts.mint(id, Metal::Gold, Money::new(35));
-        // Inert savings (D1): nothing spends non-gold until markets can
-        // price it, so these only exercise the per-metal books.
-        world.accounts.mint(id, Metal::Silver, Money::new(10));
-        world.accounts.mint(id, Metal::Copper, Money::new(20));
-        let agent = world.agent_mut(id).expect("listed above");
-        for good in Good::ALL {
-            agent.inventory.insert(good, good.consumption_rate());
+/// Folds one tick's events into each starring agent's last-3 buffer.
+/// Business-only events (production, price moves) star nobody.
+fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, report: &TickReport) {
+    let dead = dead_this_tick(world, report);
+    for event in &report.events {
+        let starring = match event {
+            Event::Hired { agent, .. } | Event::Quit { agent, .. } => Some(*agent),
+            Event::Arrived { agent, .. } => Some(*agent),
+            Event::WagePaid { worker, .. } | Event::PayrollShort { worker, .. } => Some(*worker),
+            Event::Sold { buyer, .. } => Some(*buyer),
+            Event::WentHungry { agent } => Some(*agent),
+            // losing your employer is your story, not the firm's
+            Event::LaidOff { agent, .. } => Some(*agent),
+            // profit is the owner's story — so is the end of the firm
+            Event::ProfitDrawn { owner, .. } | Event::Closed { owner, .. } => Some(*owner),
+            // ...and the start of one is the founder's
+            Event::Founded { founder, .. } => Some(*founder),
+            // the leaver's id resolves to nothing once they are gone
+            Event::Produced { .. }
+            | Event::PriceMoved { .. }
+            | Event::WageMoved { .. }
+            | Event::Settled { .. }
+            | Event::Departed { .. } => None,
+        };
+        if let Some(id) = starring {
+            let lines = history.entry(id).or_default();
+            if lines.len() == 3 {
+                lines.remove(0);
+            }
+            lines.push(render_event(world, &dead, event));
+        }
+        // a leaver's buffer is unreachable once they're gone — drop it
+        // so churny long runs don't leak dead entries
+        if let Event::Departed { agent, .. } = event {
+            history.remove(agent);
         }
     }
-    world
 }
 
 /// Clears the terminal and parks the cursor at the top-left, so each frame
@@ -132,9 +118,20 @@ fn clear_screen() {
     let _ = io::stdout().flush();
 }
 
-/// Draws one stable frame: the money summary, then houses, then agents.
-fn render(world: &World, tick_count: u64) {
-    println!("=== CityProj — tick {tick_count} ===");
+/// Draws one stable frame: town header, money summary, the last tick's
+/// event feed, then the houses/agents ledger.
+fn render(world: &World, tick_count: u64, report: &TickReport) {
+    let population = world.agents.len();
+    let employed = world
+        .agents
+        .iter()
+        .filter(|agent| agent.workplace.is_some())
+        .count();
+    let businesses = world.businesses().count();
+    println!(
+        "=== CityProj — tick {tick_count} · pop {population} · employed {employed} · unemployed {} · businesses {businesses} ===",
+        population - employed
+    );
     // D2 (pack 2): one line per metal, `Metal::ALL` order. A cross-metal
     // total does not exist — the core refuses to compute one.
     println!("money:");
@@ -153,6 +150,19 @@ fn render(world: &World, tick_count: u64) {
         compact_balances(world, world.external_id),
     );
 
+    println!("last tick:");
+    if report.events.is_empty() {
+        if tick_count == 0 {
+            println!("  (nothing yet — Enter advances the first tick)");
+        } else {
+            println!("  (a quiet tick)");
+        }
+    } else {
+        for line in render_feed(world, report) {
+            println!("  {line}");
+        }
+    }
+
     println!("houses:");
     for house in &world.houses {
         let owners = names_of(world, &house.owners);
@@ -164,10 +174,23 @@ fn render(world: &World, tick_count: u64) {
             or_none(&occupants),
         );
         if let Some(business) = &house.business {
+            // Distress only shows once the fuse is actually lit — the
+            // frame is at its width budget at town scale, so a zero
+            // counter (the normal case) costs nothing.
+            let distress = if business.insolvent_ticks > 0 {
+                format!(
+                    " · insolvent {}/{}",
+                    business.insolvent_ticks,
+                    crate::sim::CLOSE_INSOLVENT_TICKS
+                )
+            } else {
+                String::new()
+            };
             println!(
-                "    sells {} @{} · stock {} · balance {} · owed {}",
+                "    sells {} @{} · owner {} · stock {} · balance {} · owed {}{distress}",
                 business.product,
                 business.price,
+                agent_name(world, business.owner),
                 business.stock,
                 compact_balances(world, business.id),
                 business.owed_total(),
@@ -175,16 +198,354 @@ fn render(world: &World, tick_count: u64) {
         }
     }
 
-    println!("agents:");
-    for agent in &world.agents {
-        println!(
-            "  {} — balance {} · home {} · {}",
-            agent.name,
-            compact_balances(world, agent.id),
-            describe_house(world, agent.home),
-            describe_inventory(agent),
-        );
+    // At town scale the per-agent ledger outgrew the frame — `roster`
+    // carries the full list, a name inspects one (pack 2 readability).
+    println!("agents: {population} — `roster` lists them · a name inspects");
+}
+
+/// The feed at town scale (pack 2): the routine aggregates to one line
+/// per business — wages and sales — while the exceptional (shortfalls,
+/// price moves, hunger) stays individual. Category order follows phase
+/// order; within a category, first-seen order (which IS phase iteration
+/// order). Presentation only: events stay granular for tests and the
+/// inspect buffer.
+fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
+    let dead = dead_this_tick(world, report);
+    // (business, workers paid, total gold)
+    let mut wages: Vec<(AgentId, u32, Money)> = Vec::new();
+    // (business, good, snapshot price, units, buyers)
+    let mut sales: Vec<(AgentId, Good, Money, u32, u32)> = Vec::new();
+    // Labor events stay individual — each is notable — and arrive
+    // already in phase-internal order (quits, hires, wage moves).
+    let mut labor = Vec::new();
+    let mut produced = Vec::new();
+    let mut shorts = Vec::new();
+    let mut moves = Vec::new();
+    let mut hungry = Vec::new();
+    // Phase-6 closures land before the draws (phase-6 internal order),
+    // and stay individual lines — a death is never routine enough to
+    // aggregate. A phase-7 forced liquidation therefore still reads
+    // before its own `Departed` line down in `leavers`.
+    let mut closures = Vec::new();
+    // Then this tick's founding, if any — phase 6's internal order is
+    // closures, then the birth, then the draws.
+    let mut foundings = Vec::new();
+    // Phase-6 draws land between hunger and the leavers, per phase order.
+    let mut draws = Vec::new();
+    // Phase-7 departures close the feed, in event order (settlements
+    // immediately before their leaver).
+    let mut leavers = Vec::new();
+    for event in &report.events {
+        match event {
+            Event::Hired { .. }
+            | Event::Quit { .. }
+            | Event::WageMoved { .. }
+            | Event::Arrived { .. } => labor.push(render_event(world, &dead, event)),
+            // A settlement paid BY a firm that closed this tick belongs
+            // with its closure, not down among the leavers — otherwise
+            // the feed reads "X closed" and only later "X paid its
+            // creditors", with unrelated profit draws in between.
+            Event::Settled { business, .. } if dead.businesses.contains_key(business) => {
+                closures.push(render_event(world, &dead, event))
+            }
+            Event::Settled { .. } | Event::Departed { .. } => {
+                leavers.push(render_event(world, &dead, event))
+            }
+            Event::Closed { .. } | Event::LaidOff { .. } => {
+                closures.push(render_event(world, &dead, event))
+            }
+            Event::Founded { .. } => foundings.push(render_event(world, &dead, event)),
+            Event::Produced { .. } => produced.push(render_event(world, &dead, event)),
+            Event::WagePaid {
+                business, amount, ..
+            } => {
+                if let Some(entry) = wages.iter_mut().find(|(id, ..)| *id == *business) {
+                    entry.1 += 1;
+                    entry.2 = entry.2.plus(*amount);
+                } else {
+                    wages.push((*business, 1, *amount));
+                }
+            }
+            Event::PayrollShort { .. } => shorts.push(render_event(world, &dead, event)),
+            Event::Sold {
+                business,
+                good,
+                units,
+                price,
+                ..
+            } => {
+                if let Some(entry) = sales
+                    .iter_mut()
+                    .find(|(id, g, ..)| *id == *business && *g == *good)
+                {
+                    entry.3 += *units;
+                    entry.4 += 1;
+                } else {
+                    sales.push((*business, *good, *price, *units, 1));
+                }
+            }
+            Event::PriceMoved { .. } => moves.push(render_event(world, &dead, event)),
+            Event::WentHungry { .. } => hungry.push(render_event(world, &dead, event)),
+            Event::ProfitDrawn { .. } => draws.push(render_event(world, &dead, event)),
+        }
     }
+    let mut lines = labor;
+    lines.extend(produced);
+    for (business, workers, total) in wages {
+        lines.push(format!(
+            "{} paid {workers} worker{} {total}g",
+            business_label(world, &dead, business),
+            if workers == 1 { "" } else { "s" },
+        ));
+    }
+    lines.extend(shorts);
+    for (business, good, price, units, buyers) in sales {
+        lines.push(format!(
+            "{} sold {units} {good} to {buyers} buyer{} @ {price}g",
+            business_label(world, &dead, business),
+            if buyers == 1 { "" } else { "s" },
+        ));
+    }
+    lines.extend(moves);
+    lines.extend(hungry);
+    lines.extend(closures);
+    lines.extend(foundings);
+    lines.extend(draws);
+    lines.extend(leavers);
+    lines
+}
+
+/// One feed line for one event. The match is exhaustive on purpose — a
+/// new `Event` variant fails compilation here instead of silently missing
+/// from the feed. All feed amounts are gold this milestone, rendered `35g`.
+fn render_event(world: &World, dead: &DeadThisTick, event: &Event) -> String {
+    match event {
+        Event::Quit {
+            agent,
+            business,
+            owed,
+        } => format!(
+            "{} quit {} (still owed {owed}g)",
+            agent_name(world, *agent),
+            business_label(world, dead, *business),
+        ),
+        Event::Hired {
+            agent,
+            business,
+            role,
+            wage,
+        } => format!(
+            "{} hired at {} as {role} @ {wage}g",
+            agent_name(world, *agent),
+            business_label(world, dead, *business),
+        ),
+        Event::WageMoved {
+            business,
+            role,
+            from,
+            to,
+        } => {
+            let verb = if to > from { "raised" } else { "lowered" };
+            format!(
+                "{} {verb} {role} wages to {to}g",
+                business_label(world, dead, *business)
+            )
+        }
+        Event::Produced {
+            business,
+            good,
+            units,
+        } => format!(
+            "{} produced {units} {good}",
+            business_label(world, dead, *business)
+        ),
+        Event::WagePaid {
+            business,
+            worker,
+            amount,
+        } => format!(
+            "{} paid {} {amount}g",
+            business_label(world, dead, *business),
+            agent_name(world, *worker),
+        ),
+        Event::PayrollShort {
+            business,
+            worker,
+            remaining,
+        } => format!(
+            "{} still owes {} {remaining}g in wages",
+            business_label(world, dead, *business),
+            agent_name(world, *worker),
+        ),
+        Event::Sold {
+            business,
+            buyer,
+            good,
+            units,
+            price,
+        } => format!(
+            "{} bought {units} {good} @ {price}g from {}",
+            agent_name(world, *buyer),
+            business_label(world, dead, *business),
+        ),
+        Event::PriceMoved {
+            business,
+            good,
+            from,
+            to,
+        } => {
+            let verb = if to > from { "raised" } else { "lowered" };
+            format!(
+                "{} {verb} {good} to {to}g",
+                business_label(world, dead, *business)
+            )
+        }
+        Event::WentHungry { agent } => {
+            format!("{} went hungry", agent_name(world, *agent))
+        }
+        Event::ProfitDrawn {
+            business,
+            owner,
+            amount,
+        } => format!(
+            "{} paid {} {amount}g profit",
+            business_label(world, dead, *business),
+            agent_name(world, *owner),
+        ),
+        Event::Arrived { name, home, .. } => format!(
+            "{name} arrived seeking work, settling at {}",
+            world
+                .house(*home)
+                .map(|house| house.address.clone())
+                .unwrap_or_else(|| "(unknown house)".to_string()),
+        ),
+        Event::Settled {
+            business,
+            agent,
+            amount,
+        } => format!(
+            "{} settled {amount}g of back wages with {}",
+            business_label(world, dead, *business),
+            agent_label(world, dead, *agent),
+        ),
+        Event::Founded {
+            founder,
+            house,
+            good,
+            price,
+            capital,
+            ..
+        } => format!(
+            "{} founded a venue at {} selling {good} @{price}g (staked {capital}g)",
+            agent_name(world, *founder),
+            world
+                .house(*house)
+                .map(|house| house.address.clone())
+                .unwrap_or_else(|| "(unknown house)".to_string()),
+        ),
+        Event::LaidOff { agent, business } => format!(
+            "{} was laid off by {}",
+            agent_label(world, dead, *agent),
+            business_label(world, dead, *business),
+        ),
+        Event::Closed {
+            house,
+            owner_name,
+            proceeds,
+            ..
+        } => {
+            let address = world
+                .house(*house)
+                .map(|house| house.address.clone())
+                .unwrap_or_else(|| "(unknown house)".to_string());
+            let taken: Vec<String> = proceeds
+                .iter()
+                .filter(|(_, amount)| *amount > crate::money::Money::ZERO)
+                .map(|(metal, amount)| format!("{amount}{}", metal_tag(*metal)))
+                .collect();
+            if taken.is_empty() {
+                format!("{address} closed — nothing left for {owner_name}")
+            } else {
+                format!(
+                    "{address} closed — {owner_name} pockets {}",
+                    taken.join(" ")
+                )
+            }
+        }
+        Event::Departed { name, took, .. } => {
+            let holdings: Vec<String> = took
+                .iter()
+                .filter(|(_, amount)| *amount > crate::money::Money::ZERO)
+                .map(|(metal, amount)| format!("{amount}{}", metal_tag(*metal)))
+                .collect();
+            if holdings.is_empty() {
+                format!("{name} left town penniless")
+            } else {
+                format!("{name} left town (took {})", holdings.join(" "))
+            }
+        }
+    }
+}
+
+/// Everything this report watched DIE, by id: businesses that closed
+/// (mapped to the address they traded from) and agents that emigrated
+/// (mapped to their name). Both drop out of the live world the instant
+/// their command runs, so lines emitted in the same tick — a closure's
+/// `Settled`s and `LaidOff`s, a leaver's settlement — would otherwise
+/// render as `(unknown ...)`. Built once per report, so intra-tick event
+/// order never affects resolution.
+#[derive(Default)]
+struct DeadThisTick {
+    businesses: HashMap<AgentId, String>,
+    agents: HashMap<AgentId, String>,
+}
+
+fn dead_this_tick(world: &World, report: &TickReport) -> DeadThisTick {
+    let mut dead = DeadThisTick::default();
+    for event in &report.events {
+        match event {
+            Event::Closed {
+                business, house, ..
+            } => {
+                if let Some(house) = world.house(*house) {
+                    dead.businesses.insert(*business, house.address.clone());
+                }
+            }
+            Event::Departed { agent, name, .. } => {
+                dead.agents.insert(*agent, name.clone());
+            }
+            _ => {}
+        }
+    }
+    dead
+}
+
+/// A business id as a label: its live address, else the address it traded
+/// from before closing this tick, else the honest fallback.
+fn business_label(world: &World, dead: &DeadThisTick, id: AgentId) -> String {
+    world
+        .businesses()
+        .find(|(_, business)| business.id == id)
+        .map(|(house, _)| house.address.clone())
+        .or_else(|| dead.businesses.get(&id).cloned())
+        .unwrap_or_else(|| "(unknown business)".to_string())
+}
+
+/// An agent id as a label: their live name, else the name they left town
+/// under this tick, else the honest fallback.
+fn agent_label(world: &World, dead: &DeadThisTick, id: AgentId) -> String {
+    world
+        .agent(id)
+        .map(|agent| agent.name.clone())
+        .or_else(|| dead.agents.get(&id).cloned())
+        .unwrap_or_else(|| "(unknown agent)".to_string())
+}
+
+fn agent_name(world: &World, id: AgentId) -> String {
+    world
+        .agent(id)
+        .map(|agent| agent.name.clone())
+        .unwrap_or_else(|| "(unknown agent)".to_string())
 }
 
 /// One-letter tag for the compact balance form (D3). A match, so a new
@@ -251,7 +612,7 @@ fn describe_inventory(agent: &Agent) -> String {
 /// errors quit cleanly, same as before.
 fn read_command(tick_count: u64) -> Command {
     print!(
-        "[tick {tick_count}] Enter = advance · <agent name> = inspect · map = export map.json · q = quit > "
+        "[tick {tick_count}] Enter = advance · roster · <name> = inspect · map = export map.json · q = quit > "
     );
     // stdout is line-buffered; flush so the prompt shows before we block.
     let _ = io::stdout().flush();
@@ -262,9 +623,10 @@ fn read_command(tick_count: u64) -> Command {
         Ok(_) => match line.trim() {
             "" => Command::Advance,
             quit if quit.eq_ignore_ascii_case("q") => Command::Quit,
-            // Shadows any agent literally named "map" — acceptable for a
-            // debug command.
+            // Keywords shadow any agent literally so named — acceptable
+            // for shell commands.
             map if map.eq_ignore_ascii_case("map") => Command::Map,
+            roster if roster.eq_ignore_ascii_case("roster") => Command::Roster,
             name => Command::Inspect(name.to_string()),
         },
     }
@@ -278,47 +640,133 @@ fn export_map(terrain: &Terrain) {
         Ok(()) => println!("wrote map.json — open tools/map_viewer.html and load it"),
         Err(error) => println!("could not write map.json: {error}"),
     }
+    wait_for_enter();
+}
+
+/// Parks the output until Enter so the next clear-screen doesn't wipe it
+/// before it can be read.
+fn wait_for_enter() {
     print!("press Enter to continue... ");
     let _ = io::stdout().flush();
     let mut line = String::new();
     let _ = io::stdin().read_line(&mut line);
 }
 
-/// Prints one agent's details, then waits for Enter so the next clear-screen
-/// doesn't wipe them before they're read.
-fn inspect(world: &World, name: &str) {
-    match world.agent_by_name(name) {
-        Some(agent) => {
-            println!("{}:", agent.name);
-            println!("  balance   {}", compact_balances(world, agent.id));
-            println!("  home      {}", describe_house(world, agent.home));
-            println!("  workplace {}", describe_house(world, agent.workplace));
-            println!("  goods     {}", describe_inventory(agent));
+/// One line per agent: job, employer, balances, pantry — and, for
+/// owners, the venues they own (firm-lifecycle pack 1). Balances render
+/// in D3's compact `g/s/c` form, the same as the inspect views.
+fn roster(world: &World) {
+    println!("roster:");
+    for agent in &world.agents {
+        let job = match (agent.employed_role, agent.workplace) {
+            (Some(role), workplace @ Some(_)) => {
+                format!("{role} at {}", describe_house(world, workplace))
+            }
+            (None, workplace @ Some(_)) => {
+                format!("at {} (no role)", describe_house(world, workplace))
+            }
+            _ => "unemployed".to_string(),
+        };
+        let owned: Vec<String> = world
+            .businesses()
+            .filter(|(_, business)| business.owner == agent.id)
+            .map(|(house, _)| house.address.clone())
+            .collect();
+        let ownership = if owned.is_empty() {
+            String::new()
+        } else {
+            format!(" · owns {}", owned.join(", "))
+        };
+        println!(
+            "  {} — {job}{ownership} · {} · {}",
+            agent.name,
+            compact_balances(world, agent.id),
+            describe_inventory(agent),
+        );
+    }
+    wait_for_enter();
+}
+
+/// Prints one agent's details (with their last 3 feed lines) or, when the
+/// name matches no agent, a business by its house address — falling back
+/// to the house itself, which is how a CLOSED venue's address still
+/// resolves (pack 2). Then waits for Enter so the next clear-screen
+/// doesn't wipe it before it's read.
+fn inspect(world: &World, history: &HashMap<AgentId, Vec<String>>, name: &str) {
+    if let Some(agent) = world.agent_by_name(name) {
+        println!("{}:", agent.name);
+        println!("  balance   {}", compact_balances(world, agent.id));
+        println!("  home      {}", describe_house(world, agent.home));
+        println!("  workplace {}", describe_house(world, agent.workplace));
+        println!("  goods     {}", describe_inventory(agent));
+        if agent.hunger > 0 {
+            println!("  hungry    {} tick(s) without enough food", agent.hunger);
         }
-        None => println!("no agent named '{name}'"),
+        println!("  recent:");
+        match history.get(&agent.id) {
+            Some(lines) if !lines.is_empty() => {
+                for line in lines {
+                    println!("    {line}");
+                }
+            }
+            _ => println!("    (nothing yet)"),
+        }
+    } else if let Some((house_id, business_id)) = world
+        .businesses()
+        .find(|(house, _)| house.address.eq_ignore_ascii_case(name))
+        .map(|(house, business)| (house.id, business.id))
+    {
+        let house = world.house(house_id).expect("found above");
+        let business = house.business.as_ref().expect("found above");
+        println!("{} (business):", house.address);
+        println!("  sells   {} @{}g", business.product, business.price);
+        println!("  owner   {}", agent_name(world, business.owner));
+        println!("  stock   {}", business.stock);
+        println!("  coffers {}", compact_balances(world, business_id));
+        if business.owed_to.is_empty() {
+            println!("  owes    (nothing)");
+        } else {
+            // owed_to is a HashMap — sort the lines for a stable display.
+            let mut debts: Vec<String> = business
+                .owed_to
+                .iter()
+                .map(|(worker, amount)| format!("{} {amount}g", agent_name(world, *worker)))
+                .collect();
+            debts.sort();
+            println!("  owes    {}", debts.join(" · "));
+        }
+        if business.insolvent_ticks > 0 {
+            println!(
+                "  distress {} tick(s) insolvent (closes at {})",
+                business.insolvent_ticks,
+                crate::sim::CLOSE_INSOLVENT_TICKS
+            );
+        }
+        let workers = names_of(world, &world.employees_of(house_id));
+        println!("  workers {}", or_none(&workers));
+    } else if let Some(house) = world
+        .houses
+        .iter()
+        .find(|house| house.address.eq_ignore_ascii_case(name))
+    {
+        // A house with no business — a spare cottage, or the address a
+        // closed venue traded from. Without this branch a freed address
+        // stops resolving the moment its firm dies.
+        let occupants = names_of(world, &world.occupants_of(house.id));
+        let owners = names_of(world, &house.owners);
+        println!("{} (house):", house.address);
+        println!("  owners    {}", or_none(&owners));
+        println!("  occupants {}", or_none(&occupants));
+        println!(
+            "  status    {}",
+            if occupants.is_empty() {
+                "vacant residence — open to a newcomer"
+            } else {
+                "occupied residence"
+            }
+        );
+    } else {
+        println!("no agent, business or house named '{name}'");
     }
-    print!("press Enter to continue... ");
-    let _ = io::stdout().flush();
-    let mut line = String::new();
-    let _ = io::stdin().read_line(&mut line);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// D1 (pack 2 manifest): gold funds the whole economy — 3 wage bills of
-    /// 35 plus 4 wallets of 35 — and every agent holds inert silver 10 /
-    /// copper 20 savings, so all three ledgers are live from tick 0.
-    #[test]
-    fn template_world_seeds_the_decided_metals() {
-        let world = template_world();
-        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(245));
-        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(245));
-        assert_eq!(world.accounts.total_money(Metal::Silver), Money::new(40));
-        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(40));
-        assert_eq!(world.accounts.total_money(Metal::Copper), Money::new(80));
-        assert_eq!(world.accounts.total_minted(Metal::Copper), Money::new(80));
-        world.accounts.audit();
-    }
+    wait_for_enter();
 }
