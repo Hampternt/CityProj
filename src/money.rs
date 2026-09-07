@@ -112,8 +112,22 @@ impl Accounts {
             .fold(Money::ZERO, |sum, (_, &b)| sum.plus(b))
     }
 
-    /// Lifetime total of one metal ever created via [`Accounts::mint`]
-    /// (§8.4 log). Never decreases.
+    /// **Gross** lifetime credits of one metal through the §8.4 logged
+    /// creation path. Never decreases.
+    ///
+    /// REINTERPRETED by the conserved recycle (2026-09-07). This used to be
+    /// readable as "the money supply", because nothing minted after
+    /// worldgen. Phase 8 now re-issues every tick the levy takes anything,
+    /// so this figure climbs forever while the supply does not move: the
+    /// number that means *money in this economy* is
+    /// `total_minted − total_burned`, and the shell prints it as `net`.
+    ///
+    /// **EXPIRY, written down so it is not inherited by accident:** this
+    /// reinterpretation holds only while every mint is matched by a burn in
+    /// the same tick. The moment a caller needs a backing ratio against a
+    /// real gold reserve — the §2.1 Mint — gross-mint-for-reserve must be
+    /// told apart from recycle-mint, and this counter splits into a pair.
+    /// That is the successor's edit, not a reason to build the pair now.
     pub fn total_minted(&self, metal: Metal) -> Money {
         self.total_minted
             .get(&metal)
@@ -121,8 +135,11 @@ impl Accounts {
             .unwrap_or(Money::ZERO)
     }
 
-    /// Lifetime total of one metal ever destroyed via [`Accounts::burn`]
-    /// (§8.4 log). Never decreases.
+    /// **Gross** lifetime debits of one metal through the §8.4 logged
+    /// destruction path. Never decreases. Reinterpreted alongside
+    /// [`total_minted`](Accounts::total_minted), and carrying the same
+    /// expiry: since the conserved recycle this is throughput, not a stock,
+    /// and the stock is the difference of the two.
     pub fn total_burned(&self, metal: Metal) -> Money {
         self.total_burned
             .get(&metal)

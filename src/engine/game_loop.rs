@@ -89,10 +89,14 @@ fn update_history(history: &mut HashMap<AgentId, Vec<String>>, world: &World, re
             // ...and the start of one is the founder's
             Event::Founded { founder, .. } => Some(*founder),
             // the leaver's id resolves to nothing once they are gone
+            // the recycle stars nobody: it touches every wallet equally,
+            // so putting it in anyone's last-3 buffer would evict their
+            // actual story every single tick
             Event::Produced { .. }
             | Event::PriceMoved { .. }
             | Event::WageMoved { .. }
             | Event::Settled { .. }
+            | Event::Recycled { .. }
             | Event::Departed { .. } => None,
         };
         if let Some(id) = starring {
@@ -136,10 +140,19 @@ fn render(world: &World, tick_count: u64, report: &TickReport) {
     // total does not exist — the core refuses to compute one.
     println!("money:");
     for metal in Metal::ALL {
+        // `net` is the number that means "money in this economy". Since the
+        // conserved recycle woke phase 8, `minted` and `burned` are GROSS
+        // LIFETIME logs — every tick's levy adds the same amount to both —
+        // so either alone is a throughput figure, not a stock. Their
+        // difference is the stock, and it never moves after genesis.
         println!(
-            "  {:<6} total={} minted={} burned={}",
+            "  {:<6} total={} net={} minted={} burned={}",
             metal.to_string(),
             world.accounts.total_money(metal),
+            world
+                .accounts
+                .total_minted(metal)
+                .minus(world.accounts.total_burned(metal)),
             world.accounts.total_minted(metal),
             world.accounts.total_burned(metal),
         );
@@ -235,6 +248,9 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     // Phase-7 departures close the feed, in event order (settlements
     // immediately before their leaver).
     let mut leavers = Vec::new();
+    // Phases 7+8: one aggregate line, last — the recycle is the tick's
+    // closing bookkeeping, not anyone's story.
+    let mut recycle = Vec::new();
     for event in &report.events {
         match event {
             Event::Hired { .. }
@@ -287,6 +303,8 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
             Event::PriceMoved { .. } => moves.push(render_event(world, &dead, event)),
             Event::WentHungry { .. } => hungry.push(render_event(world, &dead, event)),
             Event::ProfitDrawn { .. } => draws.push(render_event(world, &dead, event)),
+            // phases 7+8, so it closes the feed after the leavers
+            Event::Recycled { .. } => recycle.push(render_event(world, &dead, event)),
         }
     }
     let mut lines = labor;
@@ -312,6 +330,7 @@ fn render_feed(world: &World, report: &TickReport) -> Vec<String> {
     lines.extend(foundings);
     lines.extend(draws);
     lines.extend(leavers);
+    lines.extend(recycle);
     lines
 }
 
@@ -483,6 +502,9 @@ fn render_event(world: &World, dead: &DeadThisTick, event: &Event) -> String {
             } else {
                 format!("{name} left town (took {})", holdings.join(" "))
             }
+        }
+        Event::Recycled { pot, heads, share } => {
+            format!("the common purse gathered {pot}g and paid {share}g to each of {heads}")
         }
     }
 }

@@ -87,8 +87,8 @@ amending this table.
 | 4 | `goods_market` | agents buy goods, prices adjust      | `transfer` only              | needs-driven purchasing, pricing  |
 | 5 | `consume`      | goods consumed toward needs          | none                         | needs fulfillment                 |
 | 6 | `invest`       | take profit / found & liquidate firms (capacity expansion still TODO) | `transfer` only              | firm investment                   |
-| 7 | `sinks`        | degradation, imports                 | `burn`, `transfer`→External; `transfer` business→departing agent, arrears settlement only, immediately preceding that agent's sweep to External; forced-liquidation transfers when the departing agent owns a business — business→creditor arrears settlements and business→departing-owner per-metal residual — immediately preceding that owner's Amendment-17 settlement and sweep | demurrage, external purchases     |
-| 8 | `mint_phase`   | new money from reserve               | `mint` only                  | mint job, gold backing cap        |
+| 7 | `sinks`        | degradation, the recycle levy, imports | `burn`, `transfer`→External; `transfer` business→departing agent, arrears settlement only, immediately preceding that agent's sweep to External; forced-liquidation transfers when the departing agent owns a business — business→creditor arrears settlements and business→departing-owner per-metal residual — immediately preceding that owner's Amendment-17 settlement and sweep | demurrage, external purchases     |
+| 8 | `mint_phase`   | new money from reserve; and the phase-7 recycle levy's matched re-issue, which must equal that tick's levy exactly | `mint` only                  | mint job, gold backing cap        |
 | 9 | *audit*        | conservation check                   | read-only                    | never gains behavior              |
 
 ### ⟨REF⟩ Money entry/exit map
@@ -97,9 +97,26 @@ amending this table.
   faucet. Export receipts (selling to External) are a second planned entry
   point — whether they mint new money or draw down External's accumulated
   balance is **decided when external trade is designed**, not here.
+  *(Amendment 23, 2026-09-07 — a third entry, named and closed:* **the phase-7
+  recycle levy's matched re-issue in phase 8**, bounded by that tick's levy, so
+  it changes `total_money` by zero. It is a *throughput* entry, not a faucet:
+  every coin it mints was burned by the same tick's levy, and `sim::tick`
+  asserts the equality on every tick of every scenario. Deliberately not
+  written as an open class — a future phase-8 mechanic may not mint on its own
+  assertion that its issue is "matched".*)*
 - **Out:** `burn` (degradation) and `transfer` to the `External` account
   (imports — out of circulation but still counted by the audit).
 - Anything else that "creates" or "destroys" money is a bug by definition (§8.4).
+- **Amendment 22 (2026-09-07) — a correction to a reason, not only a rule.**
+  Documents in this repo have said the tick-time faucet is closed *because the
+  §8.3 audit pins the supply*. That is false and always was: `Accounts::mint`
+  raises the credited balance and `total_minted` by the same amount, so the
+  audit identity `total_money == minted − burned` holds for **any** mint,
+  matched or unmatched, and the audit provably cannot detect one. The faucet
+  was closed only because nothing called `mint` at tick time. Since the
+  conserved recycle, something does — bounded by the per-tick matched-issue
+  assertion in `sim::tick`, which reads the §8.4 logs and is what actually
+  pins the supply now.
 
 ### ⟨REF⟩ How agents act: decide → apply
 

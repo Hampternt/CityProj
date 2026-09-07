@@ -2,7 +2,7 @@
 
 **Spec:** [`docs/superpowers/specs/2026-09-07-conserved-recycle-design.md`](../superpowers/specs/2026-09-07-conserved-recycle-design.md)
 (signed 2026-09-07) · **Branch:** `claude/town-colony-sim-p1s06q` ·
-**Status:** pack 1 DONE 2026-09-07 · packs 2–3 not started.
+**Status:** packs 1–2 DONE 2026-09-07 · pack 3 not started.
 
 ## Goal
 
@@ -53,7 +53,7 @@ corpse.
 | # | Pack | Manifest | Status |
 |---|---|---|---|
 | 1 | **The wrappers, the helper, and the null seam** — zero behavior change | [`2026-09-07-cr-pack1-wrappers-and-seam.md`](2026-09-07-cr-pack1-wrappers-and-seam.md) | **DONE** 2026-09-07 |
-| 2 | **The recycle runs**, and every artifact it invalidates is re-cut in the same commit | — | not started |
+| 2 | **The recycle runs**, and every artifact it invalidates is re-cut in the same commit | [`2026-09-07-cr-pack2-the-recycle-runs.md`](2026-09-07-cr-pack2-the-recycle-runs.md) | **DONE** 2026-09-07 |
 | 3 | **Shock recovery, lifecycle reachability, and the founding-template sweep re-run** (independently droppable) | — | not started |
 
 ## Open questions
@@ -77,3 +77,15 @@ block, not here, so there is one copy of it.
   the first time. Pack 2 inherits one named obligation: retire the second half of
   `pack_one_ships_the_rate_at_zero_and_no_phase_reads_it` in the commit that wires
   phase 7, since reading the rate makes it false by design.
+- **2026-09-07 — pack 2 DONE.** 201 → 207 tests; `VERIFY OK`. Both legs live at
+  `RECYCLE_PERMILLE = 20`; Amendments 20–23 executed, including the supersession
+  of the 07-19 stub contract and the correction of the audit-pins-the-supply
+  misattribution wherever the repo carried it. **The town holds its size
+  indefinitely** — measured to t5000: population 30, 6 firms, 21 employed, zero
+  closures, zero departures, zero quits, hunger confined to t2–t14, and a live
+  limit cycle recurring at lag 10 with 82 `Sold` events and 912 g of turnover
+  every tick. Three invalidated acceptance artifacts re-cut, each with the
+  measurement that retired it, after their pre-cure forms were frozen as rate-0
+  twins. Pack 3 inherits one **pinned live defect**: the phoenix venue
+  under-replaces (employment 21 → 19, standing hunger), asserted at its measured
+  values so the founding-template sweep shows up as a deliberate re-pin.

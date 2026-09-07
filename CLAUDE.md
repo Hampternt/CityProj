@@ -42,7 +42,13 @@ new mechanics into the loop and money:
   08-17 (multi-metal pack 1) the books are keyed `(AgentId, Metal)` with
   per-metal totals; every mover and reader takes a `Metal`, and `audit`
   checks each `Metal::ALL` entry independently, panicking once naming
-  every broken metal.
+  every broken metal. Since conserved-recycle pack 2 `burn` has a live
+  caller and has lost its `#[allow(dead_code)]`, and the two §8.4 counters
+  are **gross lifetime throughput logs** rather than the supply — the
+  number that means "money in this economy" is `minted − burned`, which the
+  shell prints as `net`. That reinterpretation carries a written expiry:
+  it holds only while every mint is matched by a same-tick burn, and the
+  counters split into a pair the moment the §2.1 Mint needs a backing ratio.
 - `src/metal.rs` — `Metal` (closed coinage-metal enum: gold/silver/copper)
   + hand-written `Metal::ALL` and lowercase `Display`; the orthogonal key
   for every balance and conservation total (07-12 spec).
@@ -81,7 +87,12 @@ new mechanics into the loop and money:
 - `src/world.rs` — `World`: agents + houses + accounts; reserves the Mint and
   External account ids; occupancy is derived, never stored; the 07-03 command
   layer (`pay`, assign/vacate home/workplace) validates ids before forwarding
-  to the §8.2 chokepoint; `create_business` allocates account-only business
+  to the §8.2 chokepoint — and since conserved-recycle pack 1 **`pay` is no
+  longer the only wrapper over that chokepoint**: `levy` (burn) and the
+  pot-scoped `disburse` (mint, refusing an over-issue with
+  `WorldError::OverIssue`) join it, both taking a **spawned agent only**,
+  deliberately narrower than `is_known_account` — households-only is the
+  design, and widening it is a signature-level change; `create_business` allocates account-only business
   ids from the agent counter; `businesses()` is the shared phase query;
   `pay` recognizes business ids (refactor Am. 14) and, since pack 2, names
   its metal (`pay(from, to, metal, amount)`); pack 4 added the migration
@@ -194,11 +205,19 @@ since pack 2 `remove_agent` first force-liquidates any firm the leaver
 owns (Amendment 19), then settles `min(coffer, owed)` per Amendment 17,
 sweeps every metal to External, and strips the leaver), and 6 (the full firm lifecycle — the founding decide, then closures,
 then the founding apply, then the profit draw, then the insolvency
-write-back) have behavior; phase 8 and phase 7's demurrage/imports are
-TODO stubs. The tick-time mint faucet is closed:
-worldgen's seed is the entire money supply and the audit pins it there.
-The shipped scenario is `town_world`. If you change structure, update
-this section.
+write-back) have behavior. Since conserved-recycle pack 2, **phase 7 also
+carries the levy** (a flooring `RECYCLE_PERMILLE` of every living agent's
+gold, households only, strictly after emigration so a departing agent is
+never levied) and **phase 8 is no longer a stub** — it re-issues that exact
+pot in equal shares to every living agent, remainder to the lowest ids, and
+`sim::tick` asserts `Δminted == Δburned == pot` per metal on every tick.
+Worldgen's seed is still the entire money supply, but **not for the reason
+this file used to give**: the §8.3 audit provably cannot detect a mint
+(`mint` raises the balance and `total_minted` together), so what pins the
+supply is that the re-issue is matched — Amendment 22. Imports and exports
+are **refused with measurements** (see below), not pending; the literal
+§2.1 Mint is still TODO. The shipped scenario is `town_world`. If you
+change structure, update this section.
 
 Multi-metal money is DONE
 ([`docs/manifests/2026-08-15-multi-metal-money.md`](docs/manifests/2026-08-15-multi-metal-money.md),
@@ -224,18 +243,84 @@ labor market restaffs it — and founding measurably answers the cascade
 closure alone created: over the 200-tick town, **5 live businesses and
 population 20 with founding, against 1 and 4 without**.
 
-**Standing finding, and the successor's problem, not this container's:**
-the town still declines — t300 leaves 10 residents and 3 businesses, and
-12 of the 15 firms founded in 300 ticks eventually close. Founding slows
-the collapse without arresting it, because the residual is a
-**circulation** failure rather than a firm-count one: money is conserved,
-but `target_days` purchase caps mean a wallet above the cap is a sink
-that never returns, so the town starves beside its own gold. Founding
-*does* redistribute — measured under the shipped code the largest wallet
-holds 21.8% of the supply at t200 and 27.8% at t300, against 99% on the
-pack-2 (founding-absent) trajectory — but it redistributes to owners
-rather than to demand. Phase 7's demurrage/imports and phase 8's mint are
-the standing TODO stubs that address it.
+**Conserved recycle is IN PROGRESS**
+([`docs/manifests/2026-09-07-conserved-recycle.md`](docs/manifests/2026-09-07-conserved-recycle.md),
+spec
+[`docs/superpowers/specs/2026-09-07-conserved-recycle-design.md`](docs/superpowers/specs/2026-09-07-conserved-recycle-design.md),
+gate signed 2026-09-07): pack 1 (the two command-layer wrappers,
+`levy_amount`, the `tick_with_rate` null seam — zero behavior change,
+proven by a 300-tick event-stream diff) and pack 2 (both legs live at
+`RECYCLE_PERMILLE = 20`, Amendments 20–23, every invalidated acceptance
+artifact re-cut) landed 2026-09-07; pack 3 (shock recovery and the
+founding-template sweep) is not started. **The town now holds its size
+indefinitely**: measured to t5000, population 30, 6 firms, 21 employed,
+zero closures, zero departures, zero quits, hunger confined to a t2–t14
+warm-up — and it is a *live* limit cycle, not a frozen one: 82 `Sold`
+events, 912 g of goods turnover and 662 g of wages every tick, with the
+per-agent state recurring at lag 10 and never at lag 1/2/5. This is a
+**stability** milestone, explicitly: a flat 30 is the designed outcome.
+
+**The decline that firm-lifecycle handed forward, and what it actually
+was.** On the pre-cure trajectory the town still declined: t300 left 10
+residents and 3 businesses, and 12 of the 15 firms founded in 300 ticks
+eventually closed. That record stands. **The diagnosis this file used to
+carry for it does not** — the conserved-recycle container measured it
+(~40,000 simulated ticks, 14 probes) and refuted it. Kept here because it
+is the kind of thing a successor re-derives otherwise:
+
+- **REFUTED — the `target_days`-cap mechanism.** The claim was that "a
+  wallet above the cap is a sink that never returns". Measured: **0 of
+  7,074 agent-ticks** had a solvent agent buy nothing because it was at
+  cap, and 0 saturated agents at every sampled tick through t120. Phase 5
+  consumes before phase 4 shops, so every agent re-enters below cap every
+  tick and buys. The cap governs the *stockpile*, never the flow.
+- **REFUTED — the remedy it implies.** `target_days` 7 → 14/30/70/100/1000
+  gives t300 population 6/3/4/4/4 against the baseline's 10, and *raises*
+  the largest wallet to 35.3%/64.6%/51.0%/99.3% of the 52,148 g supply; at
+  ×50 there are zero businesses by t119. The cap is a RATIONING device
+  holding concentration down — uncapping it lets rich wallets buy the
+  shelves out and the poor cannot eat at any price.
+- **REFUTED — "phase 7's demurrage/imports and phase 8's mint are the
+  standing TODO stubs that address it", on all three counts as independent
+  mechanics.** Demurrage as a *sink*: 46 configurations, not one clears the
+  bar; the best buys one resident at t300 and is *worse* at t600, because
+  the idle gold IS the savings the jobless live on. Imports: monotonically
+  harmful. A minted stipend: works, but with no stable threshold (the
+  sufficient value climbs 23 → 27 as the horizon grows to t10000) at 2.43M
+  minted against a 52,148 g supply — re-opening exactly the faucet the
+  07-19 spec deleted as "the accepted broken faucet". What *does* work is
+  the conserved recycle, and phases 7 and 8 are its home **as a matched
+  pair**, not as the independent sink and faucet that sentence promised.
+- **REFUTED — the aggregate-deficit framing**, which is the trap the next
+  reader falls into. Household income averages 772.5 g/tick against 772.3
+  g/tick of purchases over t20–t120, and the 1000-tick household ledger
+  closes to a **+0 g residual**. Firm revenue *is* household spend by
+  construction; there is no aggregate gap for any mechanic to close. The
+  gap is distributional.
+- **WHAT IT ACTUALLY WAS: bottom-tail solvency on a technology fact.** 30
+  residents, 21 job slots, and a technology strictly requiring 22.5 workers
+  (0.75 per capita) to feed 30 people — so **nine residents receive 0 g of
+  wages across 200 measured ticks**, burn savings at ~28 g/tick, and the
+  first-departure tick is *linear in the seed* (`t = 6 + savings/28.05`,
+  fitted across nine values). The whole 300-tick decline was that savings
+  burn with a closure cascade bolted to its end.
+
+**n = 1, everywhere.** Every figure in that record comes from ONE scenario,
+`town_world`, at one wealth distribution. `RECYCLE_PERMILLE`, like
+`DRAW_BUFFER_BILLS`, `CLOSE_INSOLVENT_TICKS` and `GRUBSTAKE`, is frozen
+against that seed and nothing else; there is no derivation rule for a
+second one.
+
+**The successor is growth, not circulation**, and it is named with a
+number: nothing measured makes the town *grow* — every stable configuration
+parks at exactly the seeded 30 with arrivals 0 and foundings 0 forever.
+Growth needs new headcount, from phase 6's untouched expand-capacity half.
+On the shipped (cured) trajectory the draw stream is **62–138 g/tick**,
+worth 2.2–4.9 livelihoods at the 28 g basket against nine residents with no
+income source — so the successor must find roughly two thirds of its wage
+bill somewhere other than the existing draws. *(The 221–278 g/tick figure
+is the pre-cure trajectory's and must not be quoted as the successor's
+sizing.)*
 
 The terrain playground landed on 2026-08-15 —
 [`docs/manifests/2026-08-15-terrain-playground-merge.md`](docs/manifests/2026-08-15-terrain-playground-merge.md)
@@ -251,9 +336,19 @@ records what was verified in the browser before the merge.
   becomes "market venue inventory" is the `Offer` struct, so don't bake
   in the assumption that stock lives only on businesses.
 - **Money creation.** As designed in the parent doc §2.1: a *literal
-  staffed Mint business* that consumes precious-metal goods to mint coins
-  (seigniorage formula deferred by the 07-12 multi-metal spec), plus
-  trade with outside markets through `External`.
+  staffed Mint business* that turns a precious-metal reserve into coins
+  (seigniorage formula deferred by the 07-12 multi-metal spec). **This line
+  used to say "consumes precious-metal goods", which contradicts §2.1 and
+  hard invariant 4 below — both hold that gold is *held in reserve, not
+  consumed*.** Corrected here; the Mint's own spec rules how the reserve
+  and the backing ratio actually work.
+  **Outside trade through `External` is NOT part of that roadmap item any
+  more:** measured, External's entire capital is 600 g and every export
+  setting moves 623–796 g across 300 ticks while starving most of them —
+  the seam is *unfunded*, not underpowered — and funding it is lethal,
+  because outside demand outbids residents and `adjust_price` has no
+  ceiling (Food 179 g by t100, the series diverging to 3.3×10¹⁰/unit).
+  Anyone reviving it needs a price ceiling first.
 - **Wage market.** *(Shipped as town-colony pack 3 — the `adjust_price`
   pattern on `RoleSlot.wage`, arrears-driven quitting, the deadbeat
   exclusion.)* Still future: employee happiness and voluntary

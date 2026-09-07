@@ -207,6 +207,20 @@ pub enum Event {
         name: String,
         took: Vec<(Metal, Money)>,
     },
+    /// Phases 7+8 (conserved recycle): the levy was collected and re-issued
+    /// in equal shares. ONE aggregate event per tick, deliberately — at 30
+    /// agents the per-agent form is 60 events/tick, no acceptance criterion
+    /// reads it, and it would drown the shell's aggregated feed. A granularity
+    /// ruling later mechanics will copy, so it is made deliberately.
+    ///
+    /// `share` is the floored per-head amount; the remainder is implied by
+    /// `pot − share × heads` and is deliberately not a field. A zero-pot tick
+    /// emits nothing (the held-price and zero-draw precedents).
+    Recycled {
+        pot: Money,
+        heads: usize,
+        share: Money,
+    },
 }
 
 /// Everything `tick` observed happen, in phase order and then each phase's
@@ -246,19 +260,62 @@ pub fn tick(world: &mut World) -> TickReport {
 /// `tick`'s old body with a parameter attached, which is why pack 1's gate
 /// can require the shipped soaks to be BIT-IDENTICAL rather than merely
 /// green.
-pub(crate) fn tick_with_rate(world: &mut World, _permille: u64) -> TickReport {
+pub(crate) fn tick_with_rate(world: &mut World, permille: u64) -> TickReport {
     let mut report = TickReport::default();
+    let before: Vec<(Metal, Money, Money)> = Metal::ALL
+        .iter()
+        .map(|&metal| {
+            (
+                metal,
+                world.accounts.total_minted(metal),
+                world.accounts.total_burned(metal),
+            )
+        })
+        .collect();
     labor_market(world, &mut report);
     produce(world, &mut report);
     pay_wages(world, &mut report);
     goods_market(world, &mut report);
     consume(world, &mut report);
     invest(world, &mut report);
-    sinks(world, &mut report);
-    mint_phase(world);
+    let pot = sinks(world, &mut report, permille);
+    mint_phase(world, pot, &mut report);
+    assert_matched_issue(world, &before, pot);
     // Phase 9: audit (§8.3) — read-only, never gains behavior, emits nothing.
     world.accounts.audit();
     report
+}
+
+/// The milestone's substitute for the deferred gold-backing cap: every
+/// tick, on every scenario, the faucet must have issued **exactly** what
+/// the same tick's drain destroyed, and no other metal may have moved at
+/// all.
+///
+/// It lives here rather than in a soak because **the §8.3 audit provably
+/// cannot detect a mint**: `Accounts::mint` raises the credited balance and
+/// `total_minted` by the same amount, so the audit identity
+/// `total_money == minted − burned` holds for a matched re-issue, an
+/// unmatched one, a dropped pot, or a share computed from the wrong
+/// denominator alike. Today's faucet was closed only because nothing called
+/// `mint` at tick time — **not** because the audit pinned it, a
+/// misattribution this milestone corrects wherever the repo carries it
+/// (Amendment 22). Panics like the audit, never softened to a `Result`, and
+/// never placed *inside* phase 9 — row 9 stays read-only and behavior-free.
+fn assert_matched_issue(world: &World, before: &[(Metal, Money, Money)], pot: Money) {
+    for &(metal, minted_before, burned_before) in before {
+        let minted = world.accounts.total_minted(metal).minus(minted_before);
+        let burned = world.accounts.total_burned(metal).minus(burned_before);
+        let expected = if metal == Metal::Gold {
+            pot
+        } else {
+            Money::ZERO
+        };
+        assert_eq!(
+            (metal, minted, burned),
+            (metal, expected, expected),
+            "unmatched issue: {metal} minted {minted} and burned {burned} against a pot of {pot}"
+        );
+    }
 }
 
 /// How many ticks' worth of unpaid wages a worker tolerates: quit when
@@ -274,12 +331,10 @@ const QUIT_ARREARS_BILLS: u32 = 3;
 /// [`DRAW_BUFFER_BILLS`] placement precedent. `pub(crate)` so the soaks
 /// name this constant rather than a re-spelled copy.
 ///
-/// **PACK 1 SHIPS IT AT 0** — the mechanism is not wired to any phase yet,
-/// so the value is inert; pack 2 item 2 freezes it at the end-state **20**
-/// once both legs run. One trajectory, stated here so the two packs do not
-/// each claim a different number.
+/// **FROZEN at 20 by pack 2** (pack 1 shipped it at 0, with both legs
+/// unwired, so the value was inert until now).
 ///
-/// Frozen (by pack 2) at 20 on the direct sweep ALONE: 15‰ is the measured
+/// Frozen at 20 on the direct sweep ALONE: 15‰ is the measured
 /// minimum sufficient magnitude, 20‰ is an exact fixed point with every
 /// reported metric bit-identical t600 → t10000, and payroll shortfalls run
 /// 395 per 2000 ticks at 20 against 3,227 at 15 — 8.2× lower residual
@@ -304,7 +359,7 @@ const QUIT_ARREARS_BILLS: u32 = 3;
 /// distribution (30 residents / 21 slots / 6 venues / 52,148 g / 3,400 g
 /// unemployed savings). There is NO derivation rule for another scenario —
 /// a new seed requires re-running the sweep.
-pub(crate) const RECYCLE_PERMILLE: u64 = 0;
+pub(crate) const RECYCLE_PERMILLE: u64 = 20;
 
 /// The levy: a flooring per-mille of `balance`. Pure, total and
 /// scalar-taking, with a unit-test home outside the sim — the
@@ -405,6 +460,16 @@ pub(crate) fn insolvent_now(owed_total: Money) -> bool {
 /// max streak and re-freeze this; the 100-tick soak's zero-closure
 /// criterion is the tripwire. `pub(crate)` so that soak and the shell
 /// name this same constant (the `DRAW_BUFFER_BILLS` precedent).
+///
+/// **OBLIGATION DISCHARGED, conserved-recycle pack 2 (2026-09-07).** That
+/// pack changes demand, therefore revenue, therefore coffers, so the
+/// re-measure was owed. Measured over t1..=t5000 of the cured town at
+/// `RECYCLE_PERMILLE = 20`: the healthy maximum consecutive
+/// `insolvent_ticks` is **1** — unmoved from the pre-cure figure — against
+/// this fuse of 12. **CONFIRMED at 12, not re-frozen**, and the number is
+/// asserted rather than recorded: `conserved_recycle_holds_the_acceptance_criteria`
+/// pins `max_insolvent == 1` exactly, so a future pack that moves it fails
+/// loudly instead of quietly eating the margin.
 pub(crate) const CLOSE_INSOLVENT_TICKS: u32 = 12;
 
 /// Wage bills of capital a founder stakes into a new firm — the
@@ -1398,7 +1463,7 @@ fn emit_closure(receipt: &ClosureReceipt, owner_name: &str, report: &mut TickRep
 /// sweep). The push rule: worn down by hunger AND destitute — too poor
 /// to buy even one unit of Food at the cheapest posted price. TODO:
 /// demurrage and external purchases still land here.
-fn sinks(world: &mut World, report: &mut TickReport) {
+fn sinks(world: &mut World, report: &mut TickReport, permille: u64) -> Money {
     // Decide (pure): the phase-start snapshot names the leavers, agents
     // in `world.agents` order.
     let snapshot: &World = world;
@@ -1433,6 +1498,43 @@ fn sinks(world: &mut World, report: &mut TickReport) {
     for intent in intents {
         apply_sinks_intent(world, intent, report);
     }
+
+    // THE LEVY (conserved-recycle pack 2), strictly AFTER emigration and
+    // strictly last in the phase. A DIRECT pass, no intents — the
+    // `pay_wages` / profit-draw precedent: objective per-agent state, zero
+    // contention. Over `world.agents` order, ascending `AgentId` by
+    // construction; no RNG, no HashMap iteration.
+    //
+    // Ordering is load-bearing in two ways. A departing agent is never
+    // levied — their gold reached External inside `remove_agent` before
+    // this pass — so there is no ghost payee and no coin is taken from
+    // someone absent from phase 8's roster. And the destitution decide
+    // above therefore reads PRE-dividend wallets: an agent can be swept to
+    // External at phase 7 while the share that would have cleared the
+    // cheapest Food price arrives at phase 8. That is not a divergence
+    // from a single-phase transfer expression (the measured-identical arm
+    // sat here too) — it is the OPTION the burn/mint split forecloses,
+    // since only row 8 permits the payout leg. Spec open question 1.
+    //
+    // Emits no event: the recycle is narrated once, by phase 8.
+    let levied: Vec<(AgentId, Money)> = world
+        .agents
+        .iter()
+        .map(|agent| {
+            (
+                agent.id,
+                levy_amount(world.accounts.balance_of(agent.id, Metal::Gold), permille),
+            )
+        })
+        .collect();
+    let mut pot = Money::ZERO;
+    for (agent, amount) in levied {
+        world
+            .levy(agent, Metal::Gold, amount)
+            .expect("a floor-fraction of the live balance of a live agent");
+        pot = pot.plus(amount);
+    }
+    pot
 }
 
 fn apply_sinks_intent(world: &mut World, intent: Intent, report: &mut TickReport) {
@@ -1518,12 +1620,59 @@ fn apply_sinks_intent(world: &mut World, intent: Intent, report: &mut TickReport
     }
 }
 
-/// Phase 8: new money from reserve. Money ops allowed: mint only.
-/// Inert since the 07-19 pricing spec closed the tick-time faucet:
-/// worldgen's seed is the entire supply and the §8.3 audit pins each
-/// metal's `total_money(metal)` there forever. TODO: the literal staffed
-/// Mint business (parent doc §2.1, metal goods → coins) lands here.
-fn mint_phase(_world: &mut World) {}
+/// Phase 8: new money from reserve, **and** the phase-7 recycle levy's
+/// matched re-issue (Amendment 20). Money ops allowed: mint only.
+///
+/// `pot` is exactly what phase 7 burned this tick, and NOTHING runs
+/// between the two calls except `tick_with_rate`'s own control flow — so
+/// the roster here is provably the roster phase 7 levied, and no snapshot
+/// needs carrying. Phase 7 removes agents (emigration) *before* the levy,
+/// so a departed agent is neither levied nor paid.
+///
+/// The remainder is **distributed, never dropped**: `share × heads` loses
+/// up to `heads − 1` coins to the flooring division, and dropping them
+/// would silently deflate the supply by up to 29 g/tick in the shipped
+/// town — up to 290,000 g over 10,000 ticks against a 52,148 g supply —
+/// **while still passing the §8.3 audit**, which is precisely the class of
+/// bug that audit structurally cannot see. The first `remainder` agents in
+/// `world.agents` order each take one extra unit; the tie-break is lowest
+/// `AgentId`, deterministic, no RNG.
+///
+/// The literal staffed §2.1 Mint (metal goods → coins, gold held in
+/// reserve rather than consumed) is still TODO and is a different spec's
+/// problem; this mints nothing net.
+fn mint_phase(world: &mut World, pot: Money, report: &mut TickReport) {
+    let heads = world.agents.len();
+    if pot == Money::ZERO || heads == 0 {
+        return; // also keeps `divided_by` away from a zero divisor
+    }
+    let share = pot.divided_by(heads as u64);
+    let remainder = pot.minus(share.times(heads as u32));
+    let payees: Vec<AgentId> = world.agents.iter().map(|agent| agent.id).collect();
+    let mut left = pot;
+    let mut extras = remainder;
+    for agent in payees {
+        // The first `remainder` payees take one coin more. Counted down as
+        // `Money` rather than as an index, so no numeric accessor on
+        // `Money` is needed and the arithmetic stays inside §8.1's checked
+        // helpers.
+        let extra = if extras > Money::ZERO {
+            extras = extras.minus(Money::new(1));
+            Money::new(1)
+        } else {
+            Money::ZERO
+        };
+        left = world
+            .disburse(agent, Metal::Gold, share.plus(extra), left)
+            .expect("a share of a pot sized from this same roster");
+    }
+    assert_eq!(
+        left,
+        Money::ZERO,
+        "the recycle pot was not fully re-issued — sum(disbursed) != pot (§8.3 cannot see this)"
+    );
+    report.events.push(Event::Recycled { pot, heads, share });
+}
 
 #[cfg(test)]
 mod tests {
@@ -1907,23 +2056,106 @@ mod tests {
         assert_eq!(held(&world, a, Good::Luxury), 0);
     }
 
+    /// RE-CUT by conserved-recycle pack 2, and the rename is the point.
+    /// This was `mint_phase_creates_no_money`, asserting `total_minted`
+    /// never moved past the worldgen seed — a claim Amendment 22 retracts,
+    /// because phase 8 now mints every tick the levy takes anything. What
+    /// survives, and what actually mattered, is that the faucet **creates
+    /// no NET money**: it re-issues exactly the pot and not a coin more.
+    /// The old assertion is not weakened here, it is replaced by the
+    /// stronger property — `total_money` is the invariant, `total_minted`
+    /// was only ever a proxy for it while nothing called `mint`.
     #[test]
-    fn mint_phase_creates_no_money() {
+    fn mint_phase_reissues_exactly_the_pot_and_creates_no_net_money() {
         let mut world = World::new();
-        let (_, farm, _) = staffed_business(
-            &mut world,
-            "Farm",
-            Good::Food,
-            Money::new(1),
-            Money::new(35),
-            "f",
+        let alice = world.spawn_agent("alice", None, None);
+        let bob = world.spawn_agent("bob", None, None);
+        let carol = world.spawn_agent("carol", None, None);
+        world.accounts.mint(alice, Metal::Gold, Money::new(7)); // worldgen-style seed
+        let supply_before = world.accounts.total_money(Metal::Gold);
+        let mut report = TickReport::default();
+
+        // A zero pot mints nothing and emits nothing.
+        mint_phase(&mut world, Money::ZERO, &mut report);
+        assert_eq!(report.events, vec![]);
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(7));
+
+        // A pot of 7 over 3 payees: share 2, remainder 1 to the FIRST
+        // agent in roster order. `sum(disbursed) == pot` exactly.
+        world
+            .levy(alice, Metal::Gold, Money::new(7))
+            .expect("alice can cover the levy");
+        assert_eq!(world.accounts.total_money(Metal::Gold), Money::ZERO);
+
+        mint_phase(&mut world, Money::new(7), &mut report);
+        assert_eq!(
+            report.events,
+            vec![Event::Recycled {
+                pot: Money::new(7),
+                heads: 3,
+                share: Money::new(2),
+            }]
         );
-        world.accounts.mint(farm, Metal::Gold, Money::new(35)); // worldgen-style seed
-        mint_phase(&mut world);
-        // the tick-time faucet is closed: nothing beyond the seed, ever
-        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(35));
-        assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(35));
+        assert_eq!(world.accounts.balance_of(alice, Metal::Gold), Money::new(3));
+        assert_eq!(world.accounts.balance_of(bob, Metal::Gold), Money::new(2));
+        assert_eq!(world.accounts.balance_of(carol, Metal::Gold), Money::new(2));
+        // NET creation is zero: the 7 minted here match the 7 burned above.
+        assert_eq!(world.accounts.total_money(Metal::Gold), supply_before);
+        assert_eq!(
+            world
+                .accounts
+                .total_minted(Metal::Gold)
+                .minus(world.accounts.total_burned(Metal::Gold)),
+            supply_before
+        );
         world.accounts.audit();
+    }
+
+    /// The remainder is DISTRIBUTED, never dropped — the bug §8.3 cannot
+    /// see. A dropped remainder deflates the supply while leaving the audit
+    /// identity intact, so only an explicit test can catch it.
+    #[test]
+    fn the_flooring_remainder_goes_to_the_lowest_ids_and_never_evaporates() {
+        for (pot, heads) in [(7u64, 3usize), (29, 30), (30, 30), (31, 30), (1, 4)] {
+            let mut world = World::new();
+            let ids: Vec<AgentId> = (0..heads)
+                .map(|i| world.spawn_agent(&format!("a{i}"), None, None))
+                .collect();
+            let payer = ids[0];
+            world.accounts.mint(payer, Metal::Gold, Money::new(pot));
+            // captured BEFORE the levy: the property is that a levy plus
+            // its matched re-issue returns the supply to exactly where it
+            // started, not that it stays at the post-levy figure.
+            let supply = world.accounts.total_money(Metal::Gold);
+            world
+                .levy(payer, Metal::Gold, Money::new(pot))
+                .expect("the payer holds exactly the pot");
+            let mut report = TickReport::default();
+
+            mint_phase(&mut world, Money::new(pot), &mut report);
+
+            let handed: Money = ids.iter().fold(Money::ZERO, |sum, &id| {
+                sum.plus(world.accounts.balance_of(id, Metal::Gold))
+            });
+            assert_eq!(
+                handed,
+                Money::new(pot),
+                "pot {pot} over {heads} heads: sum(disbursed) != pot"
+            );
+            assert_eq!(world.accounts.total_money(Metal::Gold), supply);
+            // the extra coins land on the FIRST payees, in roster order
+            let remainder = (pot % heads as u64) as usize;
+            let share = pot / heads as u64;
+            for (rank, &id) in ids.iter().enumerate() {
+                let expected = share + if rank < remainder { 1 } else { 0 };
+                assert_eq!(
+                    world.accounts.balance_of(id, Metal::Gold),
+                    Money::new(expected),
+                    "pot {pot} over {heads} heads: rank {rank} got the wrong share"
+                );
+            }
+            world.accounts.audit();
+        }
     }
 
     // --- Firm-lifecycle pack 1: the phase-6 profit draw ---
@@ -2089,7 +2321,7 @@ mod tests {
         assert_eq!(sold_out_ticks(&world, house), 1, "phase 5 must not write");
         invest(&mut world, &mut report);
         assert_eq!(sold_out_ticks(&world, house), 1, "phase 6 must not write");
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
         assert_eq!(sold_out_ticks(&world, house), 1, "phase 7 must not write");
         world.accounts.audit();
     }
@@ -2149,38 +2381,92 @@ mod tests {
         assert_eq!(levy_amount(Money::new(14_480), 20), Money::new(289));
     }
 
+    /// RETIRED AND REPLACED by pack 2, as pack 1's ledger said it must be.
+    /// Pack 1 shipped `pack_one_ships_the_rate_at_zero_and_no_phase_reads_it`,
+    /// which asserted that `tick_with_rate` at ANY rate equals `tick` —
+    /// **false by design the moment phase 7 reads the rate**, which is what
+    /// this pack does. It was retired in the commit that made it false, not
+    /// discovered red afterwards.
+    ///
+    /// What replaces it is the half that still means something and now
+    /// carries A9's arithmetic: **at rate 0 the mechanic is inert.** No
+    /// `Recycled` event, not a coin minted or burned, and the trajectory
+    /// identical to a run with no recycle at all — which is what makes the
+    /// rate-0 twins a real null rather than a tautology.
     #[test]
-    fn pack_one_ships_the_rate_at_zero_and_no_phase_reads_it() {
-        // Two facts this pack is gated on, pinned so a stray edit cannot
-        // land the mechanic early: the constant is 0 (pack 2 item 2 freezes
-        // it at 20), and `tick_with_rate` at ANY rate is `tick` — because
-        // no phase reads the parameter yet.
-        assert_eq!(RECYCLE_PERMILLE, 0);
-
-        let mut a = crate::engine::worldgen::town_world();
-        let mut b = crate::engine::worldgen::town_world();
-        for _ in 0..25 {
-            let plain = tick(&mut a);
-            let rated = tick_with_rate(&mut b, 999);
-            assert_eq!(
-                format!("{:?}", plain.events),
-                format!("{:?}", rated.events),
-                "a rate parameter changed behavior in pack 1"
+    fn at_rate_zero_the_recycle_is_wholly_inert() {
+        let mut world = crate::engine::worldgen::town_world();
+        for tick_no in 1..=40 {
+            let report = tick_with_rate(&mut world, 0);
+            assert!(
+                !report
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::Recycled { .. })),
+                "a zero pot emitted a Recycled event at t{tick_no}"
             );
         }
         for metal in Metal::ALL {
-            assert_eq!(a.accounts.total_money(metal), b.accounts.total_money(metal));
             assert_eq!(
-                a.accounts.total_minted(metal),
-                b.accounts.total_minted(metal)
-            );
-            assert_eq!(
-                a.accounts.total_burned(metal),
-                b.accounts.total_burned(metal)
+                world.accounts.total_burned(metal),
+                Money::ZERO,
+                "rate 0 burned {metal}"
             );
         }
-        // and nothing minted or burned at tick time, still
-        assert_eq!(a.accounts.total_burned(Metal::Gold), Money::ZERO);
+        // ...and `total_minted` never moved off the worldgen seed, which is
+        // the pre-cure invariant this milestone otherwise retracts.
+        assert_eq!(
+            world.accounts.total_minted(Metal::Gold),
+            world.accounts.total_money(Metal::Gold)
+        );
+    }
+
+    /// The levy takes from households and NOTHING else — the narrow id rule
+    /// in `World::levy` made observable at the phase level, because it is
+    /// the decision open question 3 ruled and the one a later pack is most
+    /// likely to "simplify" into `is_known_account`.
+    #[test]
+    fn the_levy_reaches_wallets_but_never_coffers_external_or_the_mint() {
+        let mut world = crate::engine::worldgen::town_world();
+        let coffers_before: Vec<(AgentId, Money)> = world
+            .businesses()
+            .map(|(_, b)| (b.id, world.accounts.balance_of(b.id, Metal::Gold)))
+            .collect();
+        let external_before = world.accounts.balance_of(world.external_id, Metal::Gold);
+        let mint_before = world.accounts.balance_of(world.mint_id, Metal::Gold);
+        let richest = world
+            .agents
+            .iter()
+            .map(|a| a.id)
+            .max_by_key(|&id| world.accounts.balance_of(id, Metal::Gold))
+            .expect("the town has agents");
+        let wallet_before = world.accounts.balance_of(richest, Metal::Gold);
+
+        let mut report = TickReport::default();
+        let pot = sinks(&mut world, &mut report, 20);
+
+        assert!(pot > Money::ZERO, "the levy collected nothing");
+        assert!(
+            world.accounts.balance_of(richest, Metal::Gold) < wallet_before,
+            "the richest wallet was not levied"
+        );
+        // phase 7 alone: the pot is burned and not yet re-issued
+        assert_eq!(world.accounts.total_burned(Metal::Gold), pot);
+        for (business, before) in coffers_before {
+            assert_eq!(
+                world.accounts.balance_of(business, Metal::Gold),
+                before,
+                "a business coffer was levied"
+            );
+        }
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            external_before
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.mint_id, Metal::Gold),
+            mint_before
+        );
     }
 
     #[test]
@@ -2242,7 +2528,7 @@ mod tests {
         assert_eq!(insolvent_ticks(&world, house), 0, "phase 5 must not write");
         invest(&mut world, &mut report);
         assert_eq!(insolvent_ticks(&world, house), 1, "phase 6 IS the writer");
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
         assert_eq!(insolvent_ticks(&world, house), 1, "phase 7 must not write");
         // ...and a business created mid-run starts the discipline at 0.
         let other = world.add_house("Other", vec![]);
@@ -3225,10 +3511,38 @@ mod tests {
         for _ in 0..10 {
             tick(&mut world); // audit runs inside — any §8 break panics here
         }
-        // the worldgen seed (3 × 35) is the ENTIRE money supply, forever
-        // — the audit pins it there every tick, departures included
-        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(105));
+        // RE-CUT by conserved-recycle pack 2, in two ways, and the second
+        // is the substantive one.
+        //
+        // (1) `total_minted` is no longer the supply. It is now a GROSS
+        //     LIFETIME log: phase 8 re-issues every tick the levy takes
+        //     anything, so it climbs (measured here: 111 after ten ticks,
+        //     6 g of recycle on top of the 105 g seed) while the supply
+        //     does not move. The stock is `minted − burned`, and THAT is
+        //     what this test pins now.
+        // (2) The comment's *reason* was wrong before this pack and is
+        //     corrected with it (Amendment 22): the §8.3 audit never
+        //     pinned the supply and provably cannot — `mint` raises the
+        //     balance and `total_minted` together, so the audit identity
+        //     holds for any mint. The supply was pinned only because
+        //     nothing called `mint` at tick time.
+        //
+        // The worldgen seed (3 × 35) is still the ENTIRE money supply,
+        // forever, departures included — that claim is unweakened.
         assert_eq!(world.accounts.total_money(Metal::Gold), Money::new(105));
+        assert_eq!(
+            world
+                .accounts
+                .total_minted(Metal::Gold)
+                .minus(world.accounts.total_burned(Metal::Gold)),
+            Money::new(105)
+        );
+        // and the recycle really did run in this fixture — otherwise the
+        // re-cut above would be pinning a property nothing exercises
+        assert!(
+            world.accounts.total_burned(Metal::Gold) > Money::ZERO,
+            "the levy never fired, so this test no longer covers the recycle"
+        );
         // the worker keeps earning, eating, and holding stock
         assert!(world.accounts.balance_of(worker, Metal::Gold) > Money::ZERO);
         assert!(held(&world, worker, Good::Food) > 0);
@@ -4122,7 +4436,7 @@ mod tests {
         world.accounts.mint(leaver, Metal::Copper, Money::new(5));
         world.agent_mut(leaver).unwrap().hunger = DEPART_HUNGER_TICKS;
         let mut report = TickReport::default();
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
         assert_eq!(
             report.events,
             vec![Event::Departed {
@@ -4210,7 +4524,7 @@ mod tests {
 
         let external_before = world.accounts.balance_of(world.external_id, Metal::Gold);
         let mut report = TickReport::default();
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
 
         assert_eq!(
             report.events,
@@ -4339,7 +4653,7 @@ mod tests {
             .insert(worker, Money::new(50));
         world.agent_mut(worker).unwrap().hunger = DEPART_HUNGER_TICKS;
         let mut report = TickReport::default();
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
         // min(coffer 20, owed 50) settles and rides out with the sweep;
         // the 30 remainder is written off silently (Amendment 17)
         assert_eq!(
@@ -4399,7 +4713,7 @@ mod tests {
         world.accounts.mint(boundary, Metal::Gold, Money::new(2));
         world.agent_mut(boundary).unwrap().hunger = DEPART_HUNGER_TICKS;
         let mut report = TickReport::default();
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
         assert_eq!(report.events, vec![]);
         assert!(world.agent(solvent).is_some());
         assert!(world.agent(fed).is_some());
@@ -4711,7 +5025,7 @@ mod tests {
             .mint(world.external_id, Metal::Gold, Money::new(500));
         world.agent_mut(worker).unwrap().hunger = DEPART_HUNGER_TICKS;
         let mut report = TickReport::default();
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
         assert!(world.agent(worker).is_none());
         for _ in 0..VACANCY_PULL_TICKS {
             labor_market(&mut world, &mut TickReport::default());
@@ -4755,7 +5069,7 @@ mod tests {
         produce(&mut world, &mut report);
         pay_wages(&mut world, &mut report);
         goods_market(&mut world, &mut report);
-        sinks(&mut world, &mut report);
+        sinks(&mut world, &mut report, 0);
         assert_eq!(world.agent(worker).unwrap().hunger, DEPART_HUNGER_TICKS - 2);
     }
 
