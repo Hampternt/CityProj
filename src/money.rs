@@ -215,7 +215,6 @@ impl Accounts {
     ///
     /// [`MoneyError::InsufficientFunds`] if `from` holds less than `amount`
     /// — nothing applied.
-    #[allow(dead_code)] // the sinks phase (7) lands later
     pub fn burn(&mut self, from: AgentId, metal: Metal, amount: Money) -> Result<(), MoneyError> {
         if amount == Money::ZERO {
             return Ok(());

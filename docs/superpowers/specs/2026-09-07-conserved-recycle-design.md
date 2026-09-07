@@ -1,6 +1,6 @@
 # Conserved Recycle — Design Spec
 
-**Status:** DRAFT — awaiting the approval gate. ·
+**Status:** SIGNED 2026-09-07 (gate below). ·
 **Parent:** [2026-07-02-money-gameloop-skeleton-design.md](2026-07-02-money-gameloop-skeleton-design.md)
 (grandparent: [2026-06-20-economy-sim-design.md](2026-06-20-economy-sim-design.md));
 successor to [2026-08-22-firm-lifecycle-design.md](2026-08-22-firm-lifecycle-design.md),
@@ -671,7 +671,10 @@ cross-phase reset path, against this design's no-new-persistent-state claim.
 
 ### sim::RECYCLE_PERMILLE + sim::levy_amount  (sim.rs, new)
 
-Signature: `pub(crate) const RECYCLE_PERMILLE: u64 = 20;` ·
+Signature: `pub(crate) const RECYCLE_PERMILLE: u64 = 20;` *(end state; the constant
+           is introduced at **0** in pack 1, where no phase reads it, and frozen at
+           20 by pack 2 item 2 — one trajectory, stated so the two packs do not each
+           claim a different value)* ·
            `pub(crate) fn levy_amount(balance: Money, permille: u64) -> Money`
 Given:  a gold balance and a per-mille rate.
 Then:   returns `balance.times(permille as u32).divided_by(1000)` — flooring
@@ -1116,10 +1119,28 @@ forwards `MoneyError::InsufficientFunds` atomically; `disburse` returns
 
 --- APPROVAL GATE — do not write the plan or any code above this line without sign-off ---
 
-## Open questions
+**SIGNED 2026-09-07.** The owner's "go ahead with the circulation seam spec",
+issued after this spec and its eight open questions were presented in full, is
+taken as the gate signature — the firm-lifecycle precedent, where a comparable
+instruction was recorded as "the owner directed the gate be signed with the
+recommendations as the rulings". **Every open question below is therefore ruled as
+its recommendation.**
+
+Recorded plainly, because it bears on how much weight these rulings carry: **the
+owner did not answer the questions one by one, and question 1 was flagged as the
+one real decision with a counterweight that cuts against my own recommendation.**
+Any ruling here is reversible by saying so. The cost of reversing question 1 after
+pack 1 is bounded and known: pack 1's `disburse` wrapper, its `OverIssue` variant
+and roughly half its test list are discarded, and `levy` collapses into
+`World::pay` — one pack's worth of work and **no shipped behavior**, because packs
+1 and 2 are deliberately sequenced so nothing observable moves until pack 2.
+Planning proceeds against `docs/manifests/2026-09-07-conserved-recycle.md`.
+
+## Open questions (all ruled at signing — kept for the record)
 
 Each carries a recommendation, the cost of the alternative, and exactly what it
-blocks. None is deferred into the plan.
+blocks. None is deferred into the plan. **All eight are ruled as their
+recommendation**, per the signing note above.
 
 1. **The amendment fork — the one real decision.** *Recommend:* buy Amendment 20
    as a **closed row-8 purpose grant**, keeping the burn+mint split (this spec's

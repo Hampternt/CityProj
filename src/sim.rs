@@ -230,6 +230,23 @@ pub struct TickReport {
 /// books imbalanced (§8.3) — meaning some phase moved money outside the
 /// §8.2 chokepoint.
 pub fn tick(world: &mut World) -> TickReport {
+    tick_with_rate(world, RECYCLE_PERMILLE)
+}
+
+/// `tick` with the recycle rate as a parameter — the **null seam**
+/// (conserved-recycle spec, open question 4 ruled at signing). It exists so
+/// that "rate 0 reproduces the pre-cure trajectory" can be an *executable*
+/// criterion (A9) rather than a claim no single build can hold alongside a
+/// cured default, and it is the migration path if a successor ever turns
+/// the constant into policy data. No new persistent state: the rate is a
+/// parameter.
+///
+/// **Pack 1: the rate is threaded and read by no phase.** Phase 7 gains the
+/// levy and phase 8 the matched payout in pack 2; until then this is
+/// `tick`'s old body with a parameter attached, which is why pack 1's gate
+/// can require the shipped soaks to be BIT-IDENTICAL rather than merely
+/// green.
+pub(crate) fn tick_with_rate(world: &mut World, _permille: u64) -> TickReport {
     let mut report = TickReport::default();
     labor_market(world, &mut report);
     produce(world, &mut report);
@@ -249,6 +266,63 @@ pub fn tick(world: &mut World) -> TickReport {
 /// greater — exactly N bills is endured). Tuning constant beside its fn,
 /// like the market constants; soak-tuned with worldgen's, then frozen.
 const QUIT_ARREARS_BILLS: u32 = 3;
+
+/// Per-mille of every living agent's gold wallet taken by phase 7's levy
+/// each tick and re-issued in equal shares by phase 8 (conserved-recycle
+/// spec, 2026-09-07). Beside its phase, not in `market.rs`: a levy is
+/// neither a price nor a wage (§8.6) — the `QUIT_ARREARS_BILLS` /
+/// [`DRAW_BUFFER_BILLS`] placement precedent. `pub(crate)` so the soaks
+/// name this constant rather than a re-spelled copy.
+///
+/// **PACK 1 SHIPS IT AT 0** — the mechanism is not wired to any phase yet,
+/// so the value is inert; pack 2 item 2 freezes it at the end-state **20**
+/// once both legs run. One trajectory, stated here so the two packs do not
+/// each claim a different number.
+///
+/// Frozen (by pack 2) at 20 on the direct sweep ALONE: 15‰ is the measured
+/// minimum sufficient magnitude, 20‰ is an exact fixed point with every
+/// reported metric bit-identical t600 → t10000, and payroll shortfalls run
+/// 395 per 2000 ticks at 20 against 3,227 at 15 — 8.2× lower residual
+/// stress.
+///
+/// **RECORDED AS REFUTED, because it is the rule a successor would re-tune
+/// with:** the tempting account that "20‰'s ~33 g/head share clears the
+/// 28.05 g/tick measured burn while 15‰'s ~25 g does not" is *contradicted*
+/// by the record, not merely unmeasured. On a base of 49,520 g of
+/// agent-held gold the share-clears-burn crossing is at **16.99‰** (16.96‰
+/// on the constants-derived basket of 28) — two per-mille ABOVE the
+/// measured sufficiency threshold of 15 — so the story mis-predicts the one
+/// sweep point the record contains, and on the other spend branch (36.0 g)
+/// it demands 21.81‰ and would call 20 insufficient. No mechanism for why
+/// the threshold sits between 15 and 17 is established; it is recorded as
+/// unexplained. What this does that a minted stipend cannot is **mint
+/// nothing net**, so it never has to outrun a base it is itself inflating —
+/// that, not proportionality, is why a stipend's sufficient value climbs
+/// 23 → 27 across t2000–t10000 and this does not.
+///
+/// **n = 1.** Every figure comes from `town_world` at one wealth
+/// distribution (30 residents / 21 slots / 6 venues / 52,148 g / 3,400 g
+/// unemployed savings). There is NO derivation rule for another scenario —
+/// a new seed requires re-running the sweep.
+pub(crate) const RECYCLE_PERMILLE: u64 = 0;
+
+/// The levy: a flooring per-mille of `balance`. Pure, total and
+/// scalar-taking, with a unit-test home outside the sim — the
+/// [`draw_amount`] / [`insolvent_now`] precedent.
+///
+/// Properties phase 7 relies on, each unit-pinned:
+/// - `levy_amount(b, p) <= b` for every `p <= 1000`, so the burn leg can
+///   never overdraft (§8.5);
+/// - `levy_amount(b, 0) == Money::ZERO` for every `b` — the null-rate
+///   property A9 rests on;
+/// - at 20‰, `levy_amount(49) == ZERO` and `levy_amount(50) == 1`. **The
+///   integer floor is the design's progressivity**: every balance below
+///   50 g pays nothing and still receives a full share, by construction
+///   rather than by a guard.
+#[allow(dead_code)] // no phase calls it until pack 2 wires the levy
+pub(crate) fn levy_amount(balance: Money, permille: u64) -> Money {
+    balance.times(permille as u32).divided_by(1000)
+}
 
 /// How many full-staffing wage bills a business retains before paying
 /// profit to its owner (phase 6, firm-lifecycle pack 1). An independent
@@ -2029,6 +2103,84 @@ mod tests {
         assert!(!insolvent_now(Money::ZERO));
         assert!(insolvent_now(Money::new(1)));
         assert!(insolvent_now(Money::new(1033)));
+    }
+
+    // --- Conserved recycle pack 1: the levy scalar and the null seam ---
+
+    #[test]
+    fn levy_amount_never_exceeds_the_balance_it_is_taken_from() {
+        // The property phase 7's burn leg relies on: it cannot overdraft
+        // (§8.5), at ANY rate up to the whole balance.
+        for balance in [0u64, 1, 49, 50, 999, 3400, 52_148] {
+            for permille in [0u64, 1, 20, 500, 999, 1000] {
+                let taken = levy_amount(Money::new(balance), permille);
+                assert!(
+                    taken <= Money::new(balance),
+                    "levy_amount({balance}, {permille}) = {taken} exceeds the balance"
+                );
+            }
+        }
+        // ...and at 1000‰ it is the whole balance, so the bound is tight
+        // rather than vacuously satisfied by always returning zero.
+        assert_eq!(levy_amount(Money::new(3400), 1000), Money::new(3400));
+    }
+
+    #[test]
+    fn levy_amount_is_zero_at_the_null_rate() {
+        // A9's arithmetic half: rate 0 takes nothing from anyone, so a
+        // rate-0 run cannot diverge from the pre-cure trajectory by a coin.
+        for balance in [0u64, 1, 50, 3400, 52_148] {
+            assert_eq!(levy_amount(Money::new(balance), 0), Money::ZERO);
+        }
+    }
+
+    #[test]
+    fn the_integer_floor_is_a_means_test_at_fifty_gold() {
+        // The design's progressivity is the flooring division, not a
+        // guard: at 20‰ every balance under 50 g levies exactly zero and
+        // still receives a full share. Pinned at the boundary in both
+        // directions so a later change to the rate or the rounding cannot
+        // move it silently.
+        assert_eq!(levy_amount(Money::new(49), 20), Money::ZERO);
+        assert_eq!(levy_amount(Money::new(50), 20), Money::new(1));
+        assert_eq!(levy_amount(Money::new(99), 20), Money::new(1));
+        assert_eq!(levy_amount(Money::new(100), 20), Money::new(2));
+        // the richest measured wallet, for scale: 14,480 g pays 289
+        assert_eq!(levy_amount(Money::new(14_480), 20), Money::new(289));
+    }
+
+    #[test]
+    fn pack_one_ships_the_rate_at_zero_and_no_phase_reads_it() {
+        // Two facts this pack is gated on, pinned so a stray edit cannot
+        // land the mechanic early: the constant is 0 (pack 2 item 2 freezes
+        // it at 20), and `tick_with_rate` at ANY rate is `tick` — because
+        // no phase reads the parameter yet.
+        assert_eq!(RECYCLE_PERMILLE, 0);
+
+        let mut a = crate::engine::worldgen::town_world();
+        let mut b = crate::engine::worldgen::town_world();
+        for _ in 0..25 {
+            let plain = tick(&mut a);
+            let rated = tick_with_rate(&mut b, 999);
+            assert_eq!(
+                format!("{:?}", plain.events),
+                format!("{:?}", rated.events),
+                "a rate parameter changed behavior in pack 1"
+            );
+        }
+        for metal in Metal::ALL {
+            assert_eq!(a.accounts.total_money(metal), b.accounts.total_money(metal));
+            assert_eq!(
+                a.accounts.total_minted(metal),
+                b.accounts.total_minted(metal)
+            );
+            assert_eq!(
+                a.accounts.total_burned(metal),
+                b.accounts.total_burned(metal)
+            );
+        }
+        // and nothing minted or burned at tick time, still
+        assert_eq!(a.accounts.total_burned(Metal::Gold), Money::ZERO);
     }
 
     #[test]

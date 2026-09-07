@@ -160,6 +160,12 @@ pub enum WorldError {
     /// `immigrate` and, since pack 3, by `found_business` — newcomers and
     /// new firms compete for the same premises.
     HouseNotVacant(HouseId),
+    /// A `disburse` asked to issue more than the remaining pot allows
+    /// (conserved-recycle pack 1). The faucet's refusal point: `mint` is
+    /// infallible and the §8.3 audit cannot see a mint at all, so this is
+    /// the only place an over-issue can be caught at the call site rather
+    /// than at the end of the tick. Nothing was minted.
+    OverIssue { requested: Money, remaining: Money },
     /// The money core refused; wrapped unchanged.
     Money(MoneyError),
 }
@@ -240,6 +246,91 @@ impl World {
         }
         self.accounts.transfer(from, to, metal, amount)?;
         Ok(())
+    }
+
+    /// Validated destruction: the levy leg of the conserved recycle (spec
+    /// 2026-09-07). The missing command-layer wrapper for `burn` — until
+    /// this landed, `World::pay` was the only wrapper over the §8.2
+    /// chokepoint and `Accounts::burn` had no non-test caller at all.
+    ///
+    /// `from` must be a SPAWNED AGENT — deliberately narrower than
+    /// [`is_known_account`](World::is_known_account), which also admits the
+    /// Mint id, the External id and every live business id. Households-only
+    /// is the design, not an optimisation: a coffer levy would bite exactly
+    /// the buffer `draw_amount` retains and the `CLOSE_INSOLVENT_TICKS`
+    /// fuse reads through `owed_total()`. Widening this is a
+    /// signature-level change and needs the spec's open question 3 re-ruled.
+    ///
+    /// Validated FIRST, nothing touched before the check (the 07-03 layer
+    /// property: `Err` always means nothing changed). `Money::ZERO` is an
+    /// `Ok` no-op creating no account entry — `burn`'s own zero guard.
+    ///
+    /// # Errors
+    ///
+    /// [`WorldError::UnknownAgent`] for a reserved id, a live business id or
+    /// a ghost id — nothing burned. [`WorldError::Money`] forwards
+    /// [`MoneyError::InsufficientFunds`](crate::money::MoneyError) unchanged,
+    /// nothing applied (§8.5).
+    #[allow(dead_code)] // no phase calls it until pack 2 wires the levy
+    pub fn levy(&mut self, from: AgentId, metal: Metal, amount: Money) -> Result<(), WorldError> {
+        if self.agent(from).is_none() {
+            return Err(WorldError::UnknownAgent(from));
+        }
+        self.accounts.burn(from, metal, amount)?;
+        Ok(())
+    }
+
+    /// Validated creation, scoped to a pot: the payout leg of the conserved
+    /// recycle (spec 2026-09-07). `pot` is the *remaining unissued* pot;
+    /// the call returns what is left after this share, which the caller
+    /// threads.
+    ///
+    /// `to` must be a SPAWNED AGENT, the same narrow rule as
+    /// [`levy`](World::levy) — a recycle share never lands on a coffer, the
+    /// Mint or External. `amount == Money::ZERO` returns `Ok(pot)` WITHOUT
+    /// calling `mint`: unlike `transfer` and `burn`, `Accounts::mint` has no
+    /// zero guard and would insert a zero-balance entry, so this wrapper
+    /// restores the no-entry-on-zero property at the command layer.
+    ///
+    /// **What pot-scoping does and does not buy.** It gives the faucet a
+    /// refusal point the trusted core structurally lacks — `mint` returns
+    /// `()` and cannot refuse, its gold-reserve cap deferred at
+    /// @src/money.rs:133 — and localises the remaining pot in one function
+    /// that can say no. It does NOT by itself make `sum(disbursed) <= pot`
+    /// a command-layer invariant, and does not claim to: `pot` is an
+    /// argument, not `World` state, so a caller re-passing the original pot
+    /// every call would be accepted every time. The unconditional guard
+    /// against that is the per-tick matched-issue assertion pack 2 lands in
+    /// `sim::tick`, which reads the §8.4 logs rather than the threaded
+    /// value. This is also the single place a future gold-backing cap would
+    /// be enforced.
+    ///
+    /// # Errors
+    ///
+    /// [`WorldError::UnknownAgent`] for any non-agent id.
+    /// [`WorldError::OverIssue`] when `amount > pot` — nothing minted.
+    #[allow(dead_code)] // no phase calls it until pack 2 wires the payout
+    pub fn disburse(
+        &mut self,
+        to: AgentId,
+        metal: Metal,
+        amount: Money,
+        pot: Money,
+    ) -> Result<Money, WorldError> {
+        if self.agent(to).is_none() {
+            return Err(WorldError::UnknownAgent(to));
+        }
+        if amount > pot {
+            return Err(WorldError::OverIssue {
+                requested: amount,
+                remaining: pot,
+            });
+        }
+        if amount == Money::ZERO {
+            return Ok(pot); // `mint` has no zero guard; don't create an entry
+        }
+        self.accounts.mint(to, metal, amount);
+        Ok(pot.minus(amount))
     }
 
     /// Houses `agent` at `house` (link rule: writes only the agent-side
@@ -673,6 +764,204 @@ mod tests {
     use crate::metal::Metal;
     use crate::money::{Money, MoneyError};
     use std::collections::HashMap;
+
+    // --- Conserved recycle pack 1: the two command-layer wrappers ---
+
+    /// A world with one agent, one live business, and a known-ghost id —
+    /// the four id classes `levy`/`disburse` must tell apart.
+    fn recycle_fixture() -> (World, AgentId, AgentId, AgentId) {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let person = world.spawn_agent("payee", None, None);
+        let business = world
+            .create_business(house, person, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let ghost = AgentId(9_999);
+        assert!(world.agent(ghost).is_none());
+        (world, person, business, ghost)
+    }
+
+    /// Every account's balance on every metal, so a refusal can be shown to
+    /// have touched nothing — `Err` means nothing changed (07-03 property).
+    fn books(world: &World, ids: &[AgentId]) -> Vec<(AgentId, Metal, Money)> {
+        let mut out = Vec::new();
+        for &id in ids {
+            for metal in Metal::ALL {
+                out.push((id, metal, world.accounts.balance_of(id, metal)));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn levy_and_disburse_refuse_every_non_agent_id() {
+        let (mut world, person, business, ghost) = recycle_fixture();
+        world.accounts.mint(person, Metal::Gold, Money::new(500));
+        world.accounts.mint(business, Metal::Gold, Money::new(500));
+        let mint_id = world.mint_id;
+        let external_id = world.external_id;
+        let watched = [person, business, ghost, mint_id, external_id];
+        let before = books(&world, &watched);
+        let minted_before = world.accounts.total_minted(Metal::Gold);
+        let burned_before = world.accounts.total_burned(Metal::Gold);
+
+        // NARROWER than `is_known_account`, deliberately: households only.
+        for id in [business, ghost, mint_id, external_id] {
+            assert_eq!(
+                world.levy(id, Metal::Gold, Money::new(10)),
+                Err(WorldError::UnknownAgent(id)),
+                "levy accepted a non-agent id"
+            );
+            assert_eq!(
+                world.disburse(id, Metal::Gold, Money::new(10), Money::new(100)),
+                Err(WorldError::UnknownAgent(id)),
+                "disburse accepted a non-agent id"
+            );
+        }
+        // ...and the spawned agent is accepted by both, so the rule is a
+        // rule and not a blanket refusal.
+        assert!(world.levy(person, Metal::Gold, Money::ZERO).is_ok());
+        assert_eq!(
+            world.disburse(person, Metal::Gold, Money::ZERO, Money::new(100)),
+            Ok(Money::new(100))
+        );
+
+        assert_eq!(books(&world, &watched), before, "a refusal moved money");
+        assert_eq!(world.accounts.total_minted(Metal::Gold), minted_before);
+        assert_eq!(world.accounts.total_burned(Metal::Gold), burned_before);
+    }
+
+    #[test]
+    fn both_wrappers_are_zero_no_ops_that_create_no_account_entry() {
+        let (mut world, person, _, _) = recycle_fixture();
+        let fresh = world.spawn_agent("never-funded", None, None);
+        let burned_before = world.accounts.total_burned(Metal::Gold);
+        let minted_before = world.accounts.total_minted(Metal::Gold);
+
+        assert!(world.levy(fresh, Metal::Gold, Money::ZERO).is_ok());
+        // `disburse` returns the pot UNCHANGED and must not call `mint`,
+        // which — unlike `transfer`/`burn` — has no zero guard and would
+        // insert a zero-balance entry.
+        assert_eq!(
+            world.disburse(fresh, Metal::Gold, Money::ZERO, Money::new(77)),
+            Ok(Money::new(77))
+        );
+
+        assert_eq!(world.accounts.total_burned(Metal::Gold), burned_before);
+        assert_eq!(world.accounts.total_minted(Metal::Gold), minted_before);
+        assert_eq!(world.accounts.balance_of(fresh, Metal::Gold), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn levy_forwards_insufficient_funds_atomically() {
+        let (mut world, person, _, _) = recycle_fixture();
+        world.accounts.mint(person, Metal::Gold, Money::new(40));
+        let burned_before = world.accounts.total_burned(Metal::Gold);
+
+        assert_eq!(
+            world.levy(person, Metal::Gold, Money::new(41)),
+            Err(WorldError::Money(MoneyError::InsufficientFunds))
+        );
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Gold),
+            Money::new(40)
+        );
+        assert_eq!(world.accounts.total_burned(Metal::Gold), burned_before);
+
+        // the affordable case does move, and logs
+        assert!(world.levy(person, Metal::Gold, Money::new(40)).is_ok());
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        assert_eq!(
+            world.accounts.total_burned(Metal::Gold),
+            burned_before.plus(Money::new(40))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn disburse_refuses_over_issue_with_nothing_minted() {
+        let (mut world, person, _, _) = recycle_fixture();
+        let minted_before = world.accounts.total_minted(Metal::Gold);
+
+        assert_eq!(
+            world.disburse(person, Metal::Gold, Money::new(31), Money::new(30)),
+            Err(WorldError::OverIssue {
+                requested: Money::new(31),
+                remaining: Money::new(30),
+            })
+        );
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        assert_eq!(world.accounts.total_minted(Metal::Gold), minted_before);
+
+        // exactly the pot is allowed, and drains it to zero
+        assert_eq!(
+            world.disburse(person, Metal::Gold, Money::new(30), Money::new(30)),
+            Ok(Money::ZERO)
+        );
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Gold),
+            Money::new(30)
+        );
+        assert_eq!(
+            world.accounts.total_minted(Metal::Gold),
+            minted_before.plus(Money::new(30))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn disburse_threads_the_remaining_pot_across_payees() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        let b = world.spawn_agent("b", None, None);
+        let c = world.spawn_agent("c", None, None);
+
+        let mut pot = Money::new(30);
+        for id in [a, b, c] {
+            pot = world
+                .disburse(id, Metal::Gold, Money::new(10), pot)
+                .unwrap();
+        }
+        // the thread ends at exactly zero — the property phase 8 asserts
+        assert_eq!(pot, Money::ZERO);
+        // and a fourth payee at the drained pot is refused, not silently zero
+        assert_eq!(
+            world.disburse(c, Metal::Gold, Money::new(1), pot),
+            Err(WorldError::OverIssue {
+                requested: Money::new(1),
+                remaining: Money::ZERO,
+            })
+        );
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(30));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn levy_and_disburse_are_per_metal() {
+        let (mut world, person, _, _) = recycle_fixture();
+        world.accounts.mint(person, Metal::Silver, Money::new(100));
+
+        assert!(world.levy(person, Metal::Silver, Money::new(25)).is_ok());
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Silver),
+            Money::new(75)
+        );
+        // gold is untouched by a silver levy, and vice versa
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        assert_eq!(world.accounts.total_burned(Metal::Gold), Money::ZERO);
+
+        world
+            .disburse(person, Metal::Copper, Money::new(5), Money::new(5))
+            .unwrap();
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Copper),
+            Money::new(5)
+        );
+        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(100));
+        world.accounts.audit();
+    }
 
     #[test]
     fn reserved_ids_exist() {

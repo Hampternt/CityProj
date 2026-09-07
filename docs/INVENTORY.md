@@ -135,6 +135,16 @@ work inherits.
   silver and copper savings that sit inert until a future market can price
   them.
 
+- 🚧 **The town stops shrinking** —
+  [`docs/manifests/2026-09-07-conserved-recycle.md`](manifests/2026-09-07-conserved-recycle.md).
+  Today the town declines whatever the firms do: nine residents have no job
+  the economy needs, spend down their savings, go hungry and leave, and each
+  departure takes demand with it. In flight: a small slice of every wallet is
+  collected each tick and paid straight back out in equal shares, so nobody
+  is left below the price of a day's food. No money is created or destroyed
+  by it — the same coins simply keep moving. Measured, the town then holds
+  its full size indefinitely instead of emptying.
+
 ## Terrain and the map playground — `map` · `tools/map_viewer.html`
 
 The town sits on a generated landscape: an integer heightmap over world
