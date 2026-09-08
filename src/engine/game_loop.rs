@@ -504,7 +504,20 @@ fn render_event(world: &World, dead: &DeadThisTick, event: &Event) -> String {
             }
         }
         Event::Recycled { pot, heads, share } => {
-            format!("the common purse gathered {pot}g and paid {share}g to each of {heads}")
+            // The flooring division leaves a remainder that `mint_phase`
+            // distributes to the lowest ids, so `share × heads` does NOT
+            // generally equal the pot — saying only "paid {share}g to each
+            // of {heads}" states an arithmetically false sentence whenever
+            // it does not divide evenly (caught by the 2026-09-08 review).
+            let remainder = pot.minus(share.times(*heads as u32));
+            if remainder == crate::money::Money::ZERO {
+                format!("the common purse gathered {pot}g and paid {share}g to each of {heads}")
+            } else {
+                format!(
+                    "the common purse gathered {pot}g and paid {share}g to each of {heads} \
+                     (the first {remainder} got a coin more)"
+                )
+            }
         }
     }
 }

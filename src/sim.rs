@@ -374,9 +374,26 @@ pub(crate) const RECYCLE_PERMILLE: u64 = 20;
 ///   integer floor is the design's progressivity**: every balance below
 ///   50 g pays nothing and still receives a full share, by construction
 ///   rather than by a guard.
-#[allow(dead_code)] // no phase calls it until pack 2 wires the levy
+/// # Panics
+///
+/// If `permille > 1000`. The no-overdraft property this function exists to
+/// guarantee holds only over that range, and out of range the failure was
+/// previously silent-or-misleading: `permille` is `u64` but
+/// `Money::times` takes `u32`, so `2^32` truncated to a null rate and ran a
+/// silent no-op tick, while `1001` made `levy_amount(999, 1001) = 1000` and
+/// blew up two frames away in `sinks`, on an `.expect` whose message
+/// asserts the opposite of what happened. `tick_with_rate` is advertised as
+/// the migration path if a successor turns this constant into policy data,
+/// so the range is checked HERE, where the guarantee lives, rather than
+/// left to every future caller.
 pub(crate) fn levy_amount(balance: Money, permille: u64) -> Money {
-    balance.times(permille as u32).divided_by(1000)
+    assert!(
+        permille <= 1000,
+        "recycle rate {permille}‰ exceeds 1000‰ — levy_amount's no-overdraft \
+         guarantee is defined only up to the whole balance"
+    );
+    let permille = u32::try_from(permille).expect("checked <= 1000 above");
+    balance.times(permille).divided_by(1000)
 }
 
 /// How many full-staffing wage bills a business retains before paying
@@ -2358,6 +2375,15 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "exceeds 1000")]
+    fn levy_amount_refuses_a_rate_above_the_whole_balance() {
+        // Found by the 2026-09-08 consolidation review: `permille` is u64
+        // but `Money::times` takes u32, so 2^32 silently truncated to a
+        // null rate and 1001 overdrew two frames away in `sinks`.
+        levy_amount(Money::new(999), 1001);
+    }
+
+    #[test]
     fn levy_amount_is_zero_at_the_null_rate() {
         // A9's arithmetic half: rate 0 takes nothing from anyone, so a
         // rate-0 run cannot diverge from the pre-cure trajectory by a coin.
@@ -3508,6 +3534,94 @@ mod tests {
     /// Since pack 4 the story ends differently: the idle agent's ruin
     /// (07-19: nobody saves the unemployed) now plays out as emigration
     /// — broke by t1, hungry from ~t5, gone by ~t9.
+    /// A11's DIVIDEND-ORDERING CLAUSE, exercised where a departure
+    /// actually happens — and it FIRES. The name says `can`, because it
+    /// does.
+    ///
+    /// The burn/mint split forecloses paying the dividend before phase 7
+    /// judges someone destitute — only row 8 permits the payout leg — so an
+    /// agent can in principle be swept to External at phase 7 while the
+    /// share that would have cleared the cheapest Food price arrives at
+    /// phase 8. Pack 3 first put this check inside the shock soak, where it
+    /// was **unreachable**: that soak also asserts zero departures, so the
+    /// clause could never fire and proved nothing while the ledger
+    /// advertised it as live. The 2026-09-08 consolidation review caught
+    /// that; this is the honest replacement.
+    ///
+    /// It runs the one fixture that DOES produce a departure and asks the
+    /// question directly, reading the leaver's balance at the point phase
+    /// 7's decide reads it — after phases 1–6, not before the tick.
+    #[test]
+    fn the_dividend_can_arrive_too_late_to_save_a_leaver() {
+        let (mut world, _, _, idle) = seeded_minimal_economy();
+        let mut verdict: Option<(u64, Money, Money, Money)> = None;
+
+        for t in 1..=10u64 {
+            // What phase 7's destitution decide will compare against, and
+            // what phase 8 would hand out if the levy fires this tick.
+            let before = world.accounts.balance_of(idle, Metal::Gold);
+            let cheapest = world
+                .businesses()
+                .filter(|(_, business)| business.product == Good::Food)
+                .map(|(_, business)| business.price)
+                .min();
+            let report = tick(&mut world);
+            let departed = report
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Departed { agent, .. } if *agent == idle));
+            if departed {
+                let share = report
+                    .events
+                    .iter()
+                    .find_map(|event| match event {
+                        Event::Recycled { share, .. } => Some(*share),
+                        _ => None,
+                    })
+                    .unwrap_or(Money::ZERO);
+                verdict = Some((t, before, share, cheapest.unwrap_or(Money::ZERO)));
+                break;
+            }
+        }
+
+        let (t, before, share, cheapest) = verdict.expect(
+            "the idle agent never left — this fixture is the only place the ordering \
+             clause can be exercised, so if it stops emigrating the clause needs a new home",
+        );
+        // THE MEASURED ANSWER, and it is not the comfortable one: the
+        // asymmetry FIRES. At t7 the leaver holds 0 g, the cheapest Food
+        // price is 1 g, and that tick's per-head share is 1 g — so the
+        // dividend would have cleared the price exactly. Phase 7 judges
+        // them destitute against their PRE-dividend balance and sweeps them
+        // to External; phase 8 then pays a share to a roster they are no
+        // longer on.
+        //
+        // This is the behavioral cost the spec's open question 1 named and
+        // could not measure. It is pinned here rather than argued away, and
+        // A11's instruction is followed literally: "recorded in the ledger
+        // as a known asymmetry of the burn/mint split against a
+        // single-phase transfer expression". Fixing it means paying the
+        // dividend before the destitution decide, which only the transfer
+        // route allows — an owner ruling, not a tuning change.
+        //
+        // Scope, stated so this is not read as bigger than it is: zero
+        // departures occur in the shipped cured town at any horizon, so
+        // this fires in a fixture and not in the shipped scenario. That
+        // makes it a live defect of the mechanism, not of the town.
+        assert_eq!(
+            (t, before, share, cheapest),
+            (7, Money::ZERO, Money::new(1), Money::new(1)),
+            "the ordering asymmetry moved off its measured values — re-measure and re-pin, \
+             and if it has been CURED (the share no longer clears the price) say so \
+             explicitly, because that would mean open question 1 was revisited"
+        );
+        assert!(
+            before.plus(share) >= cheapest,
+            "the asymmetry no longer fires — see above; this is good news that must be \
+             recorded deliberately, not a criterion to delete"
+        );
+    }
+
     #[test]
     fn minimal_economy_feeds_the_worker_and_the_idle_leaves_town() {
         let (mut world, farm_house, worker, idle) = seeded_minimal_economy();

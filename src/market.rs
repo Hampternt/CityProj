@@ -348,6 +348,15 @@ pub struct FoundTemplate {
 ///     4 / 3 / 3      21           t571        1         0          6 (ends t579)       FAIL
 ///     4 / 2 / 2      21           t571        1         0          6 (ends t579)       PASS  ← shipped
 ///
+/// **The knob is coupled, and the sweep table does not show it** (named by
+/// the 2026-09-08 review): headcount also gates WHO may found and how much
+/// cash the entrant sits on. `decide_founding` computes
+/// `capital = wage × headcount × FOUND_CAPITAL_BILLS` and the eligibility
+/// bar as `capital + FOUNDER_RESERVE`, so Food's 2 → 4 took the bar from
+/// 35×2×3 + 200 = **410 g to 620 g** (+51%) and doubled the founded firm's
+/// retained buffer from 210 g to 420 g. Anyone re-tuning this column is
+/// moving three things at once, and the outcomes below are their net.
+///
 /// Read the last two rows together: **the churn was Entertainment's, not
 /// Food's.** Raising Entertainment's entrant is what breaks the anti-churn
 /// criterion (two founded Entertainment firms dying inside one 100-tick

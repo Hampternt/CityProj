@@ -271,7 +271,6 @@ impl World {
     /// a ghost id — nothing burned. [`WorldError::Money`] forwards
     /// [`MoneyError::InsufficientFunds`](crate::money::MoneyError) unchanged,
     /// nothing applied (§8.5).
-    #[allow(dead_code)] // no phase calls it until pack 2 wires the levy
     pub fn levy(&mut self, from: AgentId, metal: Metal, amount: Money) -> Result<(), WorldError> {
         if self.agent(from).is_none() {
             return Err(WorldError::UnknownAgent(from));
@@ -309,7 +308,6 @@ impl World {
     ///
     /// [`WorldError::UnknownAgent`] for any non-agent id.
     /// [`WorldError::OverIssue`] when `amount > pot` — nothing minted.
-    #[allow(dead_code)] // no phase calls it until pack 2 wires the payout
     pub fn disburse(
         &mut self,
         to: AgentId,

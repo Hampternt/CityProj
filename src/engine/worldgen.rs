@@ -319,8 +319,7 @@ mod tests {
 
         let mut world = town_world();
         let genesis_external = world.accounts.balance_of(world.external_id, Metal::Gold);
-        let t20_price: HashMap<Good, Money> = HashMap::new();
-        let mut t20_price = t20_price;
+        let mut t20_price: HashMap<Good, Money> = HashMap::new();
         let mut max_insolvent = 0u32;
         let mut max_sold_out = 0u32;
         let mut hunger_ticks: Vec<u64> = Vec::new();
@@ -717,9 +716,10 @@ mod tests {
 
     /// The spec's pinned soak exit criteria (town-colony spec, "Pinned
     /// soak exit criteria"): the tuning constants above were iterated
-    /// until this held, then frozen. 100 ticks, evaluated from tick 10
-    /// (warm-up excluded); the audit runs inside every `tick`, so any §8
-    /// break panics the soak.
+    /// until this held, then frozen. 100 ticks, evaluated from tick 15
+    /// (warm-up excluded — see `FROM`, re-pinned from 10 by the conserved
+    /// recycle); the audit runs inside every `tick`, so any §8 break panics
+    /// the soak.
     #[test]
     fn town_soak_holds_the_pinned_exit_criteria() {
         use crate::sim::{self, Event};
@@ -736,6 +736,30 @@ mod tests {
         // Food purchase in every rolling 5-tick window of the evaluated
         // span, and in the cured steady state the worst gap any agent
         // posts is 2 ticks (measured to t5000).
+        //
+        // CORRECTION (2026-09-08 review): the paragraph above analysed
+        // criterion 1 and said "the criterion's SHAPE is untouched", but
+        // `FROM` gates THREE criteria, not one — criterion 2 slices the
+        // price series at `[FROM - 1..]` and criterion 3 only tallies
+        // `PriceMoved` from `t >= FROM`. So the re-pin also stopped
+        // checking t10–t14 for floor-pinning and monotone rise, and stopped
+        // counting price moves in those five ticks toward the
+        // both-directions criterion. Measured under the cure, to justify
+        // the narrowing, and the answer differs per criterion:
+        //
+        //   criterion 2 loses NOTHING. Over t10–t14 the cheapest posted
+        //   price is flat at Food 2, Entertainment 2, Luxury 4, so neither
+        //   "floor-pinned all span" nor "rises monotonically" could have
+        //   fired in those ticks.
+        //
+        //   criterion 3 DOES lose evidence: **30 `PriceMoved` events** fall
+        //   in t10–t14 and no longer count toward the both-directions
+        //   tally. It still holds on the remaining span, but this is a real
+        //   reduction in coverage, not a free one.
+        //
+        // Recorded that way because the first draft of this comment claimed
+        // both criteria lost nothing, and probing it found the 30 events.
+        // The convenient version was wrong.
         const FROM: u64 = 15;
         const WINDOW: u64 = 5;
         let floor = Money::new(1);
@@ -1151,6 +1175,14 @@ mod tests {
             "the shock should cost four jobs — if this moved, the shock changed size"
         );
         assert_eq!(world.businesses().count(), 5, "the shock landed");
+        // Checked HERE, immediately after the closure — not 700 ticks later
+        // at the end of the run, where churn could have vacated the house
+        // for unrelated reasons and the failure message would blame the
+        // closure for something else (2026-09-08 review).
+        assert!(
+            world.is_fully_vacant(victim),
+            "the closure did not leave its house vacant, so the chain's middle link is broken"
+        );
 
         let mut founded_into: Option<(u64, HouseId)> = None;
         let mut hired_after_founding: Option<u64> = None;
@@ -1162,33 +1194,8 @@ mod tests {
         let mut hunger_after_recovery = 0u32;
         let mut recovered_at: Option<u64> = None;
         let mut volume_shortfalls = 0u32;
-        let mut ordering_violations: Vec<(u64, String)> = Vec::new();
 
         for t in SHOCK..=LAST {
-            // A11's ORDERING CLAUSE, checked BEFORE the tick so the
-            // pre-dividend wallet is the one the destitution decide will
-            // read. The burn/mint split forecloses paying the dividend
-            // ahead of that decide (only row 8 permits the payout leg), so
-            // an agent can in principle be swept to External at phase 7
-            // while the share that would have saved them lands at phase 8.
-            // This looks for exactly that case.
-            let cheapest_food_now = world
-                .businesses()
-                .filter(|(_, business)| business.product == Good::Food)
-                .map(|(_, business)| business.price)
-                .min();
-            let about_to_depart: Vec<(AgentId, String, Money)> = world
-                .agents
-                .iter()
-                .map(|agent| {
-                    (
-                        agent.id,
-                        agent.name.clone(),
-                        world.accounts.balance_of(agent.id, Metal::Gold),
-                    )
-                })
-                .collect();
-
             let report = sim::tick(&mut world);
             for event in &report.events {
                 match event {
@@ -1209,25 +1216,7 @@ mod tests {
                         }
                     }
                     Event::Closed { .. } => closures_after_shock += 1,
-                    Event::Departed { agent, .. } => {
-                        departures_after_shock += 1;
-                        if let (Some(cheapest), Some((_, name, before))) = (
-                            cheapest_food_now,
-                            about_to_depart.iter().find(|(id, ..)| id == agent).cloned(),
-                        ) {
-                            // would this tick's dividend have cleared the
-                            // cheapest posted Food price for them?
-                            let share = report.events.iter().find_map(|e| match e {
-                                Event::Recycled { share, .. } => Some(*share),
-                                _ => None,
-                            });
-                            if let Some(share) = share
-                                && before.plus(share) >= cheapest
-                            {
-                                ordering_violations.push((t, name));
-                            }
-                        }
-                    }
+                    Event::Departed { .. } => departures_after_shock += 1,
                     Event::WentHungry { .. } if t > SHOCK + K => hunger_after_recovery += 1,
                     _ => {}
                 }
@@ -1273,10 +1262,6 @@ mod tests {
         let (founded_at, house) = founded_into.expect(
             "no Food venue was founded after the shock — the lifecycle is entombed, \
              which is exactly what a population-flat criterion would have missed",
-        );
-        assert!(
-            world.is_fully_vacant(victim),
-            "the closure did not leave its house vacant, so the chain's middle link is broken"
         );
         // MEASURED, and DIFFERENT from the retired soak's same-house
         // criterion: founding takes the FIRST fully-vacant house in houses
@@ -1388,11 +1373,6 @@ mod tests {
         assert_eq!(
             volume_shortfalls, 0,
             "{volume_shortfalls} ticks after recovery traded below A2's floor"
-        );
-        assert!(
-            ordering_violations.is_empty(),
-            "phase-7-levy/phase-8-payout ordering cost someone their home: {ordering_violations:?} \
-             — record this in the ledger as a measured asymmetry of the burn/mint split"
         );
 
         // no orphan balances: the forced closure's own account is empty

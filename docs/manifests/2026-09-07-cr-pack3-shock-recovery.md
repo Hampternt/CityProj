@@ -22,10 +22,20 @@ fixing them must show up as a re-pin.
 - **Per-good, not one knob.** The old sweep moved all three goods together, which
   is why it read Entertainment's churn as a verdict on bigger entrants in general.
   Swept per-good, only Food needed to move.
-- **The frozen null twins stay frozen.** The shipped value was chosen partly
-  *because* it keeps them green. Had the winning value broken them, the honest
-  route would have been a recorded re-pin with attribution — but it did not come
-  to that, and no twin was touched.
+- **The frozen null twins stay green.** The shipped value was chosen partly
+  *because* it keeps them passing.
+  **CORRECTED 2026-09-08 — this bullet originally said "stay frozen … no twin was
+  touched", and that was wrong in substance.** The twins copy test *bodies* but
+  read *live* production constants, so raising Food's founding headcount moved the
+  pre-cure trajectory they exist to pin **without editing a line of that file**,
+  and every criterion kept passing on its slack. Measured, same test, same rate 0,
+  only the constant differing:
+  headcount 2 → closures `[140, 153, 156, 179, 182, 199]`, Food births `[142]`,
+  5 businesses; headcount 4 → closures `[140, 153, 156, 166, 190, 193, 195]`,
+  Food births `[142, 169, 194]`, 6 businesses. Passing is not the same as
+  unchanged, and conflating them is exactly the laundering that module exists to
+  prevent. The trajectory is now pinned outright in the twin, so any future drift
+  fails loudly and must be re-pinned with its cause named.
 
 ## Items
 
@@ -105,14 +115,27 @@ departures, population never dips, the sixth venue returns, Food's cheapest pric
 returns inside its pre-shock band and never exceeds 4× it *at any tick of the
 recovery*, and every tick after recovery clears A2's volume floor.
 
-**The dividend-ordering clause holds, and it is checked the only way that means
-anything.** The burn/mint split forecloses paying the dividend before phase 7's
-destitution decide, so an agent could in principle be swept to External while the
-share that would have saved them lands at phase 8. The soak captures every
-wallet *before* each tick and, for any `Departed`, checks whether that tick's
-share would have cleared the cheapest posted Food price. **Zero violations** —
-but the check is live, so if the ordering ever does cost someone their home, the
-soak names them rather than the ledger claiming it cannot happen.
+**The dividend-ordering clause — CORRECTED 2026-09-08, and the correction
+reverses the finding.** This pack put the check inside the shock soak and reported
+"zero violations … the check is live". It was neither. The soak also asserts zero
+departures, so the clause was **unreachable** and proved nothing; and it read the
+wallet captured *before* the tick, whereas phase 7's decide reads it after phases
+1–6. Both caught by the consolidation review.
+
+Re-homed in `the_dividend_can_arrive_too_late_to_save_a_leaver`, running the one
+fixture that actually emigrates someone — **and the asymmetry FIRES.** At t7 the
+leaver holds 0 g, the cheapest Food price is 1 g, and that tick's per-head share
+is 1 g: the dividend would have cleared the price exactly, but phase 7 sweeps them
+to External against their pre-dividend balance and phase 8 then pays a share to a
+roster they are no longer on.
+
+This is the behavioural cost the spec's **open question 1** named and could not
+measure. A11's instruction is followed literally — recorded as a known asymmetry
+of the burn/mint split against a single-phase transfer expression — and pinned at
+its measured values. Scope, so it is not read as larger than it is: **zero
+departures occur in the shipped cured town at any horizon**, so this fires in a
+fixture, not in the shipped scenario. It is a live defect of the mechanism, not of
+the town — and it is new evidence bearing on a ruling the owner has not revisited.
 
 ### Item 5 — spec erratum 1
 
@@ -138,3 +161,43 @@ seller should expect to repeat this pack's sweep for that good.
 The nine residents with no wage or draw income are unchanged and unchangeable
 here: that is the technology, not the founding template, and growth is the
 successor container's problem.
+
+---
+
+## Consolidation review, 2026-09-08 (post-close)
+
+The three conserved-recycle packs were the only un-code-reviewed work on the
+branch — the earlier milestones had five-lens close reviews. A high-effort review
+raised **14 findings**; all real ones are applied, and the two that matter are
+recorded above at their point of use rather than only here.
+
+**The two that mattered were both false claims of mine, not sim defects** — the
+same pattern every close review on this branch has found:
+
+1. **"The frozen null twins stay frozen."** They did not. The twins copy bodies,
+   not constants, so pack 3's template change moved the baseline while every
+   criterion passed on slack. Reproduced by reverting one constant. The trajectory
+   is now pinned outright.
+2. **"The dividend-ordering clause is live … zero violations."** It was
+   unreachable (the same soak asserts zero departures) and read the wrong balance.
+   Re-homed where a departure actually happens — **and it fires**.
+
+Also applied: `levy_amount` now rejects a rate above 1000‰ (it silently truncated
+`u64`→`u32` and could overdraw two frames away, panicking on an `.expect` whose
+message denied what had happened); three stale `#[allow(dead_code)]` retired; the
+shell's recycle line no longer states false arithmetic when the pot doesn't divide
+evenly; the closure's vacancy check moved from 700 ticks late to immediately after
+the closure; the `FROM` re-pin's true cost measured per criterion (criterion 2
+loses nothing, criterion 3 loses 30 `PriceMoved` events — the first draft of that
+comment claimed both lost nothing and probing refuted it); the headcount knob's
+coupling to the founder capital bar (+51%) documented; a duplicate `cfg(test)`,
+a dead rebinding and two stale doc lines cleaned up.
+
+**One finding rejected, with reasoning.** The review flagged that both recycle
+legs re-validate ids by linear scan inside `World::levy`/`disburse`, making each
+leg O(n²) per tick. That scan **is** the command-layer validation — the §8.2
+chokepoint's guarantee that `Err` means nothing changed. Bypassing it for callers
+that "know" the id is valid is precisely the widening this design refused when it
+made both wrappers households-only. The cost is ~1,800 comparisons per tick in a
+30-agent town; the correct fix, if it ever matters, is an id→index map inside
+`World`, not a trusted back door.

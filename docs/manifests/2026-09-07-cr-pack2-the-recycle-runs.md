@@ -20,6 +20,11 @@ runs emigration only; phase 8 is an empty stub.
   one body served both the null and the cured criteria, re-cutting the cured ones
   would reshape the null ones too — laundering exactly the regression A9 exists to
   detect.
+  *(Amended 2026-09-08: this pack's file header claimed the copies "buy a baseline
+  that cannot drift". They do not — a copied body still reads live production
+  constants, and pack 3's founding-headcount change moved this baseline without
+  touching the file. What the copies freeze is the CRITERIA; the trajectory is now
+  pinned separately.)*
 - **Every re-cut carries the measurement that retired the old assertion**, in the
   test's own doc comment, as a table. A criterion is retired on the record or not
   at all.

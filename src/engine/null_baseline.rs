@@ -4,21 +4,32 @@
 //! These are verbatim copies of the three town soaks as they stood at
 //! `c11a73e`, immediately before the recycle was given a magnitude — same
 //! bodies, same criteria, same literals — with exactly ONE edit each:
-//! `sim::tick_with_rate(&mut world, 0)` becomes `sim::tick_with_rate(&mut world, 0)`.
+//! `sim::tick(&mut world)` becomes `sim::tick_with_rate(&mut world, 0)`.
 //!
 //! Why copies rather than one body parameterised over the rate: the cured
 //! soaks in `worldgen.rs` are re-cut by this pack (the cure inverts six of
 //! the 200-tick soak's assertions and panics a seventh). If one body served
 //! both, re-cutting the cured criteria would necessarily reshape the null
 //! criteria too — laundering exactly the regression A9 exists to detect.
-//! Frozen copies cost ~600 duplicated lines and buy a baseline that cannot
-//! drift.
+//! Frozen copies cost ~600 duplicated lines.
 //!
-//! **These must never be "fixed" to match a re-cut cured soak.** If one of
-//! them goes red, the recycle changed behavior at rate 0, which is a bug in
-//! the mechanic, not in the test.
+//! **What they do and do NOT freeze — corrected 2026-09-08 after a review
+//! caught the original claim overreaching.** This file said the copies "buy
+//! a baseline that cannot drift". They cannot: a copied body still reads
+//! LIVE production constants, so any tuning change moves the trajectory
+//! here without editing a line of this file — pack 3's founding-headcount
+//! re-freeze did exactly that, and every criterion kept passing on its
+//! slack. What is frozen is the CRITERIA. What is now also pinned, at the
+//! bottom of the 200-tick twin, is the trajectory itself.
+//!
+//! **These must never be "fixed" to match a re-cut cured soak.** If one goes
+//! red, either the recycle changed behavior at rate 0 — a bug in the
+//! mechanic — or some other constant moved the baseline, which is legitimate
+//! but must be re-pinned deliberately with the cause named. Establish which
+//! before touching anything: revert the suspected change and re-run.
 
-#![cfg(test)]
+// (the module is gated `#[cfg(test)]` at its declaration in engine/mod.rs;
+// a second inner gate here would be dead and could mask that one's removal)
 
 use std::collections::HashMap;
 
@@ -613,6 +624,37 @@ fn null_town_soak_population_moves_both_directions() {
     assert!(
         closed.len() >= 3,
         "closure never reached the demand-losing venues (closed at {closed:?})"
+    );
+
+    // TRAJECTORY PIN — added by the 2026-09-08 consolidation review, which
+    // found that this file was NOT frozen in the way its header claimed.
+    //
+    // The twins copy test BODIES; they do not copy the production constants
+    // those bodies read. So pack 3's `FOUNDING_TEMPLATE` change (Food's
+    // founding headcount 2 → 4) moved this trajectory **without touching
+    // this file**, and the criteria above kept passing on their slack.
+    // Measured, same test, same rate 0, only that constant differing:
+    //
+    //     headcount 2   closures [140, 153, 156, 179, 182, 199]
+    //                   Food births [142]              5 businesses
+    //     headcount 4   closures [140, 153, 156, 166, 190, 193, 195]
+    //                   Food births [142, 169, 194]    6 businesses
+    //
+    // Pack 3's ledger said "the frozen null twins stay frozen … no twin was
+    // touched". The FILE was untouched; the BASELINE was not, and passing is
+    // not the same as unchanged. That conflation is the exact laundering this
+    // module exists to prevent, so the trajectory is now pinned outright:
+    // any change that moves it — the recycle or anything else — fails here
+    // and must be re-pinned deliberately, with the cause named.
+    assert_eq!(
+        closed,
+        vec![140, 153, 156, 166, 190, 193, 195],
+        "the rate-0 closure trajectory moved; name what moved it before re-pinning"
+    );
+    assert_eq!(
+        world.businesses().count(),
+        6,
+        "the rate-0 surviving-firm count moved; name what moved it before re-pinning"
     );
 
     // no orphan balances: every leaver's account is empty on every
