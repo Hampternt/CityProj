@@ -101,6 +101,28 @@ Refs:   @src/sim.rs `pay_wages`, @src/business.rs, §8.2, §8.5.
 
 ### Unit: mint_phase becomes a stub  (sim.rs, phase 8)
 
+> **SUPERSEDED 2026-09-07 by Amendment 22** (conserved-recycle spec,
+> `docs/superpowers/specs/2026-09-07-conserved-recycle-design.md`). Quoted
+> below in full rather than edited away, because this repo's rule is that a
+> signed contract is retracted on the record or not at all.
+>
+> **What is retracted:** phase 8 is no longer a stub. It mints every tick the
+> phase-7 recycle levy takes anything, so `total_minted` changes at tick time
+> and no longer equals the supply.
+>
+> **What survives, and is in fact stronger:** the supply itself is still the
+> worldgen seed forever. Phase 8 re-issues *exactly* the pot phase 7 burned,
+> so `total_money` never moves; `minted − burned` is the stock, and the two
+> logs become gross lifetime throughput. Nothing creates net money.
+>
+> **And the retracted contract's REASONING was wrong independently of this
+> change**, which is why the supersession corrects it rather than merely
+> replacing it: the §8.3 audit never pinned the supply and cannot.
+> `Accounts::mint` raises the credited balance and `total_minted` by the same
+> amount, so the audit identity holds for any mint at all. The supply was
+> pinned because nothing *called* `mint` at tick time. What pins it now is the
+> per-tick matched-issue assertion in `sim::tick`.
+
 Given:  any world.
 Then:   no money operation of any kind (TODO comment points at the future
         gold-backed mint business). Consequently `total_minted` changes only

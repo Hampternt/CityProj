@@ -9,15 +9,14 @@ use std::fmt;
 /// One kind of job. `Copy + Eq + Hash` so it keys `HashMap<Role, RoleSlot>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
-    #[allow(dead_code)] // no caller until the labor market lands
     Engineer,
     Labourer,
 }
 
 impl Role {
     /// Every variant, hand-enumerated — zero-dep convention, same as
-    /// `Metal::ALL`. Extend this when adding a variant.
-    #[allow(dead_code)] // no caller until the labor market lands
+    /// `Metal::ALL`. Extend this when adding a variant. Declaration
+    /// order is the labor market's role tie-break (pack 3).
     pub const ALL: [Role; 2] = [Role::Engineer, Role::Labourer];
 }
 

@@ -30,6 +30,11 @@ pub struct World {
     /// Reserved account: the out-of-node seam for imports/exports (and
     /// future node-to-node trade). Plain account, no struct.
     pub external_id: AgentId,
+    /// How many immigrants have ever arrived — the deterministic
+    /// name-table counter (town-colony pack 4). Written only by
+    /// [`immigrate`](World::immigrate); never decremented, so names
+    /// stay unique across departures.
+    pub arrivals: u32,
     next_agent_id: u32,
     next_house_id: u32,
 }
@@ -44,6 +49,7 @@ impl World {
             accounts: Accounts::new(),
             mint_id: AgentId(0),
             external_id: AgentId(1),
+            arrivals: 0,
             next_agent_id: 2, // 0 and 1 are reserved forever
             next_house_id: 0,
         }
@@ -69,6 +75,7 @@ impl World {
             employed_role: None,
             education: 0,
             inventory: HashMap::new(),
+            hunger: 0,
         });
         id
     }
@@ -144,8 +151,58 @@ pub enum WorldError {
     UnknownHouse(HouseId),
     /// The house already hosts a business — at most one per house (v1).
     BusinessAlreadyExists(HouseId),
+    /// The house exists but hosts no business — the structural inverse of
+    /// [`BusinessAlreadyExists`](WorldError::BusinessAlreadyExists).
+    /// Refused by `close_business`.
+    NoBusinessHere(HouseId),
+    /// Not a vacant residence: it has occupants or hosts a business —
+    /// v1's entire vacancy rule (ownership plays no part). Refused by
+    /// `immigrate` and, since pack 3, by `found_business` — newcomers and
+    /// new firms compete for the same premises.
+    HouseNotVacant(HouseId),
+    /// A `disburse` asked to issue more than the remaining pot allows
+    /// (conserved-recycle pack 1). The faucet's refusal point: `mint` is
+    /// infallible and the §8.3 audit cannot see a mint at all, so this is
+    /// the only place an over-issue can be caught at the call site rather
+    /// than at the end of the tick. Nothing was minted.
+    OverIssue { requested: Money, remaining: Money },
     /// The money core refused; wrapped unchanged.
     Money(MoneyError),
+}
+
+/// What one `close_business` actually moved, step by step (firm-lifecycle
+/// spec, pack 2). The **event-measurement mechanism**: balance deltas
+/// measured around the *whole* command cannot attribute flows that share
+/// a wallet, and the canonical case is the owner-as-creditor — every
+/// shipped owner is their venue's first seeded worker, so a dying firm
+/// settles its owner in step 1 AND sweeps them the residual in step 3,
+/// leaving `Settled` and `Closed.proceeds` underdetermined from outside.
+/// Each amount here is measured around its own internal `pay`; callers
+/// emit events FROM the receipt, never by re-deriving.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClosureReceipt {
+    /// The dead firm's account id. Resolves to nothing once the command
+    /// returns — `is_known_account` scans the live `businesses()` set.
+    pub business: AgentId,
+    /// The freed house. Carried because `business` no longer resolves,
+    /// and because the house is what the shell can still name.
+    pub house: HouseId,
+    /// Who took the residual. Alive at every call site's emission point,
+    /// so the caller supplies the display name (no `String` here).
+    pub owner: AgentId,
+    /// Step 1: what each creditor was actually paid, ascending `AgentId`.
+    /// POSITIVE amounts only — the receipt means "what moved" (the
+    /// `apply_sinks_intent` `> ZERO` filter, applied at source). Written
+    /// -off remainders are silent: the preceding `PayrollShort`s already
+    /// told that story.
+    pub settlements: Vec<(AgentId, Money)>,
+    /// Step 2: everyone whose workplace this was, ascending `AgentId`
+    /// (`employees_of` order). They re-enter the applicant pool next tick.
+    pub laid_off: Vec<AgentId>,
+    /// Step 3: the per-metal residual swept to the owner — every
+    /// `Metal::ALL` entry in that order, **zeros included** (the
+    /// `Departed { took }` visible-zeros precedent, D3).
+    pub residual: Vec<(Metal, Money)>,
 }
 
 impl From<MoneyError> for WorldError {
@@ -191,6 +248,89 @@ impl World {
         Ok(())
     }
 
+    /// Validated destruction: the levy leg of the conserved recycle (spec
+    /// 2026-09-07). The missing command-layer wrapper for `burn` — until
+    /// this landed, `World::pay` was the only wrapper over the §8.2
+    /// chokepoint and `Accounts::burn` had no non-test caller at all.
+    ///
+    /// `from` must be a SPAWNED AGENT — deliberately narrower than
+    /// [`is_known_account`](World::is_known_account), which also admits the
+    /// Mint id, the External id and every live business id. Households-only
+    /// is the design, not an optimisation: a coffer levy would bite exactly
+    /// the buffer `draw_amount` retains and the `CLOSE_INSOLVENT_TICKS`
+    /// fuse reads through `owed_total()`. Widening this is a
+    /// signature-level change and needs the spec's open question 3 re-ruled.
+    ///
+    /// Validated FIRST, nothing touched before the check (the 07-03 layer
+    /// property: `Err` always means nothing changed). `Money::ZERO` is an
+    /// `Ok` no-op creating no account entry — `burn`'s own zero guard.
+    ///
+    /// # Errors
+    ///
+    /// [`WorldError::UnknownAgent`] for a reserved id, a live business id or
+    /// a ghost id — nothing burned. [`WorldError::Money`] forwards
+    /// [`MoneyError::InsufficientFunds`](crate::money::MoneyError) unchanged,
+    /// nothing applied (§8.5).
+    pub fn levy(&mut self, from: AgentId, metal: Metal, amount: Money) -> Result<(), WorldError> {
+        if self.agent(from).is_none() {
+            return Err(WorldError::UnknownAgent(from));
+        }
+        self.accounts.burn(from, metal, amount)?;
+        Ok(())
+    }
+
+    /// Validated creation, scoped to a pot: the payout leg of the conserved
+    /// recycle (spec 2026-09-07). `pot` is the *remaining unissued* pot;
+    /// the call returns what is left after this share, which the caller
+    /// threads.
+    ///
+    /// `to` must be a SPAWNED AGENT, the same narrow rule as
+    /// [`levy`](World::levy) — a recycle share never lands on a coffer, the
+    /// Mint or External. `amount == Money::ZERO` returns `Ok(pot)` WITHOUT
+    /// calling `mint`: unlike `transfer` and `burn`, `Accounts::mint` has no
+    /// zero guard and would insert a zero-balance entry, so this wrapper
+    /// restores the no-entry-on-zero property at the command layer.
+    ///
+    /// **What pot-scoping does and does not buy.** It gives the faucet a
+    /// refusal point the trusted core structurally lacks — `mint` returns
+    /// `()` and cannot refuse, its gold-reserve cap deferred at
+    /// @src/money.rs:133 — and localises the remaining pot in one function
+    /// that can say no. It does NOT by itself make `sum(disbursed) <= pot`
+    /// a command-layer invariant, and does not claim to: `pot` is an
+    /// argument, not `World` state, so a caller re-passing the original pot
+    /// every call would be accepted every time. The unconditional guard
+    /// against that is the per-tick matched-issue assertion pack 2 lands in
+    /// `sim::tick`, which reads the §8.4 logs rather than the threaded
+    /// value. This is also the single place a future gold-backing cap would
+    /// be enforced.
+    ///
+    /// # Errors
+    ///
+    /// [`WorldError::UnknownAgent`] for any non-agent id.
+    /// [`WorldError::OverIssue`] when `amount > pot` — nothing minted.
+    pub fn disburse(
+        &mut self,
+        to: AgentId,
+        metal: Metal,
+        amount: Money,
+        pot: Money,
+    ) -> Result<Money, WorldError> {
+        if self.agent(to).is_none() {
+            return Err(WorldError::UnknownAgent(to));
+        }
+        if amount > pot {
+            return Err(WorldError::OverIssue {
+                requested: amount,
+                remaining: pot,
+            });
+        }
+        if amount == Money::ZERO {
+            return Ok(pot); // `mint` has no zero guard; don't create an entry
+        }
+        self.accounts.mint(to, metal, amount);
+        Ok(pot.minus(amount))
+    }
+
     /// Houses `agent` at `house` (link rule: writes only the agent-side
     /// field; occupancy stays derived). Re-assigning an already-housed
     /// agent moves them.
@@ -218,50 +358,68 @@ impl World {
         }
     }
 
-    /// Sets `agent`'s workplace. Identical contract to
-    /// [`assign_home`](World::assign_home) on the `workplace` field. No
-    /// firm-side checks in v1 — any existing house qualifies; firm
-    /// validation arrives via spec amendment when firms land.
-    #[allow(dead_code)] // no caller until the labor market lands
-    pub fn assign_workplace(&mut self, agent: AgentId, house: HouseId) -> Result<(), WorldError> {
+    /// Hires `agent` into `role` at `house`: writes `workplace` and
+    /// `employed_role` together (town-colony spec, Intent contract — a
+    /// hire that set only `workplace` would fill the slot yet never
+    /// earn, since `pay_wages` pays on `employed_role`). Same validation
+    /// shape as [`assign_home`](World::assign_home); no firm-side checks
+    /// in v1 — any existing house qualifies, and headcount capping is
+    /// the labor-market apply's job, not this command's.
+    pub fn assign_workplace(
+        &mut self,
+        agent: AgentId,
+        house: HouseId,
+        role: Role,
+    ) -> Result<(), WorldError> {
         if self.agent(agent).is_none() {
             return Err(WorldError::UnknownAgent(agent)); // agent checked first
         }
         if self.house(house).is_none() {
             return Err(WorldError::UnknownHouse(house));
         }
-        self.agent_mut(agent)
-            .expect("existence checked above")
-            .workplace = Some(house);
+        let person = self.agent_mut(agent).expect("existence checked above");
+        person.workplace = Some(house);
+        person.employed_role = Some(role);
         Ok(())
     }
 
-    /// Clears `agent`'s workplace; already-unemployed is an Ok no-op.
-    #[allow(dead_code)] // no caller until the labor market lands
+    /// Clears `agent`'s workplace AND `employed_role` together (the
+    /// employed_role-implies-workplace invariant survives quitting);
+    /// already-unemployed is an Ok no-op.
     pub fn vacate_workplace(&mut self, agent: AgentId) -> Result<(), WorldError> {
         match self.agent_mut(agent) {
             Some(person) => {
                 person.workplace = None;
+                person.employed_role = None;
                 Ok(())
             }
             None => Err(WorldError::UnknownAgent(agent)),
         }
     }
 
-    /// Attaches a new business to `house`, allocating its account id from
-    /// the same counter as `spawn_agent` — never a reserved id, never
-    /// reused, and NO `Agent` struct is created (business ids are
-    /// account-only, like Mint/External). Starts with zero stock; product
+    /// Attaches a new business to `house`, owned by `owner`, allocating
+    /// its account id from the same counter as `spawn_agent` — never a
+    /// reserved id, never reused, and NO `Agent` struct is created
+    /// (business ids are account-only, like Mint/External). `owner` must
+    /// be a real spawned agent (firm-lifecycle spec: every business
+    /// always names a living owner — reserved ids, business ids, and
+    /// ghosts refuse) and is checked FIRST, per the agent-checked-first
+    /// convention of the other commands. Starts with zero stock; product
     /// is fixed at creation, price is the initial posted price; phase 4's
-    /// `market::adjust_price` adjusts price each tick based on sell-through.
-    /// Validates before touching state: `Err` means nothing changed.
+    /// `market::adjust_price` adjusts price each tick based on
+    /// sell-through. Validates before touching state: `Err` means nothing
+    /// changed.
     pub fn create_business(
         &mut self,
         house: HouseId,
+        owner: AgentId,
         product: Good,
         price: Money,
         roles: HashMap<Role, RoleSlot>,
     ) -> Result<AgentId, WorldError> {
+        if self.agent(owner).is_none() {
+            return Err(WorldError::UnknownAgent(owner)); // owner checked first
+        }
         match self.house(house) {
             None => return Err(WorldError::UnknownHouse(house)),
             Some(existing) if existing.business.is_some() => {
@@ -275,11 +433,14 @@ impl World {
             .expect("existence checked above")
             .business = Some(Business {
             id,
+            owner,
             product,
             price,
             stock: 0,
             roles,
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
+            sold_out_ticks: 0,
         });
         Ok(id)
     }
@@ -296,16 +457,301 @@ impl World {
             .filter_map(|house| house.business.as_ref().map(|business| (house, business)))
     }
 
-    /// The agent working at `house`: first match in `agents` order on the
-    /// `workplace` field — derived per the link rule, never stored
-    /// (mirrors [`occupants_of`](World::occupants_of)). `None` for
-    /// unstaffed or unknown houses. v1 businesses are single-headcount,
-    /// so "first" is "the" employee.
-    pub fn employee_of(&self, house: HouseId) -> Option<AgentId> {
+    /// Every agent working at `house`, in ascending `AgentId` order —
+    /// `agents` is append-ordered by the ascending id counter, so a scan
+    /// IS id order (pinned by test, never re-sorted). Derived per the
+    /// link rule, never stored (mirrors
+    /// [`occupants_of`](World::occupants_of)); unstaffed and unknown
+    /// houses yield empty. The deterministic-order contract every
+    /// contended decide pass inherits (town-colony spec). Replaced the
+    /// single-headcount `employee_of` in pack 2.
+    pub fn employees_of(&self, house: HouseId) -> Vec<AgentId> {
         self.agents
             .iter()
-            .find(|agent| agent.workplace == Some(house))
+            .filter(|agent| agent.workplace == Some(house))
             .map(|agent| agent.id)
+            .collect()
+    }
+
+    /// Liquidates the business at `house` — the closure command
+    /// (firm-lifecycle pack 2). Validates first: the house must exist
+    /// (`UnknownHouse`) and host a business (`NoBusinessHere`); `Err`
+    /// means nothing changed. Then, in order:
+    ///
+    /// 1. **Creditor settlement** — every `owed_to` entry, current AND
+    ///    former workers, keys explicitly sorted ascending `AgentId`
+    ///    (the ledger is a `HashMap`; the no-RNG guarantee is only as
+    ///    good as pinned iteration), each paid `min(remaining gold
+    ///    coffer, owed)`. Remainders are written off and the whole
+    ///    ledger is cleared — zero-amount entries included, since
+    ///    `pay_wages` inserts unconditionally and no entry may keep
+    ///    naming a dead firm.
+    /// 2. **Layoffs** — `vacate_workplace` for every `employees_of`,
+    ///    clearing `workplace` and `employed_role` together. They
+    ///    re-enter the applicant pool next tick.
+    /// 3. **Residual sweep** — every `Metal::ALL` balance to the
+    ///    **owner's** wallet. Liquidation proceeds belong to a living
+    ///    resident and stay in-node; `External` is the seam for money
+    ///    *leaving* the node, which this is not. Completeness is proven
+    ///    per-account by no-orphan assertions on the dead id — the
+    ///    totals-only audit cannot see a conservation-legal orphan.
+    /// 4. **Detach** — `house.business = None`, LAST, and mechanically
+    ///    so: [`is_known_account`](World::is_known_account) answers "is
+    ///    this a business id?" by scanning the live `businesses()` set,
+    ///    so detaching is a capability revocation — the instant it runs,
+    ///    every `pay` naming that id refuses and the `.expect()` idiom
+    ///    would panic. Afterwards the house — zero occupants, hosting
+    ///    nothing — satisfies the `immigrate` vacancy rule verbatim:
+    ///    closure manufactures landing pads by design.
+    ///
+    /// Atomic by construction after validation: every amount is
+    /// min-bounded by a live balance and both ids are known. The firm's
+    /// `stock` dies with its `Business` (pack-2 decision D6: the sim's
+    /// first goods sink — no invariant is touched, since goods carry no
+    /// conservation rule, and the physical-goods spec inherits the
+    /// question). Steady-state caller: phase 6's closure pass. Forced
+    /// caller: [`remove_agent`](World::remove_agent) (Amendment 19).
+    pub fn close_business(&mut self, house: HouseId) -> Result<ClosureReceipt, WorldError> {
+        let Some(existing) = self.house(house) else {
+            return Err(WorldError::UnknownHouse(house));
+        };
+        let Some(business) = existing.business.as_ref() else {
+            return Err(WorldError::NoBusinessHere(house));
+        };
+        let business_id = business.id;
+        let owner = business.owner;
+        // Collect the ledger out before any `pay`: holding a `&Business`
+        // across `self.pay` is E0502 (remove_agent's shape, mirrored).
+        // `AgentId` derives no `Ord`, so sort on the inner u32.
+        let mut debts: Vec<(AgentId, Money)> = business
+            .owed_to
+            .iter()
+            .map(|(&creditor, &owed)| (creditor, owed))
+            .collect();
+        debts.sort_by_key(|(creditor, _)| creditor.0);
+
+        let mut settlements = Vec::new();
+        for (creditor, owed) in debts {
+            let settlement = self.accounts.balance_of(business_id, Metal::Gold).min(owed);
+            if settlement > Money::ZERO {
+                self.pay(business_id, creditor, Metal::Gold, settlement)
+                    .expect("min-bounded by the live coffer, both ids validated");
+                settlements.push((creditor, settlement));
+            }
+        }
+        // Remainders written off; one clear also strips the zero-amount
+        // entries the settlement filter above never sees.
+        self.house_mut(house)
+            .expect("existence checked above")
+            .business
+            .as_mut()
+            .expect("existence checked above")
+            .owed_to
+            .clear();
+
+        let laid_off = self.employees_of(house);
+        for worker in &laid_off {
+            self.vacate_workplace(*worker)
+                .expect("collected from employees_of");
+        }
+
+        let mut residual = Vec::new();
+        for metal in Metal::ALL {
+            let balance = self.accounts.balance_of(business_id, metal);
+            residual.push((metal, balance)); // zeros included, D3
+            if balance > Money::ZERO {
+                self.pay(business_id, owner, metal, balance)
+                    .expect("min-bounded by the live balance, both ids validated");
+            }
+        }
+
+        self.house_mut(house)
+            .expect("existence checked above")
+            .business = None; // LAST — retires the account id
+        Ok(ClosureReceipt {
+            business: business_id,
+            house,
+            owner,
+            settlements,
+            laid_off,
+            residual,
+        })
+    }
+
+    /// v1's entire vacancy rule, in one place: no business, no
+    /// occupants. Ownership plays no part (`House.owners` is rule-inert).
+    /// An unknown house is not vacant — you cannot move into a house that
+    /// does not exist. Read by `immigrate`, by `found_business`, and by
+    /// phase 1's and phase 6's decide passes, which all need the SAME
+    /// predicate: a closed venue's freed house becomes a landing pad by
+    /// satisfying exactly this.
+    pub fn is_fully_vacant(&self, house: HouseId) -> bool {
+        self.house(house)
+            .is_some_and(|place| place.business.is_none() && self.occupants_of(house).is_empty())
+    }
+
+    /// Removes `agent` from the world — the emigration command
+    /// (town-colony pack 4; Amendments 17 and 19). Validates first: only
+    /// a real spawned agent qualifies — reserved and business ids refuse
+    /// — and `Err(WorldError::UnknownAgent)` means nothing changed. Then,
+    /// in order: **step 0 (Amendment 19, firm-lifecycle pack 2)** runs
+    /// the [`close_business`](World::close_business) procedure on every
+    /// house, in houses order, whose business's `owner` is the leaver —
+    /// creditors settled (the leaver included, if their own firm owes
+    /// them), staff laid off, the per-metal residual into the *leaver's*
+    /// wallet, where the sweep below then carries it out of the node.
+    /// The **returned `ClosureReceipt`s are the caller's only view of
+    /// those flows**: measured around this whole command they are
+    /// unobservable, since the leaver's wallet delta is minus their
+    /// pre-command balance whatever happened inside. A caller emitting
+    /// Amendment-17 `Settled` events from coffer deltas must therefore
+    /// EXCLUDE firms the leaver owns, or it will re-narrate closure
+    /// flows as arrears settlements. Then, unchanged: every OTHER
+    /// business still owing the leaver settles
+    /// `min(gold coffer, owed)` into their wallet and the remainder is
+    /// written off (gate ruling 2 — the ledger entry goes either way);
+    /// every `Metal::ALL` balance sweeps to External through the §8.2
+    /// chokepoint, settlement included, inert silver/copper included —
+    /// no orphan balance survives, proven per-account by tests (the
+    /// totals-only audit cannot see a conservation-legal orphan); the
+    /// leaver's id is stripped from every `House.owners`; the `Agent` is
+    /// removed, which clears home/workplace/employed_role with it since
+    /// occupancy and staffing are derived, never stored. Removal is LAST
+    /// for the same mechanical reason detach is last inside
+    /// `close_business`: during step 0 the leaver must still be a known
+    /// account, or the residual `pay` to them would refuse. After
+    /// validation no internal transfer can fail — every amount is
+    /// min-bounded by a live balance and both ids are known — so the
+    /// command is atomic by construction.
+    pub fn remove_agent(&mut self, agent: AgentId) -> Result<Vec<ClosureReceipt>, WorldError> {
+        if self.agent(agent).is_none() {
+            return Err(WorldError::UnknownAgent(agent));
+        }
+        // Step 0 (Amendment 19): the leaver's own firms are liquidated
+        // FIRST — before the A17 settlement, so any debt those firms owe
+        // the leaver is paid by `close_business`'s own creditor pass and
+        // the proceeds ride the sweep below. The `Vec<HouseId>` snapshot
+        // is mandatory: iterating `businesses()` while calling
+        // `close_business` is E0502. It is also safe against
+        // mutation-during-iteration, since closing only detaches houses
+        // already named in it. The leaver is still a known account here
+        // (removal is last), so the residual `pay` to them succeeds.
+        let owned: Vec<HouseId> = self
+            .businesses()
+            .filter(|(_, business)| business.owner == agent)
+            .map(|(house, _)| house.id)
+            .collect();
+        let mut receipts = Vec::new();
+        for house in owned {
+            receipts.push(
+                self.close_business(house)
+                    .expect("collected from businesses()"),
+            );
+        }
+        // Settlement (Amendment 17): businesses in houses order. Firms
+        // closed in step 0 are already detached, so they cannot be
+        // double-settled here — no exclusion filter is needed at this
+        // site (the one the spec mandates belongs to the CALLER's
+        // creditors snapshot, which is taken before the command).
+        let debts: Vec<(HouseId, AgentId, Money)> = self
+            .businesses()
+            .filter_map(|(house, business)| {
+                business
+                    .owed_to
+                    .get(&agent)
+                    .copied()
+                    .filter(|&owed| owed > Money::ZERO)
+                    .map(|owed| (house.id, business.id, owed))
+            })
+            .collect();
+        for (_, business_id, owed) in debts {
+            let settlement = self.accounts.balance_of(business_id, Metal::Gold).min(owed);
+            if settlement > Money::ZERO {
+                self.pay(business_id, agent, Metal::Gold, settlement)
+                    .expect("min-bounded by the live coffer, both ids validated");
+            }
+        }
+        // Strip the leaver from EVERY ledger, zero-amount entries
+        // included (pay_wages inserts unconditionally, so a zero-wage
+        // slot leaves a 0g entry the settlement filter above never
+        // sees) — no entry may keep naming a removed id.
+        for house in &mut self.houses {
+            if let Some(business) = house.business.as_mut() {
+                business.owed_to.remove(&agent); // remainder written off
+            }
+        }
+        // The per-metal sweep: everything they hold goes to External.
+        for metal in Metal::ALL {
+            let balance = self.accounts.balance_of(agent, metal);
+            if balance > Money::ZERO {
+                self.pay(agent, self.external_id, metal, balance)
+                    .expect("min-bounded by the live balance, both ids validated");
+            }
+        }
+        for house in &mut self.houses {
+            house.owners.retain(|&owner| owner != agent);
+        }
+        self.agents.retain(|person| person.id != agent);
+        Ok(receipts)
+    }
+
+    /// The migration-gated arrival command (town-colony pack 4) — a
+    /// distinct name, NOT a change to `spawn_agent` (07-13's "do not
+    /// widen the constructor" stands; Rust has no overloading, a trap
+    /// the multi-metal ledger already recorded). Validates the house
+    /// exists and is a vacant residence — zero occupants AND hosts no
+    /// business, v1's entire vacancy rule — then builds on the untouched
+    /// constructor: next id, housed at `home`, unemployed, empty
+    /// inventory, zero balances, hunger 0. Moves no money (07-03's
+    /// refusal of free-money wrappers stands — the grubstake is a
+    /// separate, capped `pay` in the Arrive apply, so a failed stake
+    /// leaves a penniless-but-valid newcomer). Bumps `arrivals`, the
+    /// immigrant-name counter. `Err` means nothing changed.
+    pub fn immigrate(&mut self, name: String, home: HouseId) -> Result<AgentId, WorldError> {
+        if self.house(home).is_none() {
+            return Err(WorldError::UnknownHouse(home)); // house checked first
+        }
+        if !self.is_fully_vacant(home) {
+            return Err(WorldError::HouseNotVacant(home));
+        }
+        let id = self.spawn_agent(&name, Some(home), None);
+        self.arrivals += 1;
+        Ok(id)
+    }
+
+    /// The tick-time founding command (firm-lifecycle pack 3) — the
+    /// `immigrate` wrapper precedent applied to firms. Validates the
+    /// founder is a real spawned agent (checked FIRST, per the
+    /// agent-checked-first convention), then that the house exists and is
+    /// fully vacant — the `immigrate` predicate verbatim, so a founder
+    /// and an immigrant compete for exactly the same premises — then
+    /// forwards to the widened `create_business` with `owner = founder`.
+    ///
+    /// **Money-free**, like `immigrate`: 07-03's refusal of money-moving
+    /// constructors stands, so the capital stake is a separate
+    /// `World::pay(founder, new_id, Gold, capital)` in the Found apply.
+    /// A failed stake can therefore never half-found a firm, and §8.5
+    /// caps it against the live wallet. Writes no agent field either —
+    /// the founder does not move in, and their self-hire is a separate
+    /// `assign_workplace`. `Err` means nothing changed.
+    pub fn found_business(
+        &mut self,
+        founder: AgentId,
+        house: HouseId,
+        product: Good,
+        price: Money,
+        roles: HashMap<Role, RoleSlot>,
+    ) -> Result<AgentId, WorldError> {
+        if self.agent(founder).is_none() {
+            return Err(WorldError::UnknownAgent(founder)); // founder checked first
+        }
+        if self.house(house).is_none() {
+            return Err(WorldError::UnknownHouse(house));
+        }
+        if !self.is_fully_vacant(house) {
+            return Err(WorldError::HouseNotVacant(house));
+        }
+        self.create_business(house, founder, product, price, roles)
     }
 }
 
@@ -316,6 +762,204 @@ mod tests {
     use crate::metal::Metal;
     use crate::money::{Money, MoneyError};
     use std::collections::HashMap;
+
+    // --- Conserved recycle pack 1: the two command-layer wrappers ---
+
+    /// A world with one agent, one live business, and a known-ghost id —
+    /// the four id classes `levy`/`disburse` must tell apart.
+    fn recycle_fixture() -> (World, AgentId, AgentId, AgentId) {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let person = world.spawn_agent("payee", None, None);
+        let business = world
+            .create_business(house, person, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let ghost = AgentId(9_999);
+        assert!(world.agent(ghost).is_none());
+        (world, person, business, ghost)
+    }
+
+    /// Every account's balance on every metal, so a refusal can be shown to
+    /// have touched nothing — `Err` means nothing changed (07-03 property).
+    fn books(world: &World, ids: &[AgentId]) -> Vec<(AgentId, Metal, Money)> {
+        let mut out = Vec::new();
+        for &id in ids {
+            for metal in Metal::ALL {
+                out.push((id, metal, world.accounts.balance_of(id, metal)));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn levy_and_disburse_refuse_every_non_agent_id() {
+        let (mut world, person, business, ghost) = recycle_fixture();
+        world.accounts.mint(person, Metal::Gold, Money::new(500));
+        world.accounts.mint(business, Metal::Gold, Money::new(500));
+        let mint_id = world.mint_id;
+        let external_id = world.external_id;
+        let watched = [person, business, ghost, mint_id, external_id];
+        let before = books(&world, &watched);
+        let minted_before = world.accounts.total_minted(Metal::Gold);
+        let burned_before = world.accounts.total_burned(Metal::Gold);
+
+        // NARROWER than `is_known_account`, deliberately: households only.
+        for id in [business, ghost, mint_id, external_id] {
+            assert_eq!(
+                world.levy(id, Metal::Gold, Money::new(10)),
+                Err(WorldError::UnknownAgent(id)),
+                "levy accepted a non-agent id"
+            );
+            assert_eq!(
+                world.disburse(id, Metal::Gold, Money::new(10), Money::new(100)),
+                Err(WorldError::UnknownAgent(id)),
+                "disburse accepted a non-agent id"
+            );
+        }
+        // ...and the spawned agent is accepted by both, so the rule is a
+        // rule and not a blanket refusal.
+        assert!(world.levy(person, Metal::Gold, Money::ZERO).is_ok());
+        assert_eq!(
+            world.disburse(person, Metal::Gold, Money::ZERO, Money::new(100)),
+            Ok(Money::new(100))
+        );
+
+        assert_eq!(books(&world, &watched), before, "a refusal moved money");
+        assert_eq!(world.accounts.total_minted(Metal::Gold), minted_before);
+        assert_eq!(world.accounts.total_burned(Metal::Gold), burned_before);
+    }
+
+    #[test]
+    fn both_wrappers_are_zero_no_ops_that_create_no_account_entry() {
+        let (mut world, person, _, _) = recycle_fixture();
+        let fresh = world.spawn_agent("never-funded", None, None);
+        let burned_before = world.accounts.total_burned(Metal::Gold);
+        let minted_before = world.accounts.total_minted(Metal::Gold);
+
+        assert!(world.levy(fresh, Metal::Gold, Money::ZERO).is_ok());
+        // `disburse` returns the pot UNCHANGED and must not call `mint`,
+        // which — unlike `transfer`/`burn` — has no zero guard and would
+        // insert a zero-balance entry.
+        assert_eq!(
+            world.disburse(fresh, Metal::Gold, Money::ZERO, Money::new(77)),
+            Ok(Money::new(77))
+        );
+
+        assert_eq!(world.accounts.total_burned(Metal::Gold), burned_before);
+        assert_eq!(world.accounts.total_minted(Metal::Gold), minted_before);
+        assert_eq!(world.accounts.balance_of(fresh, Metal::Gold), Money::ZERO);
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn levy_forwards_insufficient_funds_atomically() {
+        let (mut world, person, _, _) = recycle_fixture();
+        world.accounts.mint(person, Metal::Gold, Money::new(40));
+        let burned_before = world.accounts.total_burned(Metal::Gold);
+
+        assert_eq!(
+            world.levy(person, Metal::Gold, Money::new(41)),
+            Err(WorldError::Money(MoneyError::InsufficientFunds))
+        );
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Gold),
+            Money::new(40)
+        );
+        assert_eq!(world.accounts.total_burned(Metal::Gold), burned_before);
+
+        // the affordable case does move, and logs
+        assert!(world.levy(person, Metal::Gold, Money::new(40)).is_ok());
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        assert_eq!(
+            world.accounts.total_burned(Metal::Gold),
+            burned_before.plus(Money::new(40))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn disburse_refuses_over_issue_with_nothing_minted() {
+        let (mut world, person, _, _) = recycle_fixture();
+        let minted_before = world.accounts.total_minted(Metal::Gold);
+
+        assert_eq!(
+            world.disburse(person, Metal::Gold, Money::new(31), Money::new(30)),
+            Err(WorldError::OverIssue {
+                requested: Money::new(31),
+                remaining: Money::new(30),
+            })
+        );
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        assert_eq!(world.accounts.total_minted(Metal::Gold), minted_before);
+
+        // exactly the pot is allowed, and drains it to zero
+        assert_eq!(
+            world.disburse(person, Metal::Gold, Money::new(30), Money::new(30)),
+            Ok(Money::ZERO)
+        );
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Gold),
+            Money::new(30)
+        );
+        assert_eq!(
+            world.accounts.total_minted(Metal::Gold),
+            minted_before.plus(Money::new(30))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn disburse_threads_the_remaining_pot_across_payees() {
+        let mut world = World::new();
+        let a = world.spawn_agent("a", None, None);
+        let b = world.spawn_agent("b", None, None);
+        let c = world.spawn_agent("c", None, None);
+
+        let mut pot = Money::new(30);
+        for id in [a, b, c] {
+            pot = world
+                .disburse(id, Metal::Gold, Money::new(10), pot)
+                .unwrap();
+        }
+        // the thread ends at exactly zero — the property phase 8 asserts
+        assert_eq!(pot, Money::ZERO);
+        // and a fourth payee at the drained pot is refused, not silently zero
+        assert_eq!(
+            world.disburse(c, Metal::Gold, Money::new(1), pot),
+            Err(WorldError::OverIssue {
+                requested: Money::new(1),
+                remaining: Money::ZERO,
+            })
+        );
+        assert_eq!(world.accounts.total_minted(Metal::Gold), Money::new(30));
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn levy_and_disburse_are_per_metal() {
+        let (mut world, person, _, _) = recycle_fixture();
+        world.accounts.mint(person, Metal::Silver, Money::new(100));
+
+        assert!(world.levy(person, Metal::Silver, Money::new(25)).is_ok());
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Silver),
+            Money::new(75)
+        );
+        // gold is untouched by a silver levy, and vice versa
+        assert_eq!(world.accounts.balance_of(person, Metal::Gold), Money::ZERO);
+        assert_eq!(world.accounts.total_burned(Metal::Gold), Money::ZERO);
+
+        world
+            .disburse(person, Metal::Copper, Money::new(5), Money::new(5))
+            .unwrap();
+        assert_eq!(
+            world.accounts.balance_of(person, Metal::Copper),
+            Money::new(5)
+        );
+        assert_eq!(world.accounts.total_minted(Metal::Silver), Money::new(100));
+        world.accounts.audit();
+    }
 
     #[test]
     fn reserved_ids_exist() {
@@ -510,16 +1154,18 @@ mod tests {
     }
 
     #[test]
-    fn assign_workplace_sets_and_moves() {
+    fn assign_workplace_writes_workplace_and_role_together() {
         let mut world = World::new();
         let h1 = world.add_house("1 Mill Lane", vec![]);
         let h2 = world.add_house("2 Kiln Row", vec![]);
         let a = world.spawn_agent("a", None, None);
-        world.assign_workplace(a, h1).unwrap();
+        world.assign_workplace(a, h1, Role::Labourer).unwrap();
         assert_eq!(world.agent(a).unwrap().workplace, Some(h1));
-        // re-assigning moves the workplace link
-        world.assign_workplace(a, h2).unwrap();
+        assert_eq!(world.agent(a).unwrap().employed_role, Some(Role::Labourer));
+        // re-assigning moves BOTH fields — never a stale role at a new job
+        world.assign_workplace(a, h2, Role::Engineer).unwrap();
         assert_eq!(world.agent(a).unwrap().workplace, Some(h2));
+        assert_eq!(world.agent(a).unwrap().employed_role, Some(Role::Engineer));
     }
 
     #[test]
@@ -530,28 +1176,32 @@ mod tests {
         let ghost_agent = AgentId(99);
         let ghost_house = HouseId(99);
         assert_eq!(
-            world.assign_workplace(ghost_agent, house),
+            world.assign_workplace(ghost_agent, house, Role::Labourer),
             Err(WorldError::UnknownAgent(ghost_agent))
         );
         assert_eq!(
-            world.assign_workplace(a, ghost_house),
+            world.assign_workplace(a, ghost_house, Role::Labourer),
             Err(WorldError::UnknownHouse(ghost_house))
         );
         assert_eq!(
-            world.assign_workplace(ghost_agent, ghost_house),
+            world.assign_workplace(ghost_agent, ghost_house, Role::Labourer),
             Err(WorldError::UnknownAgent(ghost_agent))
         );
-        // nothing changed on any Err
+        // nothing changed on any Err — neither field
         assert_eq!(world.agent(a).unwrap().workplace, None);
+        assert_eq!(world.agent(a).unwrap().employed_role, None);
     }
 
     #[test]
-    fn vacate_workplace_clears_and_tolerates_unemployed() {
+    fn vacate_workplace_clears_both_and_tolerates_unemployed() {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
         let a = world.spawn_agent("a", None, Some(house));
+        world.agent_mut(a).unwrap().employed_role = Some(Role::Labourer);
         world.vacate_workplace(a).unwrap();
         assert_eq!(world.agent(a).unwrap().workplace, None);
+        // the role goes with the job (employed_role-implies-workplace)
+        assert_eq!(world.agent(a).unwrap().employed_role, None);
         // already-unemployed is an Ok no-op
         world.vacate_workplace(a).unwrap();
         let ghost = AgentId(99);
@@ -584,7 +1234,7 @@ mod tests {
         let house = world.add_house("1 Mill Lane", vec![]);
         let person = world.spawn_agent("a", None, None);
         let business = world
-            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .create_business(house, person, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         // shared counter: distinct from reserved ids and every spawned agent
         assert_ne!(business, world.mint_id);
@@ -600,9 +1250,10 @@ mod tests {
     #[test]
     fn create_business_rejects_unknown_house() {
         let mut world = World::new();
+        let owner = world.spawn_agent("owner", None, None);
         let ghost = HouseId(99);
         assert_eq!(
-            world.create_business(ghost, Good::Food, Money::new(1), HashMap::new()),
+            world.create_business(ghost, owner, Good::Food, Money::new(1), HashMap::new()),
             Err(WorldError::UnknownHouse(ghost))
         );
     }
@@ -611,11 +1262,12 @@ mod tests {
     fn create_business_rejects_duplicate() {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
         let first = world
-            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .create_business(house, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         assert_eq!(
-            world.create_business(house, Good::Food, Money::new(1), HashMap::new()),
+            world.create_business(house, owner, Good::Food, Money::new(1), HashMap::new()),
             Err(WorldError::BusinessAlreadyExists(house))
         );
         // Err changed nothing: the original business is untouched
@@ -626,17 +1278,51 @@ mod tests {
     }
 
     #[test]
+    fn create_business_validates_owner_first() {
+        let mut world = World::new();
+        let house = world.add_house("1 Mill Lane", vec![]);
+        let person = world.spawn_agent("a", None, None);
+        let shop = world.add_house("Shop", vec![]);
+        let business = world
+            .create_business(shop, person, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let ghost = AgentId(99);
+        let ghost_house = HouseId(99);
+        // every non-agent owner refuses: ghosts, reserved ids, business ids
+        for refused in [ghost, world.mint_id, world.external_id, business] {
+            assert_eq!(
+                world.create_business(house, refused, Good::Food, Money::new(1), HashMap::new()),
+                Err(WorldError::UnknownAgent(refused))
+            );
+        }
+        // owner is checked FIRST: both bad ⇒ the owner is reported
+        assert_eq!(
+            world.create_business(
+                ghost_house,
+                ghost,
+                Good::Food,
+                Money::new(1),
+                HashMap::new()
+            ),
+            Err(WorldError::UnknownAgent(ghost))
+        );
+        // nothing changed on any Err
+        assert!(world.house(house).unwrap().business.is_none());
+    }
+
+    #[test]
     fn businesses_yields_only_hosting_houses_in_houses_order() {
         let mut world = World::new();
         let h1 = world.add_house("1 Mill Lane", vec![]);
         world.add_house("2 Kiln Row", vec![]); // hosts nothing — must be skipped
         let h3 = world.add_house("3 Forge Way", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
         // created out of order to prove iteration follows `houses`, not creation
         let b3 = world
-            .create_business(h3, Good::Food, Money::new(1), HashMap::new())
+            .create_business(h3, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let b1 = world
-            .create_business(h1, Good::Food, Money::new(1), HashMap::new())
+            .create_business(h1, owner, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         let found: Vec<_> = world
             .businesses()
@@ -651,7 +1337,7 @@ mod tests {
         let house = world.add_house("1 Mill Lane", vec![]);
         let worker = world.spawn_agent("a", None, None);
         let business = world
-            .create_business(house, Good::Food, Money::new(1), HashMap::new())
+            .create_business(house, worker, Good::Food, Money::new(1), HashMap::new())
             .unwrap();
         world.accounts.mint(business, Metal::Gold, Money::new(100)); // sanctioned test funding
         // business → agent: the future pay_wages direction
@@ -683,8 +1369,15 @@ mod tests {
     fn create_business_sets_product_price_and_empty_stock() {
         let mut world = World::new();
         let house = world.add_house("1 Mill Lane", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
         world
-            .create_business(house, Good::Entertainment, Money::new(2), HashMap::new())
+            .create_business(
+                house,
+                owner,
+                Good::Entertainment,
+                Money::new(2),
+                HashMap::new(),
+            )
             .unwrap();
         let business = world.house(house).unwrap().business.as_ref().unwrap();
         assert_eq!(business.product, Good::Entertainment);
@@ -699,21 +1392,549 @@ mod tests {
         assert!(world.agent(a).unwrap().inventory.is_empty());
     }
 
+    // --- Pack-4 emigration command ---
+
     #[test]
-    fn employee_of_is_derived_first_match_in_agents_order() {
+    fn remove_agent_sweeps_every_metal_no_orphans() {
+        let mut world = World::new();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world.accounts.mint(leaver, Metal::Gold, Money::new(12));
+        world.accounts.mint(leaver, Metal::Silver, Money::new(3));
+        world.accounts.mint(leaver, Metal::Copper, Money::new(5));
+        world.remove_agent(leaver).unwrap();
+        // per-account, per-metal — the spec insists totals-identical is
+        // vacuously true and the audit cannot see an orphan
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(leaver, metal), Money::ZERO);
+        }
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(12)
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Silver),
+            Money::new(3)
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Copper),
+            Money::new(5)
+        );
+        assert!(world.agent(leaver).is_none());
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn close_business_refuses_unknown_and_business_less_houses_changing_nothing() {
+        let mut world = World::new();
+        let empty = world.add_house("Empty", vec![]);
+        assert_eq!(
+            world.close_business(HouseId(99)),
+            Err(WorldError::UnknownHouse(HouseId(99)))
+        );
+        assert_eq!(
+            world.close_business(empty),
+            Err(WorldError::NoBusinessHere(empty))
+        );
+        // house checked first, then the business — and nothing moved
+        assert!(world.house(empty).unwrap().business.is_none());
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn close_business_settles_ascending_writes_off_and_sweeps_no_orphans() {
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        // The owner is ALSO a creditor — the case the ClosureReceipt
+        // exists for: settlement (step 1) and residual (step 3) share one
+        // wallet, so deltas around the whole command cannot attribute
+        // either flow. Spawned first, so they hold the lowest id and
+        // ascending order is observable against the later creditors.
+        let owner = world.spawn_agent("owner", None, Some(shop));
+        let hand = world.spawn_agent("hand", None, Some(shop));
+        let ghost = world.spawn_agent("ghost", None, None); // former worker
+        let business = world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        // 90g coffer against 150g of debt: the first two creditors are
+        // paid in full, the third takes what is left, nothing is negative.
+        world.accounts.mint(business, Metal::Gold, Money::new(90));
+        world.accounts.mint(business, Metal::Silver, Money::new(7));
+        // ...and copper stays zero, so the receipt's visible-zero shows.
+        {
+            let ledger = &mut world
+                .house_mut(shop)
+                .unwrap()
+                .business
+                .as_mut()
+                .unwrap()
+                .owed_to;
+            ledger.insert(owner, Money::new(40));
+            ledger.insert(hand, Money::new(30));
+            ledger.insert(ghost, Money::new(80));
+            // a zero-amount entry: pay_wages inserts unconditionally, and
+            // no entry may keep naming a dead firm (pack-4 precedent)
+            let stranger = AgentId(404);
+            ledger.insert(stranger, Money::ZERO);
+        }
+
+        let receipt = world.close_business(shop).unwrap();
+
+        // 1. ascending AgentId, positive amounts only, min-bounded.
+        //    `owed_to` is a HashMap, so the exact-vector check below only
+        //    OBSERVES the sort when the map's own iteration order happens
+        //    to differ from ascending id — measured 2026-08-30 by
+        //    deleting `debts.sort_by_key`, the mutant still ran the suite
+        //    green in 5 of 30 runs. The structural assertion is the
+        //    order-independent guard.
+        assert!(
+            receipt
+                .settlements
+                .windows(2)
+                .all(|pair| pair[0].0.0 < pair[1].0.0),
+            "settlements must be strictly ascending AgentId: {:?}",
+            receipt.settlements
+        );
+        assert_eq!(
+            receipt.settlements,
+            vec![
+                (owner, Money::new(40)),
+                (hand, Money::new(30)),
+                (ghost, Money::new(20)), // 90 − 40 − 30: the rest written off
+            ],
+            "settlements must be ascending AgentId with the remainder written off"
+        );
+        // 2. everyone on the premises is off it, role cleared with it
+        assert_eq!(receipt.laid_off, vec![owner, hand]);
+        for worker in [owner, hand] {
+            let person = world.agent(worker).unwrap();
+            assert_eq!(person.workplace, None);
+            assert_eq!(person.employed_role, None);
+        }
+        // 3. every metal swept, zeros listed (D3 visible-zeros)
+        assert_eq!(
+            receipt.residual,
+            vec![
+                (Metal::Gold, Money::ZERO), // the coffer went to creditors
+                (Metal::Silver, Money::new(7)),
+                (Metal::Copper, Money::ZERO),
+            ]
+        );
+        // The owner's wallet is settlement PLUS proceeds — never
+        // "proceeds = owner delta", which conflates the two flows.
+        assert_eq!(
+            world.accounts.balance_of(owner, Metal::Gold),
+            Money::new(40)
+        );
+        assert_eq!(
+            world.accounts.balance_of(owner, Metal::Silver),
+            Money::new(7)
+        );
+        // 4. detached last, and NO ORPHAN on the dead id, per account —
+        // the totals-only audit cannot see a conservation-legal orphan
+        assert!(world.house(shop).unwrap().business.is_none());
+        for metal in Metal::ALL {
+            assert_eq!(
+                world.accounts.balance_of(business, metal),
+                Money::ZERO,
+                "orphan balance parked on the closed {business:?}"
+            );
+        }
+        // the freed house passes the immigration vacancy predicate
+        // verbatim: closure manufactures landing pads
+        assert!(world.occupants_of(shop).is_empty());
+        let newcomer = world.immigrate("Mara".to_string(), shop).unwrap();
+        assert_eq!(world.agent(newcomer).unwrap().home, Some(shop));
+        // and the retired id refuses money for good
+        assert_eq!(
+            world.pay(world.external_id, business, Metal::Gold, Money::new(1)),
+            Err(WorldError::UnknownAgent(business))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn remove_agent_settles_min_coffer_owed_then_writes_off() {
+        // coffer covers the debt: full settlement rides to External with
+        // the sweep
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
+        let business = world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world.accounts.mint(business, Metal::Gold, Money::new(100));
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::new(30));
+        world.remove_agent(leaver).unwrap();
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(70)
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(30)
+        );
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+        world.accounts.audit();
+
+        // coffer short of the debt: partial settlement, remainder written
+        // off — the entry leaves the ledger regardless
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
+        let business = world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world.accounts.mint(business, Metal::Gold, Money::new(20));
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::new(50));
+        world.remove_agent(leaver).unwrap();
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::ZERO
+        );
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::new(20)
+        );
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+
+        // an empty coffer settles nothing but still writes the debt off
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
+        world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::new(50));
+        world.remove_agent(leaver).unwrap();
+        assert_eq!(
+            world.accounts.balance_of(world.external_id, Metal::Gold),
+            Money::ZERO
+        );
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+        world.accounts.audit();
+
+        // even a ZERO-amount entry (a zero-wage slot's bookkeeping
+        // residue) must not survive naming a removed id
+        let mut world = World::new();
+        let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
+        world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let leaver = world.spawn_agent("leaver", None, None);
+        world
+            .house_mut(shop)
+            .unwrap()
+            .business
+            .as_mut()
+            .unwrap()
+            .owed_to
+            .insert(leaver, Money::ZERO);
+        world.remove_agent(leaver).unwrap();
+        assert!(
+            world
+                .house(shop)
+                .unwrap()
+                .business
+                .as_ref()
+                .unwrap()
+                .owed_to
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn remove_agent_rejects_non_agents_with_nothing_changed() {
+        let mut world = World::new();
+        let house = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("shopkeep", None, None);
+        let business = world
+            .create_business(house, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        world.accounts.mint(business, Metal::Gold, Money::new(50));
+        let ghost = AgentId(99);
+        for refused in [ghost, world.mint_id, world.external_id, business] {
+            assert_eq!(
+                world.remove_agent(refused),
+                Err(WorldError::UnknownAgent(refused))
+            );
+        }
+        // nothing changed: the business account still stands untouched
+        assert_eq!(
+            world.accounts.balance_of(business, Metal::Gold),
+            Money::new(50)
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn remove_agent_strips_ownership_and_derived_links() {
+        let mut world = World::new();
+        let leaver = world.spawn_agent("leaver", None, None);
+        let other = world.spawn_agent("other", None, None);
+        let home = world.add_house("1 Mill Lane", vec![leaver, other]);
+        let shop = world.add_house("Shop", vec![leaver]);
+        world
+            .create_business(shop, other, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        world.assign_home(leaver, home).unwrap();
+        world
+            .assign_workplace(leaver, shop, Role::Labourer)
+            .unwrap();
+        world.remove_agent(leaver).unwrap();
+        // ownership is stored, so the strip is explicit — no dangling ids
+        assert_eq!(world.house(home).unwrap().owners, vec![other]);
+        assert!(world.house(shop).unwrap().owners.is_empty());
+        // occupancy and staffing are derived, so removal IS the update
+        assert!(world.occupants_of(home).is_empty());
+        assert!(world.employees_of(shop).is_empty());
+    }
+
+    #[test]
+    fn immigrate_is_money_free_and_wraps_the_constructor() {
+        let mut world = World::new();
+        let home = world.add_house("5 Weir Cottage", vec![]);
+        let newcomer = world.immigrate("Mara".to_string(), home).unwrap();
+        let agent = world.agent(newcomer).unwrap();
+        assert_eq!(agent.name, "Mara");
+        assert_eq!(agent.home, Some(home));
+        assert_eq!(agent.workplace, None);
+        assert_eq!(agent.employed_role, None);
+        assert_eq!(agent.hunger, 0);
+        assert!(agent.inventory.is_empty());
+        // money-free: zero on every metal, nothing minted anywhere
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(newcomer, metal), Money::ZERO);
+            assert_eq!(world.accounts.total_money(metal), Money::ZERO);
+        }
+        assert_eq!(world.arrivals, 1);
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn immigrate_rejects_non_vacant_and_unknown_houses() {
+        let mut world = World::new();
+        let occupied = world.add_house("1 Mill Lane", vec![]);
+        let resident = world.spawn_agent("resident", Some(occupied), None);
+        let shop = world.add_house("Shop", vec![]);
+        world
+            .create_business(shop, resident, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        let ghost = HouseId(99);
+        let before = world.agents.len();
+        assert_eq!(
+            world.immigrate("Mara".to_string(), occupied),
+            Err(WorldError::HouseNotVacant(occupied))
+        );
+        assert_eq!(
+            world.immigrate("Mara".to_string(), shop),
+            Err(WorldError::HouseNotVacant(shop))
+        );
+        assert_eq!(
+            world.immigrate("Mara".to_string(), ghost),
+            Err(WorldError::UnknownHouse(ghost))
+        );
+        // nothing changed on any Err
+        assert_eq!(world.agents.len(), before);
+        assert_eq!(world.arrivals, 0);
+    }
+
+    #[test]
+    fn employees_of_is_derived_in_ascending_id_order() {
         let mut world = World::new();
         let shop = world.add_house("1 Mill Lane", vec![]);
         let idle_house = world.add_house("2 Kiln Row", vec![]);
         let first = world.spawn_agent("first", None, Some(shop));
-        world.spawn_agent("second", None, Some(shop));
-        // first match in `agents` order wins
-        assert_eq!(world.employee_of(shop), Some(first));
-        // unstaffed and unknown houses: None
-        assert_eq!(world.employee_of(idle_house), None);
-        assert_eq!(world.employee_of(HouseId(99)), None);
+        let second = world.spawn_agent("second", None, Some(shop));
+        assert!(first.0 < second.0, "ids ascend in spawn order");
+        // the full staff, ascending — the contended-decide order contract
+        assert_eq!(world.employees_of(shop), vec![first, second]);
+        // unstaffed and unknown houses: empty
+        assert!(world.employees_of(idle_house).is_empty());
+        assert!(world.employees_of(HouseId(99)).is_empty());
         // derived, never stored: quitting is visible immediately
         world.vacate_workplace(first).unwrap();
-        let second = world.agent_by_name("second").unwrap().id;
-        assert_eq!(world.employee_of(shop), Some(second));
+        assert_eq!(world.employees_of(shop), vec![second]);
+    }
+
+    #[test]
+    fn is_fully_vacant_is_the_one_vacancy_rule() {
+        let mut world = World::new();
+        let empty = world.add_house("Empty", vec![]);
+        let lived_in = world.add_house("Lived In", vec![]);
+        let shop = world.add_house("Shop", vec![]);
+        let owner = world.spawn_agent("owner", None, None);
+        world.spawn_agent("resident", Some(lived_in), None);
+        world
+            .create_business(shop, owner, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        assert!(world.is_fully_vacant(empty));
+        assert!(!world.is_fully_vacant(lived_in), "occupants block it");
+        assert!(!world.is_fully_vacant(shop), "a business blocks it");
+        assert!(
+            !world.is_fully_vacant(HouseId(99)),
+            "a ghost house is not vacant"
+        );
+        // Ownership plays no part — the rule-inert `House.owners`.
+        let owned = world.add_house("Owned", vec![owner]);
+        assert!(world.is_fully_vacant(owned));
+    }
+
+    #[test]
+    fn found_business_validates_founder_then_house_then_vacancy() {
+        let mut world = World::new();
+        let house = world.add_house("Mill", vec![]);
+        let founder = world.spawn_agent("mira", None, None);
+        let occupied = world.add_house("Home", vec![]);
+        world.spawn_agent("resident", Some(occupied), None);
+
+        // Founder checked FIRST, even when the house is also bad.
+        for ghost in [AgentId(404), world.mint_id, world.external_id] {
+            assert_eq!(
+                world.found_business(
+                    ghost,
+                    HouseId(99),
+                    Good::Food,
+                    Money::new(2),
+                    HashMap::new()
+                ),
+                Err(WorldError::UnknownAgent(ghost))
+            );
+        }
+        // Then the house, then its vacancy.
+        assert_eq!(
+            world.found_business(
+                founder,
+                HouseId(99),
+                Good::Food,
+                Money::new(2),
+                HashMap::new()
+            ),
+            Err(WorldError::UnknownHouse(HouseId(99)))
+        );
+        assert_eq!(
+            world.found_business(founder, occupied, Good::Food, Money::new(2), HashMap::new()),
+            Err(WorldError::HouseNotVacant(occupied))
+        );
+        // A house already hosting a business is not vacant either — so
+        // that path refuses BEFORE create_business's own duplicate check.
+        world
+            .create_business(house, founder, Good::Food, Money::new(1), HashMap::new())
+            .unwrap();
+        assert_eq!(
+            world.found_business(founder, house, Good::Food, Money::new(2), HashMap::new()),
+            Err(WorldError::HouseNotVacant(house))
+        );
+        world.accounts.audit();
+    }
+
+    #[test]
+    fn found_business_is_money_free_and_wraps_the_constructor() {
+        let mut world = World::new();
+        let house = world.add_house("5 Weir Cottage", vec![]);
+        let founder = world.spawn_agent("mira", None, None);
+        world.accounts.mint(founder, Metal::Gold, Money::new(1000));
+        let before = world.accounts.total_money(Metal::Gold);
+        let mut roles = HashMap::new();
+        roles.insert(
+            Role::Labourer,
+            RoleSlot {
+                wage: Money::new(35),
+                headcount: 2,
+                unfilled_ticks: 0,
+            },
+        );
+
+        let firm = world
+            .found_business(founder, house, Good::Food, Money::new(2), roles)
+            .unwrap();
+
+        let business = world.house(house).unwrap().business.as_ref().unwrap();
+        assert_eq!(business.owner, founder);
+        assert_eq!(business.product, Good::Food);
+        assert_eq!(business.price, Money::new(2));
+        assert_eq!(business.stock, 0);
+        assert!(business.owed_to.is_empty());
+        assert_eq!(business.insolvent_ticks, 0);
+        assert_eq!(business.sold_out_ticks, 0);
+        // Money-free: the founder keeps every coin and the new account is
+        // empty until the apply's separate stake.
+        assert_eq!(
+            world.accounts.balance_of(founder, Metal::Gold),
+            Money::new(1000)
+        );
+        for metal in Metal::ALL {
+            assert_eq!(world.accounts.balance_of(firm, metal), Money::ZERO);
+        }
+        assert_eq!(world.accounts.total_money(Metal::Gold), before);
+        // Account-only, like every business id: no Agent behind it.
+        assert!(world.agent(firm).is_none());
+        // The founder does not move in and is not hired by the command.
+        let person = world.agent(founder).unwrap();
+        assert_eq!(person.home, None);
+        assert_eq!(person.workplace, None);
+        assert_eq!(person.employed_role, None);
+        // ...and the house stops being vacant the moment it hosts a firm.
+        assert!(!world.is_fully_vacant(house));
+        // The stake seam: pay works immediately, now the id is known.
+        world
+            .pay(founder, firm, Metal::Gold, Money::new(210))
+            .unwrap();
+        assert_eq!(
+            world.accounts.balance_of(firm, Metal::Gold),
+            Money::new(210)
+        );
+        world.accounts.audit();
     }
 }

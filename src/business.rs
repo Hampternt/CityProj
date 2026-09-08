@@ -19,6 +19,12 @@ use crate::role::Role;
 pub struct RoleSlot {
     pub wage: Money,
     pub headcount: u32,
+    /// Consecutive ticks this slot has had open headcount, measured
+    /// post-matching (town-colony pack 4: the vacancy-pull age phase 1's
+    /// Arrive rule reads). SINGLE WRITER: phase 1's write-back —
+    /// incremented while open, reset to 0 when fully staffed. Worldgen
+    /// seeds 0; boot-time openings age from tick 1.
+    pub unfilled_ticks: u32,
 }
 
 /// A business attached to a house via `House::business`. `id` keys
@@ -31,6 +37,15 @@ pub struct Business {
     /// Account key in [`Accounts`](crate::money::Accounts), allocated by
     /// `World::create_business` from the shared agent-id counter.
     pub id: AgentId,
+    /// The living agent who owns this business (firm-lifecycle spec) —
+    /// required, never optional: an ownerless firm is an undrainable
+    /// sink, the exact coffer pathology the phase-6 draw exists to cure.
+    /// Strictly distinct from `House.owners` (real-estate bookkeeping,
+    /// engaged by no rule). Written only at creation; validated by
+    /// `create_business`. The always-living invariant completes when
+    /// pack 2's forced liquidation lands in `remove_agent`; until then
+    /// the phase-6 draw carries a specified skip for a dangling owner.
+    pub owner: AgentId,
     /// The one good this business produces and sells (v1: single-product,
     /// single-node). Production chains are a future spec.
     pub product: Good,
@@ -51,6 +66,46 @@ pub struct Business {
     /// Entries are removed at zero — an empty map means fully paid.
     /// Bookkeeping only, never a negative balance (§8.2/§8.5).
     pub owed_to: HashMap<AgentId, Money>,
+    /// Consecutive ticks ending in arrears (`owed_total() > ZERO`) — the
+    /// fuse phase 6 liquidates on (firm-lifecycle pack 2). SINGLE
+    /// WRITER: the write-back at the tail of `sim::invest`, over the
+    /// LIVE `businesses()` set AFTER that tick's closures (and, from
+    /// pack 3, after the Found apply) — never a stale snapshot that
+    /// would reach through a detached house. Seeded 0 by
+    /// `World::create_business` (the [`RoleSlot::unfilled_ticks`]
+    /// discipline); a closed firm's counter dies with its `Business`,
+    /// never reset.
+    ///
+    /// Read once, at the TOP of phase 6, from the phase-START snapshot —
+    /// so the counter crosses at tick t's write-back and the firm closes
+    /// at t+1's phase 6. That one tick of latency is designed, not
+    /// incidental: the effective fuse is `CLOSE_INSOLVENT_TICKS + 1`
+    /// arrears-ticks. Correctness depends on that write-last /
+    /// read-phase-start ordering — do not reorder the blocks inside
+    /// `invest`.
+    ///
+    /// Note what this is NOT: same-tick revenue cannot clear the ledger.
+    /// Arrears created at phase 3 pay down only at the NEXT tick's phase
+    /// 3 (phase-4 revenue lands in the coffer, never on the ledger), so a
+    /// single `PayrollShort` tick flickers the counter to 1 even for a
+    /// venue that fully repays next tick.
+    pub insolvent_ticks: u32,
+    /// Consecutive ticks this business SOLD OUT its offered shelf — the
+    /// scarcity *direction* signal firm founding reads (pack 3). SINGLE
+    /// WRITER: phase 4's price write-back, which already holds the
+    /// offered stock and the units sold, so the streak and the price
+    /// ratchet cannot disagree — both call `market::sold_out`. Increment
+    /// on a sell-out, reset to 0 on any other real signal, and HOLD when
+    /// `offered == 0` (`adjust_price`'s documented "no signal", not poor
+    /// sales). Seeded 0 by `World::create_business`.
+    ///
+    /// Why founding needs it: a price LEVEL alone cannot tell a scarce
+    /// sector from a collapsing one. At `PRICE_FLOOR` a live sector and a
+    /// dead one post the same number, and a collapsing sector's price
+    /// passes back down through any threshold on its way to the floor
+    /// (measured, pack-3 probe: Food fell 26 → 1 over t163–t184 while
+    /// satisfying a level-only gate throughout its own collapse).
+    pub sold_out_ticks: u32,
 }
 
 impl Business {
@@ -86,6 +141,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(12),
                 headcount: 2,
+                unfilled_ticks: 0,
             },
         );
         roles.insert(
@@ -93,15 +149,19 @@ mod tests {
             RoleSlot {
                 wage: Money::new(7),
                 headcount: 5,
+                unfilled_ticks: 0,
             },
         );
         let business = Business {
             id: AgentId(42),
+            owner: AgentId(7),
             product: Good::Food,
             price: Money::new(1),
             stock: 0,
             roles,
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         assert_eq!(business.roles[&Role::Engineer].wage, Money::new(12));
         assert_eq!(business.roles[&Role::Engineer].headcount, 2);
@@ -117,6 +177,7 @@ mod tests {
             RoleSlot {
                 wage: Money::new(12),
                 headcount: 2,
+                unfilled_ticks: 0,
             },
         );
         roles.insert(
@@ -124,25 +185,32 @@ mod tests {
             RoleSlot {
                 wage: Money::new(7),
                 headcount: 5,
+                unfilled_ticks: 0,
             },
         );
         let business = Business {
             id: AgentId(42),
+            owner: AgentId(7),
             product: Good::Food,
             price: Money::new(1),
             stock: 0,
             roles,
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         // 12×2 + 7×5
         assert_eq!(business.wage_bill(), Money::new(59));
         let empty = Business {
             id: AgentId(43),
+            owner: AgentId(7),
             product: Good::Luxury,
             price: Money::new(5),
             stock: 0,
             roles: HashMap::new(),
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         assert_eq!(empty.wage_bill(), Money::ZERO);
     }
@@ -151,11 +219,14 @@ mod tests {
     fn owed_total_sums_the_arrears_ledger() {
         let mut business = Business {
             id: AgentId(42),
+            owner: AgentId(7),
             product: Good::Food,
             price: Money::new(1),
             stock: 0,
             roles: HashMap::new(),
             owed_to: HashMap::new(),
+            insolvent_ticks: 0,
+            sold_out_ticks: 0,
         };
         assert_eq!(business.owed_total(), Money::ZERO);
         business.owed_to.insert(AgentId(1), Money::new(30));
