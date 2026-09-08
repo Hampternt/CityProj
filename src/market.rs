@@ -328,7 +328,40 @@ pub struct FoundTemplate {
 /// wage — `plan_application` matches on highest wage, so entering above
 /// market would seed a wage war.
 ///
-/// **Headcount 2** everywhere, against worldgen's 4/3/3: the spec's own
+/// **Headcount: Food 4, Entertainment 2, Luxury 2** — RE-FROZEN by
+/// conserved-recycle pack 3, which took up the standing invitation at the
+/// bottom of this comment and re-ran the sweep on the CURED town against
+/// the corrected criterion. Only Food moved, and it moved because a
+/// measured defect demanded it, not on a general principle.
+///
+/// The defect (measured, pack 2): a headcount-2 entrant replacing the
+/// 4-headcount farm leaves the town permanently two jobs short and
+/// installs standing hunger. Shock the cured town at t500 by force-closing
+/// a Food seller and run to t1200:
+///
+///     Food/Ent/Lux   employment   recovered   founded   founded    hunger      null
+///     headcount      at t1200     at          firms     deaths     events      twins
+///     2 / 2 / 2      19           never       1         0          4241 (never stops)  PASS
+///     3 / 3 / 3      17           never       12        8          2547 (never stops)  FAIL
+///     4 / 4 / 4      21           t571        1         0          6 (ends t579)       FAIL
+///     5 / 5 / 5      23           t571        26        24         0                   FAIL
+///     4 / 3 / 3      21           t571        1         0          6 (ends t579)       FAIL
+///     4 / 2 / 2      21           t571        1         0          6 (ends t579)       PASS  ← shipped
+///
+/// Read the last two rows together: **the churn was Entertainment's, not
+/// Food's.** Raising Entertainment's entrant is what breaks the anti-churn
+/// criterion (two founded Entertainment firms dying inside one 100-tick
+/// window on the pre-cure trajectory, measured at both 3 and 4); raising
+/// Food's alone fixes the recovery defect at zero cost and every frozen
+/// baseline still passes. So this is NOT "match worldgen everywhere" — it
+/// is one good, changed on its own measurement. Entertainment and Luxury
+/// stay at 2 because raising them was measured to churn and buys nothing
+/// the recovery clause needs.
+///
+/// The pre-pack-3 reasoning is kept below, because it was correct about
+/// the trade and only wrong about assuming the trade was unavoidable.
+///
+/// **Formerly headcount 2** everywhere, against worldgen's 4/3/3: the spec's own
 /// anti-churn lever ("founding smaller than a worldgen venue is
 /// legitimate"). The seeded supply already mildly over-served demand
 /// (Food: 8 staff × 40 = 320 against 30 × 10 = 300 appetite), which is
@@ -360,6 +393,13 @@ pub struct FoundTemplate {
 /// sweep against the corrected criterion, which counts founded deaths
 /// rather than every death of a good.
 ///
+/// *(That invitation was taken up by conserved-recycle pack 3 — see the
+/// re-freeze at the top. The old reasoning's mistake is worth naming: it
+/// treated headcount as one knob across all three goods, so the
+/// Entertainment churn it measured at 3 looked like a verdict on bigger
+/// entrants in general. Per-good, it is not: Food alone recovers cleanly
+/// and churns nothing.)*
+///
 /// **Scarcity signal** 2/2/3 — DERIVED, not tuned:
 /// `max(PRICE_FLOOR + 1, ceil(wage / production_rate))`, the price at
 /// which one staffer's full output covers his own wage. Food
@@ -370,7 +410,7 @@ pub struct FoundTemplate {
 /// price has no room for an entrant, so its scarcity tier is correctly
 /// unreachable and only the existential tier can recover it.
 const FOUNDING_TEMPLATE: [(Good, Money, Money, u32, Money); 3] = [
-    (Good::Food, Money::new(2), Money::new(35), 2, Money::new(2)),
+    (Good::Food, Money::new(2), Money::new(35), 4, Money::new(2)),
     (
         Good::Entertainment,
         Money::new(2),
@@ -898,8 +938,11 @@ mod tests {
     fn founding_template_matches_the_manifest_table() {
         // Change the manifest first, then this (the goods.rs
         // `constants_match_the_spec_table` precedent).
+        // Food's headcount re-froze 2 → 4 in conserved-recycle pack 3;
+        // Entertainment and Luxury stay at 2. See the re-freeze table on
+        // `FOUNDING_TEMPLATE` for why only Food moved.
         let expected = [
-            (Good::Food, 2, 35, 2, 2),
+            (Good::Food, 2, 35, 4, 2),
             (Good::Entertainment, 2, 36, 2, 2),
             (Good::Luxury, 4, 24, 2, 3),
         ];

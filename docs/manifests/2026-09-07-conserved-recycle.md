@@ -2,7 +2,7 @@
 
 **Spec:** [`docs/superpowers/specs/2026-09-07-conserved-recycle-design.md`](../superpowers/specs/2026-09-07-conserved-recycle-design.md)
 (signed 2026-09-07) · **Branch:** `claude/town-colony-sim-p1s06q` ·
-**Status:** packs 1–2 DONE 2026-09-07 · pack 3 not started.
+**Status:** DONE 2026-09-07 — all three packs landed.
 
 ## Goal
 
@@ -54,7 +54,7 @@ corpse.
 |---|---|---|---|
 | 1 | **The wrappers, the helper, and the null seam** — zero behavior change | [`2026-09-07-cr-pack1-wrappers-and-seam.md`](2026-09-07-cr-pack1-wrappers-and-seam.md) | **DONE** 2026-09-07 |
 | 2 | **The recycle runs**, and every artifact it invalidates is re-cut in the same commit | [`2026-09-07-cr-pack2-the-recycle-runs.md`](2026-09-07-cr-pack2-the-recycle-runs.md) | **DONE** 2026-09-07 |
-| 3 | **Shock recovery, lifecycle reachability, and the founding-template sweep re-run** (independently droppable) | — | not started |
+| 3 | **Shock recovery, lifecycle reachability, and the founding-template sweep re-run** | [`2026-09-07-cr-pack3-shock-recovery.md`](2026-09-07-cr-pack3-shock-recovery.md) | **DONE** 2026-09-07 |
 
 ## Open questions
 
@@ -89,3 +89,18 @@ block, not here, so there is one copy of it.
   twins. Pack 3 inherits one **pinned live defect**: the phoenix venue
   under-replaces (employment 21 → 19, standing hunger), asserted at its measured
   values so the founding-template sweep shows up as a deliberate re-pin.
+- **2026-09-07 — pack 3 DONE; the container closes.** 207 tests, `VERIFY OK`.
+  The sweep the spec authorised was re-run on the CURED town and found a value
+  that satisfies **every** criterion at once, so the spec's fallback (formally
+  weakening the recovery clause) was **not** exercised: raising **Food's**
+  founding headcount 2 → 4 restores full recovery, and leaving Entertainment
+  and Luxury at 2 keeps the anti-churn criterion and the frozen null twins
+  green. The old sweep's mistake is named on the constant: it moved all three
+  goods together, so Entertainment's churn read as a verdict on bigger
+  entrants in general. Per-good, it is not.
+  Shock at t500 → founding t570 → full re-staffing t571 → hunger ends t579;
+  one founding, zero further closures, zero departures, price back inside its
+  pre-shock band. Pack 2's two pinned defect values re-pinned in the direction
+  it predicted. **One spec erratum recorded** (A12's `FOUND_SIGNAL_TICKS + 2`
+  reachability bound is refuted — it forgets the price must first climb off
+  the floor).

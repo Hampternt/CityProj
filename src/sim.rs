@@ -2670,8 +2670,11 @@ mod tests {
             }],
             "a founding narrates once and draws NOTHING the same tick"
         );
-        // The founder self-hired: the firm produces next tick, and one
-        // seat is left for the labor market.
+        // The founder self-hired: the firm produces next tick, and the
+        // remaining seats are left for the labor market. Food's founding
+        // headcount re-froze 2 → 4 in conserved-recycle pack 3 (the
+        // entrant now matches the venue it replaces), so three seats stand
+        // open here rather than one.
         let person = world.agent(founder).unwrap();
         assert_eq!(person.workplace, Some(vacant));
         assert_eq!(person.employed_role, Some(Role::Labourer));
@@ -2685,7 +2688,7 @@ mod tests {
                 .unwrap()
                 .roles[&Role::Labourer]
                 .headcount,
-            2
+            4
         );
         world.accounts.audit();
     }

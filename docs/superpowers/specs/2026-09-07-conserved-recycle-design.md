@@ -1100,7 +1100,21 @@ expression.
 
 **A12 — the lifecycle is not entombed, charged rather than merely named.** Under a
 forced single-seller shock, `market::plan_founding` must return `Some` within
-`FOUND_SIGNAL_TICKS + 2` ticks and an `Event::Founded` must land. **This asserts
+`FOUND_SIGNAL_TICKS + 2` ticks and an `Event::Founded` must land.
+
+> **ERRATUM 1, recorded 2026-09-07 during pack 3.** The `FOUND_SIGNAL_TICKS + 2`
+> bound — 4 ticks — is **refuted by measurement**, and the criterion it belongs to
+> is not. That figure counts only the sell-out streak the scarcity tier requires
+> and forgets what must happen *first*: the surviving seller's price has to climb
+> off `PRICE_FLOOR` to the viability signal before that tier can fire at all.
+> Measured, the lag also depends on where in the 10-tick limit cycle the shock
+> lands — a shock at t100 is answered in **13** ticks, one at t500 in **70**.
+> Since the sim is deterministic and seedless, pack 3 implements A12 as an exact
+> pin on the measured tick rather than a window whose width would be guesswork.
+> The criterion's *substance* — founding must be reachable under shock, and
+> "quiet" must be distinguishable from "dead by rule" — stands unweakened.
+
+ **This asserts
 reachability only, and the spec says so in the same sentence:** the cured
 six-venue town holds exactly 2 sellers of every good on all 600 measured ticks, so
 `plan_founding`'s two tiers — which require 0 or 1 sellers — return `None` every

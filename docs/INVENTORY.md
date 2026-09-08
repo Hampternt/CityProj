@@ -135,15 +135,26 @@ work inherits.
   silver and copper savings that sit inert until a future market can price
   them.
 
-- 🚧 **The town stops shrinking** —
-  [`docs/manifests/2026-09-07-conserved-recycle.md`](manifests/2026-09-07-conserved-recycle.md).
-  Today the town declines whatever the firms do: nine residents have no job
-  the economy needs, spend down their savings, go hungry and leave, and each
-  departure takes demand with it. In flight: a small slice of every wallet is
-  collected each tick and paid straight back out in equal shares, so nobody
-  is left below the price of a day's food. No money is created or destroyed
-  by it — the same coins simply keep moving. Measured, the town then holds
-  its full size indefinitely instead of emptying.
+- **A common purse keeps the town alive.** Every tick a small slice of each
+  resident's money is gathered up and paid straight back out, in equal
+  shares to everyone. No money is created or destroyed by it — the same
+  coins simply keep moving, and the shell says so each tick: *"the common
+  purse gathered 984g and paid 32g to each of 30"*.
+
+  It exists because the town was dying of something unobvious. The work is
+  there — but nine residents hold no job the economy actually needs, and
+  before the purse they simply spent down their savings, went hungry and
+  left, each departure taking its demand with it until the shops that fed
+  the others failed too. The purse cannot conjure jobs for them. What it
+  does is keep them solvent enough to keep buying, which keeps the shops
+  alive, which keeps everyone else employed. The town now holds its full
+  size indefinitely instead of emptying.
+
+  It is not a frozen tableau. Trade continues at full volume forever — the
+  same shops selling, the same wages paid, the whole town moving through a
+  repeating ten-day rhythm. And it still takes a punch: force a farm to
+  close and someone founds a new one, at full size, staffed within a
+  couple of days, with the food shortage gone about a week later.
 
 ## Terrain and the map playground — `map` · `tools/map_viewer.html`
 

@@ -249,16 +249,21 @@ spec
 [`docs/superpowers/specs/2026-09-07-conserved-recycle-design.md`](docs/superpowers/specs/2026-09-07-conserved-recycle-design.md),
 gate signed 2026-09-07): pack 1 (the two command-layer wrappers,
 `levy_amount`, the `tick_with_rate` null seam — zero behavior change,
-proven by a 300-tick event-stream diff) and pack 2 (both legs live at
+proven by a 300-tick event-stream diff), pack 2 (both legs live at
 `RECYCLE_PERMILLE = 20`, Amendments 20–23, every invalidated acceptance
-artifact re-cut) landed 2026-09-07; pack 3 (shock recovery and the
-founding-template sweep) is not started. **The town now holds its size
+artifact re-cut) and pack 3 (shock recovery, and the founding-template
+sweep re-run that raised **Food's** founding headcount 2 → 4 — only
+Food's, because the churn the old sweep blamed on bigger entrants was
+Entertainment's) all landed 2026-09-07. **The town now holds its size
 indefinitely**: measured to t5000, population 30, 6 firms, 21 employed,
 zero closures, zero departures, zero quits, hunger confined to a t2–t14
 warm-up — and it is a *live* limit cycle, not a frozen one: 82 `Sold`
 events, 912 g of goods turnover and 662 g of wages every tick, with the
 per-agent state recurring at lag 10 and never at lag 1/2/5. This is a
 **stability** milestone, explicitly: a flat 30 is the designed outcome.
+It also **takes a punch**: force-close a Food seller at t500 and the town
+rebuilds to its full 21 employed by t571 with hunger gone by t579, one
+founding, zero further closures and zero departures.
 
 **The decline that firm-lifecycle handed forward, and what it actually
 was.** On the pre-cure trajectory the town still declined: t300 left 10
